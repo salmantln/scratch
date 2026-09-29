@@ -8,8 +8,18 @@ export function Modal({ title, onEscape, children, className = '' }: { title: Re
     panel.current?.querySelector<HTMLElement>('[data-autofocus], input, button:not(:disabled)')?.focus();
     return () => previous?.focus();
   }, []);
+  // Listens on the window so Escape still works after focus leaves the panel (a click on text, a button that disabled itself).
+  useEffect(() => {
+    if (!onEscape) return;
+    const escape = (e: KeyboardEvent) => {
+      const modals = document.querySelectorAll('.modal');
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || modals[modals.length - 1] !== panel.current) return;
+      e.preventDefault(); onEscape();
+    };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [onEscape]);
   return <div className="modal-backdrop"><div className={`modal ${className}`} role="dialog" aria-modal="true" aria-labelledby={heading} ref={panel} onKeyDown={e => {
-    if (e.key === 'Escape' && onEscape) { e.stopPropagation(); onEscape(); }
     if (e.key === 'Tab') {
       const focusable = [...e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),a[href],summary')];
       const first = focusable[0], last = focusable[focusable.length - 1];
@@ -38,7 +48,8 @@ export function NewProjectDialog({ existing, onCreate, onClose }: { existing: st
     </form>
   </Modal>;
 }
-export function NewMeetingDialog({ projects, project: initial, onCreate, onClose }: { projects: string[]; project: string; onCreate: (title: string, project: string) => Promise<void>; onClose: () => void }) {
+/** With `record`, creating the meeting also starts recording it: the button press is the explicit start. */
+export function NewMeetingDialog({ projects, project: initial, record = false, onCreate, onClose }: { projects: string[]; project: string; record?: boolean; onCreate: (title: string, project: string) => Promise<void>; onClose: () => void }) {
   const id = useId();
   const [title, setTitle] = useState('');
   const [project, setProject] = useState(projects.includes(initial) ? initial : projects[0]);
@@ -54,7 +65,7 @@ export function NewMeetingDialog({ projects, project: initial, onCreate, onClose
       <div className="field"><label htmlFor={`${id}-title`}>Meeting title</label><input id={`${id}-title`} value={title} maxLength={160} placeholder="Untitled meeting" onChange={e => setTitle(e.target.value)} /></div>
       <div className="field"><label htmlFor={`${id}-project`}>Project</label><select id={`${id}-project`} value={project} onChange={e => setProject(e.target.value)}>{projects.map(p => <option key={p}>{p}</option>)}</select></div>
       {error && <p className="field-error" role="alert">{error}</p>}
-      <div className="modal-actions"><button type="button" className="secondary" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy ? 'Creating…' : 'Create meeting'}</button></div>
+      <div className="modal-actions"><button type="button" className="secondary" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy ? 'Creating…' : record ? 'Start recording' : 'Create meeting'}</button></div>
     </form>
   </Modal>;
 }

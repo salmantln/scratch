@@ -50,6 +50,19 @@ jobs:
         with:
           workspaces: ./src-tauri -> target
 
+      - name: Cache speech models
+        if: matrix.platform != 'ubuntu-22.04'
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/models
+          key: models-${{ hashFiles('scripts/fetch-models.mjs') }}
+
+      # whisper-rs generates its bindings with libclang.
+      - name: Point bindgen at LLVM (Windows only)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
       - name: Install frontend dependencies
         run: npm ci
 

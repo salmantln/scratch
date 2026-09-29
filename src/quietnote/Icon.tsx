@@ -18,6 +18,7 @@ const paths = {
   open: 'M14 4h6v6 M20 4l-9 9 M18 14v6H4V6h6',
   copy: 'M8 8h12v12H8z M16 8V4H4v12h4',
   refresh: 'M20 7a9 9 0 1 0 1 9 M20 2v6h-6',
+  plug: 'M9 2v5 M15 2v5 M6 7h12v4a6 6 0 0 1-12 0z M12 17v5',
 };
 export function Icon({ name, size = 18, style }: { name: keyof typeof paths; size?: number; style?: CSSProperties }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={style}><path d={paths[name]} /></svg>;

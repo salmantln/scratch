@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "models": "node scripts/fetch-models.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/quietnote tests playwright.config.ts eslint.config.js",
     "test": "playwright test"

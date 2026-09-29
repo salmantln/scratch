@@ -2,8 +2,9 @@
 
 Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generated dependencies, build outputs, and test scratch output are ignored and excluded.
 
-## Modified files (41)
+## Modified files (42)
 
+- `.github/workflows/ci.yml`
 - `.github/workflows/release.yml`
 - `.gitignore`
 - `README.md`
@@ -46,16 +47,13 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/main.tsx`
 - `vite.config.ts`
 
-## Added files (31)
+## Added files (67)
 
-- `LICENSE`
-- `NOTICE`
 - `docs/MODIFIED-FILES.md`
+- `docs/PERFORMANCE.md`
+- `docs/QA-RECORDING.md`
 - `docs/SCRATCH-AUDIT.md`
 - `docs/SCREENSHOTS.md`
-- `docs/UX-AUDIT.md`
-- `docs/UPSTREAM-README.md`
-- `docs/VALIDATION.md`
 - `docs/screenshots/00-welcome.png`
 - `docs/screenshots/01-library.png`
 - `docs/screenshots/02-summary.png`
@@ -64,18 +62,57 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `docs/screenshots/05-notes.png`
 - `docs/screenshots/06-transcript.png`
 - `docs/screenshots/07-search.png`
+- `docs/UPSTREAM-README.md`
+- `docs/UX-AUDIT.md`
+- `docs/VALIDATION.md`
+- `docs/WINDOWS.md`
 - `eslint.config.js`
+- `LICENSE`
+- `NOTICE`
 - `playwright.config.ts`
 - `public/quietnote.svg`
+- `scripts/fetch-models.mjs`
+- `src-tauri/Entitlements.plist`
+- `src-tauri/icons/tray-recording-template.png`
+- `src-tauri/icons/tray-recording.png`
+- `src-tauri/icons/tray-template.png`
+- `src-tauri/Info.plist`
+- `src-tauri/src/app_state.rs`
+- `src-tauri/src/capture.rs`
+- `src-tauri/src/cleanup.rs`
+- `src-tauri/src/connectors.rs`
 - `src-tauri/src/meetings.rs`
+- `src-tauri/src/recorder.rs`
+- `src-tauri/src/transcribe.rs`
+- `src-tauri/src/transcript.rs`
+- `src-tauri/src/tray.rs`
+- `src-tauri/tauri.macos.conf.json`
+- `src-tauri/tauri.windows.conf.json`
+- `src/quietnote/brands/asana.svg`
+- `src/quietnote/brands/github.svg`
+- `src/quietnote/brands/gmail.svg`
+- `src/quietnote/brands/google-calendar.svg`
+- `src/quietnote/brands/google-docs.svg`
+- `src/quietnote/brands/google-meet.svg`
+- `src/quietnote/brands/jira.svg`
+- `src/quietnote/brands/linear.svg`
+- `src/quietnote/brands/notion.svg`
+- `src/quietnote/brands/obsidian.svg`
+- `src/quietnote/brands/outlook.svg`
+- `src/quietnote/brands/slack.svg`
+- `src/quietnote/brands/teams.svg`
+- `src/quietnote/brands/todoist.svg`
+- `src/quietnote/brands/zoom.svg`
 - `src/quietnote/Capture.tsx`
+- `src/quietnote/catalog.ts`
+- `src/quietnote/Connectors.tsx`
 - `src/quietnote/Dialogs.tsx`
 - `src/quietnote/Icon.tsx`
 - `src/quietnote/MeetingDetail.tsx`
-- `src/quietnote/QuietNoteApp.tsx`
-- `src/quietnote/Settings.tsx`
 - `src/quietnote/model.ts`
 - `src/quietnote/quietnote.css`
+- `src/quietnote/QuietNoteApp.tsx`
 - `src/quietnote/seeds.ts`
+- `src/quietnote/Settings.tsx`
 - `src/quietnote/storage.ts`
 - `tests/quietnote.spec.ts`

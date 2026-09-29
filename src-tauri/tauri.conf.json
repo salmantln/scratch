@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "app.quietnote.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run models && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run models && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -63,7 +63,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "14.6",
+      "entitlements": "Entitlements.plist"
     },
     "windows": {
       "webviewInstallMode": {

@@ -16,8 +16,18 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+mod app_state;
+mod capture;
+mod cleanup;
+mod connectors;
 mod git;
 mod meetings;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod recorder;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod transcribe;
+mod transcript;
+mod tray;
 
 // Note metadata for list display
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3716,6 +3726,10 @@ pub fn run() {
         // Single-instance: forward CLI args from subsequent launches to the running instance
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             handle_cli_args(app, &args, &cwd);
+            // A plain relaunch restores the (possibly hidden) main window.
+            if args.len() <= 1 {
+                tray::show_main(app);
+            }
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
@@ -3777,6 +3791,10 @@ pub fn run() {
                 debounce_map: Arc::new(Mutex::new(HashMap::new())),
             };
             app.manage(state);
+            app.manage(app_state::Shared::default());
+            app.manage(capture::Capture::default());
+            // Recordings cut short by a crash or ⌘Q are recovered and transcribed.
+            capture::recover(app.handle());
 
             // Add notes folder to asset protocol scope so images can be served
             if let Some(ref folder) = app.state::<AppState>().app_config.read().expect("app_config read lock").notes_folder.clone() {
@@ -3821,9 +3839,24 @@ pub fn run() {
                 }
             }
 
+            // Menu bar / system tray. A failure here leaves the app usable from its window.
+            if let Err(e) = tray::init(app.handle()) {
+                eprintln!("Failed to create the tray icon: {}", e);
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Closing the main window hides it; the app keeps running in the menu bar / tray
+            // until Quit QuietNote.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main"
+                    && !window.app_handle().state::<app_state::Shared>().quitting()
+                {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
             // Handle drag-and-drop of .md files onto any window
             if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                 let app = window.app_handle();
@@ -3843,6 +3876,21 @@ pub fn run() {
             meetings::create_meeting_bundle,
             meetings::save_meeting_metadata,
             meetings::quietnote_preferences,
+            tray::tray_sync,
+            tray::quietnote_quit,
+            capture::capture_status,
+            capture::capture_start,
+            capture::capture_stop,
+            capture::transcribe_meeting,
+            capture::transcript_data,
+            capture::render_transcripts,
+            capture::open_privacy_settings,
+            connectors::connector_status,
+            connectors::connector_connect,
+            connectors::connector_disconnect,
+            connectors::connector_targets,
+            connectors::connector_send,
+            connectors::connector_app_icons,
             get_notes_folder,
             set_notes_folder,
             list_notes,
@@ -3905,6 +3953,15 @@ pub fn run() {
     // Use .run() callback to handle macOS "Open With" file events
     // RunEvent::Opened is macOS-only in Tauri v2
     app.run(|_app_handle, _event| {
+        // ⌘Q and other exits skip the tray's Quit: finalize a running recording on the way out.
+        if let tauri::RunEvent::Exit = _event {
+            capture::shutdown(_app_handle);
+        }
+        // Clicking the Dock icon brings back the hidden main window.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = _event {
+            tray::show_main(_app_handle);
+        }
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Opened { urls } = _event {
             for url in urls {

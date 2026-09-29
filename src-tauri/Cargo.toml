@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
@@ -33,6 +33,29 @@ regex = "1"
 walkdir = "2"
 tauri-plugin-single-instance = "2"
 chrono = "0.4"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-foundation = { version = "0.3", features = ["NSUserDefaults", "NSString"] }
+objc2-foundation = { version = "0.3", features = ["NSUserDefaults", "NSString", "NSArray", "NSDictionary", "NSValue", "NSUUID"] }
+keyring = { version = "3", features = ["apple-native"] }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["objc2-core-graphics"] }
+objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "AVCaptureDevice", "AVMediaFormat"] }
+block2 = "0.6"
+objc2-core-audio = { version = "0.3", default-features = false, features = ["std", "AudioHardware", "objc2", "objc2-foundation"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFDictionary"] }
+
+# Local recording and transcription (macOS and Windows only; Linux keeps the prototype capture).
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+cpal = "0.18"
+hound = "3.5"
+rubato = "5"
+fs4 = "0.8"
+sha2 = "0.10"
+
+[target.'cfg(target_os = "macos")'.dependencies.whisper-rs]
+version = "0.16"
+features = ["metal"]
+
+[target.'cfg(target_os = "windows")'.dependencies.whisper-rs]
+version = "0.16"

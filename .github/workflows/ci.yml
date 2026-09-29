@@ -52,3 +52,49 @@ jobs:
       - name: Cargo clippy
         working-directory: src-tauri
         run: cargo clippy -- -D warnings
+
+  # Recording and transcription are only built on macOS and Windows; check and test them on macOS.
+  check-macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Cache speech models
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/models
+          key: models-${{ hashFiles('scripts/fetch-models.mjs') }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Fetch speech models
+        run: npm run models
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Cargo test
+        working-directory: src-tauri
+        run: cargo test

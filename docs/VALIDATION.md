@@ -44,6 +44,7 @@ Validated on macOS Apple Silicon, 28 September 2026.
 4. Explicit capture confirmation, recording properties, pause/resume, stop, processing, ready, and a persisted seventh prototype meeting.
 5. Disabled cloud fallback, privacy preference persistence, retention selection and desktop window widths.
 6. Simulated archive write failure, retained draft, reload recovery and successful retry.
+7. Connections directory: search, Planned services without actions, Linear/GitHub shown as desktop-only in the preview, issue links parsed from Markdown and shown as chips, no Send for examples. Rust unit tests cover request errors, target and issue parsing and repository validation; a one-off live check confirmed Linear and GitHub reject a bogus key with a readable message.
 
 ## Native evidence
 

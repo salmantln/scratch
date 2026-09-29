@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>QuietNote records your side of a meeting, only after you press Start recording. The audio stays on this Mac and is transcribed here.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>QuietNote records what the other people in your meeting say, from your Mac’s sound output, only after you press Start recording. It never joins the call. The audio stays on this Mac.</string>
+</dict>
+</plist>
