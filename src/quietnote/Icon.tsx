@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 const paths = {
+  home: 'M3 11l9-7 9 7 M5 9.5V20h14V9.5 M10 20v-6h4v6',
   meeting: 'M3 5h18v16H3z M3 10h18 M8 3v4 M16 3v4',
   recent: 'M12 8v5l3 2 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',
   search: 'M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
@@ -19,6 +20,7 @@ const paths = {
   copy: 'M8 8h12v12H8z M16 8V4H4v12h4',
   refresh: 'M20 7a9 9 0 1 0 1 9 M20 2v6h-6',
   plug: 'M9 2v5 M15 2v5 M6 7h12v4a6 6 0 0 1-12 0z M12 17v5',
+  sidebar: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M9 4v16',
 };
 export function Icon({ name, size = 18, style }: { name: keyof typeof paths; size?: number; style?: CSSProperties }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={style}><path d={paths[name]} /></svg>;
@@ -29,4 +31,12 @@ export function Logo({ size = 28 }: { size?: number }) {
     <path d="M80.5 0C113.101 0 141.175 19.3802 153.832 47.248C143.926 35.479 129.087 28 112.5 28C82.6766 28 58.5 52.1766 58.5 82C58.5 95.6945 63.5986 108.198 72 117.717V144H129.98C116.33 154.652 99.1566 161 80.5 161C36.0411 161 0 124.959 0 80.5C0 36.0411 36.0411 0 80.5 0ZM150.388 120.475C147.953 124.723 145.142 128.728 142 132.444V127.236C145.019 125.263 147.828 122.995 150.388 120.475Z" fill="#060C28" />
     <path d="M52 168C52 137.624 76.6243 113 107 113H155C155 143.376 130.376 168 100 168H52Z" fill="#4076FC" />
   </svg>;
+}
+export function Folder() {
+  return <div className="folder-art" aria-hidden="true">
+    <span className="folder-back" />
+    <span className="folder-sheet" /><span className="folder-sheet" />
+    <span className="folder-sheet"><Logo size={16} /><i /><i /></span>
+    <span className="folder-front" />
+  </div>;
 }

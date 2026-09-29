@@ -5,6 +5,8 @@ import { getNotesFolder, setNotesFolder, searchNotes, startFileWatcher } from '.
 import type { Meeting, MeetingMetadata } from './model';
 import { demoMeetings } from './seeds';
 export const desktop = isTauri();
+/** What the recording copy calls this computer. */
+export const device = /Mac/.test(navigator.userAgent) ? 'Mac' : 'PC';
 const key = 'quietnote.preview.archive.v1';
 const projectsKey = 'quietnote.preview.projects.v1';
 let archiveRoot = '';

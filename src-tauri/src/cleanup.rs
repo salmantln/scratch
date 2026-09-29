@@ -256,6 +256,12 @@ mod tests {
             "The UH-60 and the Um River.",
             "Ah, I see. Eh, fine.",
             "It was ah, fine.",
+            // Context-dependent words and acknowledgements carry meaning; "like" as a hedge stays.
+            "It was, like, really fast.",
+            "Uh-huh, that works.",
+            "Mm-hmm, agreed.",
+            "You know what, let's ship it.",
+            "I mean, the 3 of us.",
         ] {
             assert_eq!(cleaned(text), text);
         }

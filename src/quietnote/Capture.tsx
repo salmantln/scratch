@@ -1,27 +1,27 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon } from './Icon';
-import { Modal } from './Dialogs';
 import { clock, type Meeting } from './model';
 import * as storage from './storage';
 const mac = /Mac/.test(navigator.userAgent);
 const device = mac ? 'Mac' : 'PC';
 const settingsName = mac ? 'System Settings' : 'Settings';
-type Props = { meeting: Meeting; autoStart: boolean; live: storage.CaptureState; onUpdated: (meeting: Meeting) => void; onClose: () => void; onAddNotes: () => void };
+type Props = { meeting: Meeting; autoStart: boolean; live: storage.CaptureState; onUpdated: (meeting: Meeting) => void; onClose: () => void };
+/** The recorder sits inside the meeting, under the tabs, so notes and the transcript stay usable while it runs. */
 export function Capture(props: Props) { return props.live.available ? <Recorder {...props} /> : <Prototype {...props} />; }
 function useAutoStart(autoStart: boolean, start: () => Promise<void>) {
   const started = useRef(false);
   useEffect(() => { if (autoStart && !started.current) { started.current = true; void start(); } }, []);
 }
-// Keep focus on the one primary control as it changes between Start, Stop and Add notes.
-function useFocusPrimary(...deps: unknown[]) { useEffect(() => { document.querySelector<HTMLElement>('.modal.capture [data-autofocus]')?.focus(); }, deps); }
-function Status({ phase, elapsed, facts }: { phase: 'ready' | 'capturing' | 'ended'; elapsed: number; facts: string }) {
-  return <div key={phase} className={`capture-status ${phase}`} role="status">
-    <span className="capture-state">{phase === 'capturing' ? <><i className="live-dot" aria-hidden="true" />Recording</> : phase === 'ended' ? 'Recording ended' : 'Not recording'}</span>
-    <strong aria-label={`Elapsed time ${clock(elapsed)}`}>{clock(elapsed)}</strong>
-    <span className="capture-facts">{facts}</span>
-  </div>;
+function useNow(running: boolean) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [running]);
+  return now;
 }
-const track = (name: string, level: storage.Level) => level === 'heard' ? `${name} ✓` : `${name}: ${level === 'silent' ? 'silent' : 'no sound yet'}`;
+export const track = (name: string, level: storage.Level) => level === 'heard' ? `${name} ✓` : `${name}: ${level === 'silent' ? 'silent' : 'no sound yet'}`;
 /** What QuietNote will ask for and why, shown before the first OS permission prompt. */
 function FirstRun() {
   return <div className="capture-explainer">
@@ -35,25 +35,38 @@ function FirstRun() {
   </div>;
 }
 function Alert({ title, children, action }: { title: string; children: string; action?: [string, () => void] }) {
-  return <div className="capture-alert" role="alert"><strong>{title}</strong><p>{children}</p>{action && <button className="text-button" onClick={action[1]}>{action[0]}</button>}</div>;
+  return <div className="capture-alert" role="alert"><strong>{title}</strong> <span>{children}</span>{action && <button className="text-button" onClick={action[1]}>{action[0]}</button>}</div>;
+}
+/** One line while recording: state, elapsed time, what's being heard, Stop. Anything that needs attention goes below it. */
+function Strip({ label, elapsed, detail, detailTitle, action, children }: { label: string; elapsed?: number; detail?: string; detailTitle?: string; action?: ReactNode; children?: ReactNode }) {
+  return <section className="recorder-strip" aria-label="Recorder">
+    <div className="recorder-line">
+      <span className="recorder-state" role="status"><i className="live-dot" aria-hidden="true" />{label}</span>
+      {elapsed !== undefined && <strong className="recorder-time" aria-label={`Elapsed time ${clock(elapsed)}`}>{clock(elapsed)}</strong>}
+      {detail && <span className="recorder-detail" title={detailTitle}>{detail}</span>}
+      {action}
+    </div>
+    {children}
+  </section>;
+}
+/** Shown only when a start is held back: the first-run explanation, a permission or start problem. */
+function StartCard({ children, busy, label, disabled, onStart, onCancel }: { children: ReactNode; busy: boolean; label: string; disabled?: boolean; onStart: () => void; onCancel: () => void }) {
+  return <section className="recorder-strip expanded" aria-label="Recorder">
+    {children}
+    <div className="recorder-actions"><button className="secondary" disabled={busy} onClick={onCancel}>Cancel</button><button className="primary" disabled={busy || disabled} onClick={onStart}>{label}</button></div>
+  </section>;
 }
 /** Real capture: Rust records the mic and system audio, then transcribes on this device. */
-function Recorder({ meeting, autoStart, live, onUpdated, onClose, onAddNotes }: Props) {
-  const { id, status, duration } = meeting.metadata;
+function Recorder({ meeting, autoStart, live, onUpdated, onClose }: Props) {
+  const { id, status } = meeting.metadata;
   const [failure, setFailure] = useState<storage.CaptureFailure | null>(null);
   const [busy, setBusy] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const recording = live.recording?.meetingId === id ? live.recording : null;
   const other = live.recording && !recording ? live.recording : null;
-  const phase = recording || status === 'recording' ? 'capturing' : status === 'idle' ? 'ready' : 'ended';
+  const capturing = Boolean(recording) || status === 'recording';
   const firstRun = live.microphone === 'undetermined';
-  const denied = phase === 'ready' && (failure?.code === 'mic-denied' || live.microphone === 'denied');
-  useEffect(() => {
-    if (!recording) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(timer);
-  }, [recording]);
-  const elapsed = recording ? (now - Date.parse(recording.startedAt)) / 1000 : duration;
+  const denied = !capturing && (failure?.code === 'mic-denied' || live.microphone === 'denied');
+  const now = useNow(Boolean(recording));
   async function start() {
     setBusy(true); setFailure(null);
     try { onUpdated({ ...meeting, metadata: await storage.captureStart(id) }); }
@@ -68,89 +81,61 @@ function Recorder({ meeting, autoStart, live, onUpdated, onClose, onAddNotes }: 
   }
   const settings = (kind: 'microphone' | 'systemAudio'): [string, () => void] => [`Open ${settingsName}`, () => void storage.openPrivacySettings(kind).catch(() => { /* The message says where to go. */ })];
   // The first recording waits for Start, so the explanation comes before macOS asks.
-  useAutoStart(autoStart && !firstRun && !denied, start);
-  useFocusPrimary(phase, busy, denied);
-  const job = live.transcribing?.meetingId === id ? live.transcribing : null;
-  const facts = phase === 'ready' ? `Records your microphone and the call audio on this ${device}. Nothing joins the call.`
-    : recording ? 'Started by you · No bot joined'
-    : status === 'processing' ? (job ? `Transcribing on this ${device}… ${job.percent}%` : 'Waiting to transcribe…')
-    : status === 'ready' ? 'Transcript ready. Add your notes while the meeting is fresh.'
-    : 'The transcript couldn’t be made. The audio is kept, so you can try again.';
-  return <Modal className="capture" title={meeting.metadata.title} onEscape={busy ? undefined : onClose}>
-    <p className="capture-project"><Icon name="folder" size={14} />{meeting.metadata.project}</p>
-    {phase === 'ready' && firstRun && mac && !failure ? <FirstRun /> : <Status phase={phase} elapsed={elapsed} facts={facts} />}
-    {recording && <p className="capture-tracks" title={[recording.micDevice, recording.systemDevice].filter(Boolean).join(' · ')}>{track('Mic', recording.mic)} · {track('Call audio', recording.system)}</p>}
-    {recording?.problem && <Alert title="Needs attention">{recording.problem}</Alert>}
-    {recording && !recording.problem && recording.mic === 'silent' && <Alert title="Your microphone is silent" action={settings('microphone')}>{`No sound has come from ${recording.micDevice ?? 'the microphone'}. Check that it isn’t muted, and that QuietNote is allowed to use it.`}</Alert>}
-    {recording && recording.system === 'silent' && <Alert title="No call audio yet" action={mac ? settings('systemAudio') : undefined}>{mac ? 'If others are talking, allow QuietNote under Screen & System Audio Recording. If you just allowed it, stop and start recording again.' : 'If others are talking, check that the call plays through your default speakers or headset.'}</Alert>}
-    {recording?.note && <p className="capture-note">{recording.note}</p>}
-    {phase === 'capturing' && <p className="capture-note">Recording continues in the {mac ? 'menu bar' : 'system tray'} if you close this.</p>}
-    {phase === 'ready' && live.model !== 'ready' && <Alert title="Transcription is unavailable">{`The speech model is ${live.model} in this installation. You can still record; the audio is kept for when transcription works.`}</Alert>}
-    {phase === 'ready' && other && <Alert title="Another meeting is recording">{`“${other.title}” is recording. Stop it first.`}</Alert>}
-    {denied ? <Alert title="Microphone access is off" action={settings('microphone')}>{failure?.message ?? `QuietNote can’t use the microphone. Allow it in ${settingsName}, then try again.`}</Alert>
-      : failure && <Alert title={failure.code === 'disk' ? 'Not enough disk space' : 'Recording didn’t start'}>{failure.message}</Alert>}
-    <div className="modal-actions">
-      {phase === 'ready' && <><button className="secondary" disabled={busy} onClick={onClose}>Cancel</button><button className="primary" data-autofocus disabled={busy || Boolean(other)} onClick={() => void start()}>{busy ? (firstRun ? 'Waiting for permission…' : 'Starting…') : denied || failure ? 'Try again' : 'Start recording'}</button></>}
-      {phase === 'capturing' && <><button className="secondary" disabled={busy} onClick={onClose}>Hide</button><button className="primary stop" data-autofocus disabled={busy} onClick={() => void stop()}><Icon name="stop" size={15} />{busy ? 'Stopping…' : 'Stop recording'}</button></>}
-      {phase === 'ended' && <><button className="secondary" onClick={onClose}>Close</button><button className="primary" data-autofocus onClick={onAddNotes}>Add notes</button></>}
-    </div>
-  </Modal>;
+  const auto = autoStart && status === 'idle' && !firstRun && !denied && !other;
+  useAutoStart(auto, start);
+  if (capturing) return <Strip label="Recording" elapsed={recording ? (now - Date.parse(recording.startedAt)) / 1000 : undefined}
+    detail={recording ? `${track('Mic', recording.mic)} · ${track('Call audio', recording.system)}` : undefined} detailTitle={recording ? [recording.micDevice, recording.systemDevice].filter(Boolean).join(' · ') : undefined}
+    action={<button className="primary stop" disabled={busy} onClick={() => void stop()}><Icon name="stop" size={14} />{busy ? 'Stopping…' : 'Stop recording'}</button>}>
+    {recording?.problem && <Alert title="Needs attention.">{recording.problem}</Alert>}
+    {recording && !recording.problem && recording.mic === 'silent' && <Alert title="Your microphone is silent." action={settings('microphone')}>{`No sound has come from ${recording.micDevice ?? 'the microphone'}. Check that it isn’t muted, and that QuietNote is allowed to use it.`}</Alert>}
+    {recording && recording.system === 'silent' && <Alert title="No call audio yet." action={mac ? settings('systemAudio') : undefined}>{mac ? 'If others are talking, allow QuietNote under Screen & System Audio Recording. If you just allowed it, stop and start recording again.' : 'If others are talking, check that the call plays through your default speakers or headset.'}</Alert>}
+    {recording?.note && <p className="recorder-note">{recording.note}</p>}
+    {failure && <Alert title="Recording didn’t stop.">{failure.message}</Alert>}
+  </Strip>;
+  if (!firstRun && (busy || (auto && !failure))) return <Strip label="Starting…" />;
+  return <StartCard busy={busy} disabled={Boolean(other)} onStart={() => void start()} onCancel={onClose} label={busy ? 'Waiting for permission…' : denied || failure ? 'Try again' : 'Start recording'}>
+    {firstRun && mac && !failure ? <FirstRun /> : <p className="recorder-intro">Records your microphone and the call audio on this {device}. Nothing joins the call.</p>}
+    {live.model !== 'ready' && <Alert title="Transcription is unavailable.">{`The speech model is ${live.model} in this installation. You can still record; the audio is kept for when transcription works.`}</Alert>}
+    {other && <Alert title="Another meeting is recording.">{`“${other.title}” is recording. Stop it first.`}</Alert>}
+    {denied ? <Alert title="Microphone access is off." action={settings('microphone')}>{failure?.message ?? `QuietNote can’t use the microphone. Allow it in ${settingsName}, then try again.`}</Alert>
+      : failure && <Alert title={failure.code === 'disk' ? 'Not enough disk space.' : 'Recording didn’t start.'}>{failure.message}</Alert>}
+  </StartCard>;
 }
 /** The browser preview (and platforms without recording) track a session but record no audio. */
-function Prototype({ meeting, autoStart, onUpdated, onClose, onAddNotes }: Props) {
-  const [record, setRecord] = useState(meeting);
-  const [phase, setPhase] = useState<'ready' | 'capturing' | 'ended'>('ready');
-  const [elapsed, setElapsed] = useState(0);
+function Prototype({ meeting, autoStart, onUpdated, onClose }: Props) {
+  const { status, captureStartedAt } = meeting.metadata;
+  const capturing = status === 'recording';
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const started = useRef(0);
-  const capturing = phase === 'capturing';
-  useEffect(() => {
-    if (!capturing) return;
-    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - started.current) / 1000)), 250);
-    return () => clearInterval(timer);
-  }, [capturing]);
+  const now = useNow(capturing);
+  const elapsed = Math.max(0, Math.floor((now - Date.parse(captureStartedAt ?? new Date(now).toISOString())) / 1000));
   useEffect(() => {
     if (!capturing) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [capturing]);
-  async function save(next: Meeting) {
-    await storage.saveMetadata(next.metadata); setRecord(next); onUpdated(next);
-  }
+  async function save(next: Meeting) { await storage.saveMetadata(next.metadata); onUpdated(next); }
   async function start() {
     setBusy(true); setError('');
-    try {
-      await save({ ...record, metadata: { ...record.metadata, status: 'recording', captureStartedAt: new Date().toISOString() } });
-      started.current = Date.now(); setElapsed(0); setPhase('capturing');
-    } catch (e) { setError(`Couldn’t start capture. ${String(e)}`); }
+    try { await save({ ...meeting, metadata: { ...meeting.metadata, status: 'recording', captureStartedAt: new Date().toISOString() } }); }
+    catch (e) { setError(`Couldn’t start capture. ${String(e)}`); }
     finally { setBusy(false); }
   }
   async function stop() {
     setBusy(true); setError('');
-    const duration = Math.floor((Date.now() - started.current) / 1000);
-    try {
-      await save({ ...record, metadata: { ...record.metadata, status: 'ready', duration, captureEndedAt: new Date().toISOString() } });
-      setElapsed(duration); setPhase('ended');
-    } catch (e) { setError(`Couldn’t save the end of capture. Try again. ${String(e)}`); }
-    finally { setBusy(false); }
+    try { await save({ ...meeting, metadata: { ...meeting.metadata, status: 'ready', duration: elapsed, captureEndedAt: new Date().toISOString() } }); onClose(); }
+    catch (e) { setError(`Couldn’t save the end of capture. Try again. ${String(e)}`); setBusy(false); }
   }
-  useAutoStart(autoStart, start);
-  useFocusPrimary(phase, busy);
-  return <Modal className="capture" title={record.metadata.title} onEscape={capturing || busy ? undefined : onClose}>
-    <p className="capture-project"><Icon name="folder" size={14} />{record.metadata.project}</p>
-    <p className="prototype-line"><span className="badge">Prototype</span>{storage.desktop ? 'Recording isn’t available on this platform yet.' : 'Recording needs the desktop app.'}</p>
-    <div key={phase} className={`capture-status ${phase}`} role="status">
-      <span className="capture-state">{phase === 'capturing' ? <><i className="live-dot" aria-hidden="true" />Capturing</> : phase === 'ended' ? 'Capture ended' : 'Not capturing'}</span>
-      <strong aria-label={`Elapsed time ${clock(elapsed)}`}>{clock(elapsed)}</strong>
-      <span className="capture-facts">{phase === 'ended' ? 'No audio was recorded. Add your notes while the meeting is fresh.' : 'Started by you · No bot joins the call'}</span>
-    </div>
-    {error && <p className="field-error" role="alert">{error}</p>}
-    <div className="modal-actions">
-      {phase === 'ready' && <><button className="secondary" disabled={busy} onClick={onClose}>Cancel</button><button className="primary" data-autofocus disabled={busy} onClick={() => void start()}>{busy ? 'Starting…' : 'Start capture'}</button></>}
-      {phase === 'capturing' && <button className="primary stop" data-autofocus disabled={busy} onClick={() => void stop()}><Icon name="stop" size={15} />{busy ? 'Stopping…' : 'Stop capture'}</button>}
-      {phase === 'ended' && <><button className="secondary" onClick={onClose}>Close</button><button className="primary" data-autofocus onClick={onAddNotes}>Add notes</button></>}
-    </div>
-  </Modal>;
+  useAutoStart(autoStart && !capturing, start);
+  const prototype = storage.desktop ? 'Prototype: recording isn’t available on this platform yet' : 'Prototype: recording needs the desktop app';
+  if (capturing) return <Strip label="Capturing" elapsed={elapsed} detail={`${prototype}. No audio is recorded.`}
+    action={<button className="primary stop" disabled={busy} onClick={() => void stop()}><Icon name="stop" size={14} />{busy ? 'Stopping…' : 'Stop capture'}</button>}>
+    {error && <Alert title="Capture didn’t stop.">{error}</Alert>}
+  </Strip>;
+  if (busy || !error) return <Strip label="Starting…" />;
+  return <StartCard busy={busy} onStart={() => void start()} onCancel={onClose} label="Try again">
+    <p className="recorder-intro">{prototype}.</p>
+    <Alert title="Capture didn’t start.">{error}</Alert>
+  </StartCard>;
 }

@@ -48,24 +48,26 @@ export function NewProjectDialog({ existing, onCreate, onClose }: { existing: st
     </form>
   </Modal>;
 }
-/** With `record`, creating the meeting also starts recording it: the button press is the explicit start. */
-export function NewMeetingDialog({ projects, project: initial, record = false, onCreate, onClose }: { projects: string[]; project: string; record?: boolean; onCreate: (title: string, project: string) => Promise<void>; onClose: () => void }) {
+/** With `canRecord`, the primary action creates the meeting and starts recording it: that press is the explicit start. */
+export function NewMeetingDialog({ projects, project: initial, canRecord = false, onCreate, onClose }: { projects: string[]; project: string; canRecord?: boolean; onCreate: (title: string, project: string, record: boolean) => Promise<void>; onClose: () => void }) {
   const id = useId();
   const [title, setTitle] = useState('');
   const [project, setProject] = useState(projects.includes(initial) ? initial : projects[0]);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  async function submit() {
-    setBusy(true); setError('');
-    try { await onCreate(title.trim() || 'Untitled meeting', project); }
-    catch (e) { setError(`Couldn’t create the meeting. ${String(e).replace(/^Error: /, '')}`); setBusy(false); }
+  const [busy, setBusy] = useState<'' | 'create' | 'record'>('');
+  async function submit(record: boolean) {
+    setBusy(record ? 'record' : 'create'); setError('');
+    try { await onCreate(title.trim() || 'Untitled meeting', project, record); }
+    catch (e) { setError(`Couldn’t create the meeting. ${String(e).replace(/^Error: /, '')}`); setBusy(''); }
   }
   return <Modal title="New meeting" onEscape={busy ? undefined : onClose}>
-    <form onSubmit={e => { e.preventDefault(); void submit(); }}>
+    <form onSubmit={e => { e.preventDefault(); void submit(canRecord); }}>
       <div className="field"><label htmlFor={`${id}-title`}>Meeting title</label><input id={`${id}-title`} value={title} maxLength={160} placeholder="Untitled meeting" onChange={e => setTitle(e.target.value)} /></div>
       <div className="field"><label htmlFor={`${id}-project`}>Project</label><select id={`${id}-project`} value={project} onChange={e => setProject(e.target.value)}>{projects.map(p => <option key={p}>{p}</option>)}</select></div>
       {error && <p className="field-error" role="alert">{error}</p>}
-      <div className="modal-actions"><button type="button" className="secondary" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy ? 'Creating…' : record ? 'Start recording' : 'Create meeting'}</button></div>
+      <div className="modal-actions"><button type="button" className="secondary" disabled={Boolean(busy)} onClick={onClose}>Cancel</button>
+        {canRecord && <button type="button" className="secondary" disabled={Boolean(busy)} onClick={() => void submit(false)}>{busy === 'create' ? 'Creating…' : 'Create meeting'}</button>}
+        <button type="submit" className="primary" disabled={Boolean(busy)}>{canRecord ? (busy === 'record' ? 'Starting…' : 'Start recording') : busy ? 'Creating…' : 'Create meeting'}</button></div>
     </form>
   </Modal>;
 }

@@ -63,14 +63,14 @@ Use a signed build (`npm run tauri build`) for anything involving permissions. D
 | Tray quit while recording reads "Stop recording and quit"; the audio is finalized, and the next launch transcribes it | ✓ auto (menu, recovery) ☐ (real) |
 | ⌘Q while recording: the next launch transcribes the recording | ☐ |
 | `kill -9` mid-recording: the next launch shows "Recovered recording" (banner and notice), then the transcript or a clear failure | ✓ auto (recovery logic, UI) ☐ (real) |
-| QuietNote crashes during transcription twice: the meeting shows "closed while transcribing", the audio is kept, and Try again works | ✓ auto (logic) ☐ (real) |
+| QuietNote crashes during transcription twice: the meeting shows "closed while transcribing" under Details, the audio is kept, and Retry transcription works | ✓ auto (logic) ☐ (real) |
 
 ### Transcription and retention
 | Check | Status |
 |---|---|
 | 30+ minute call: timer stable, audio valid, transcription completes, UI responsive | ✓ live 60-min recorder soak, 60-min synthetic transcription (see PERFORMANCE.md) ☐ real call |
 | Clean is the default; Verbatim shows the fillers; switching changes nothing on disk | ✓ auto |
-| Transcription failure (e.g. remove the model from the app bundle): "The transcript couldn't be made", reason shown, audio kept, Try again | ✓ auto (UI, logic) ☐ (real) |
+| Transcription failure (e.g. remove the model from the app bundle): "Transcription couldn't finish. Your recording is still saved", reason under Details, audio kept, Retry transcription | ✓ auto (UI, logic) ☐ (real) |
 | Delete audio after transcribing on: audio is gone after success; after a failure it's still there | ✓ auto |
 | Disk nearly full: Start is refused below 1 GB; recording stops cleanly below 150 MB | ✓ auto (thresholds) ☐ (real) |
 

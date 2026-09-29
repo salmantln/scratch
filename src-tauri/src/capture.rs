@@ -298,7 +298,8 @@ fn work(app: AppHandle) {
             Ok(Some((metadata, markdown))) => changed(&app, &metadata, Some(markdown), None),
             Ok(None) => {}
             Err(e) => if let Ok(metadata) = meetings::root(&app).and_then(|root| record_failure(&root, &id, &e)) {
-                changed(&app, &metadata, None, Some(format!("Couldn’t transcribe “{}”. The audio is kept, so you can try again. {e}", metadata.title)));
+                // The reason is kept in `metadata.error` and shown under Details on the meeting.
+                changed(&app, &metadata, None, Some(format!("Transcription of “{}” couldn’t finish. Your recording is still saved; open the meeting to retry.", metadata.title)));
             },
         }
         publish(&app);

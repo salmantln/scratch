@@ -1,9 +1,24 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-const Editor = lazy(() => import('../components/editor/Editor').then(module => ({ default: module.Editor })));
+import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Capture } from './Capture';
 import { Icon } from './Icon';
 import { serviceName } from './catalog';
-import { openLink, revealAudio, transcriptData, type CaptureState, type Connections, type Service, type TranscriptTurn } from './storage';
+import { device, openLink, revealAudio, transcriptData, type CaptureState, type Connections, type Service, type TranscriptTurn } from './storage';
 import { actionItems, appendItem, clock, dateLabel, decisions, durationLabel, meetingTabs, section, statusLabel, timeLabel, toggleAction, transcriptTurns, type Meeting, type MeetingTab } from './model';
+const Editor = lazy(() => import('../components/editor/Editor').then(module => ({ default: module.Editor })));
+/** A failure in the notes editor stays in the Notes tab instead of blanking the window. A failed import is cached
+ * by the webview, so recovering means reloading; drafts and the open tab are restored. */
+class NotesBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error) { console.error('Notes couldn’t open.', error); }
+  render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+    return <div className="empty-inline" role="alert"><h2>Notes couldn’t open.</h2><p>Your saved notes are unchanged in the meeting file.</p>
+      <button className="secondary" onClick={() => location.reload()}>Reload</button>
+      <details className="advanced"><summary>Details</summary><p className="path">{error.stack ?? String(error)}</p></details></div>;
+  }
+}
 function AddItem({ label, onAdd }: { label: string; onAdd: (text: string) => Promise<void> }) {
   const [text, setText] = useState('');
   return <form className="add-item" onSubmit={e => { e.preventDefault(); if (text.trim()) void onAdd(text).then(() => setText('')); }}>
@@ -11,13 +26,12 @@ function AddItem({ label, onAdd }: { label: string; onAdd: (text: string) => Pro
     {text.trim() && <button type="submit" className="text-button">Add</button>}
   </form>;
 }
-const device = /Mac/.test(navigator.userAgent) ? 'Mac' : 'PC';
-export function MeetingDetail({ meeting, example, connections, live, cleanDefault, tab, onTab, onMarkdown, onNotes, onDraft, onStartCapture, onShowCapture, onStopCapture, onRetry, onMarkEnded, onDismissRecovered, onSend }: {
-  meeting: Meeting; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; tab: MeetingTab; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
-  onStartCapture: () => void; onShowCapture: () => void; onStopCapture: () => void; onRetry: () => void; onMarkEnded: () => void; onDismissRecovered: () => void;
+export function MeetingDetail({ meeting, example, connections, live, cleanDefault, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onMarkEnded, onDismissRecovered, onSend }: {
+  meeting: Meeting; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
+  armed: boolean; onUpdated: (meeting: Meeting) => void; onStartCapture: () => void; onCloseCapture: () => void; onRetry: () => void; onMarkEnded: () => void; onDismissRecovered: () => void;
 }) {
   const { metadata: meta, markdown, transcript } = meeting;
-  const [transcriptQuery, setTranscriptQuery] = useState('');
+  const [transcriptQuery, setTranscriptQuery] = useState(find);
   // Both views of a recorded transcript. Switching only changes what's shown; the raw words stay.
   const [verbatim, setVerbatim] = useState(!cleanDefault);
   const [raw, setRaw] = useState<TranscriptTurn[] | null>(null);
@@ -42,6 +56,7 @@ export function MeetingDetail({ meeting, example, connections, live, cleanDefaul
   const transcribing = job ? `Transcribing on this ${device}… ${job.percent}%` : 'Waiting to transcribe…';
   const audioKept = Boolean(meta.audioPath && live.available);
   const endedAt = meta.captureEndedAt ? timeLabel(meta.captureEndedAt) : '';
+  const details = meta.error && <details><summary>Details</summary><p>{meta.error}</p></details>;
   const shownTurns = turns.filter(t => `${t.speaker} ${t.text}`.toLowerCase().includes(transcriptQuery.toLowerCase()));
   const status = statusLabel(meta.status);
   const duration = durationLabel(meta.duration);
@@ -58,7 +73,7 @@ export function MeetingDetail({ meeting, example, connections, live, cleanDefaul
           <h1>{meta.title}{example && <span className="badge example">Example</span>}</h1>
           <p className="meeting-meta"><span>{meta.project}</span><span>{dateLabel(meta.date)}, {timeLabel(meta.date)}</span>{duration && <span>{duration}</span>}{status && <span className={`status ${meta.status}`}><i aria-hidden="true" />{status}</span>}{meta.participants.length > 0 && <span className="participants" title={meta.participants.join(', ')}>{meta.participants.join(', ')}</span>}</p>
         </div>
-        {meta.status === 'idle' && <button className="secondary" disabled={Boolean(other)} title={other ? `“${other.title}” is recording. Stop it first.` : undefined} onClick={onStartCapture}>{live.available ? 'Start recording' : 'Start capture'}</button>}
+        {meta.status === 'idle' && !armed && <button className={live.available ? 'primary' : 'secondary'} disabled={Boolean(other)} title={other ? `“${other.title}” is recording. Stop it first.` : undefined} onClick={onStartCapture}>{live.available ? <><i className="record-dot" aria-hidden="true" />Start recording</> : 'Start capture'}</button>}
       </div>
       <div className="meeting-tabs" role="tablist" aria-label="Meeting sections" onKeyDown={e => {
         const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
@@ -68,15 +83,16 @@ export function MeetingDetail({ meeting, example, connections, live, cleanDefaul
         onTab(next); document.getElementById(tabIds(next).tab)?.focus();
       }}>{meetingTabs.map(t => <button key={t} id={tabIds(t).tab} role="tab" aria-selected={t === tab} aria-controls={tabIds(t).panel} tabIndex={t === tab ? 0 : -1} onClick={() => onTab(t)}>{t}{t === 'Action items' && open.length > 0 && <><span className="count" aria-hidden="true">{open.length}</span><span className="sr-only">, {open.length} open</span></>}</button>)}</div>
     </header>
-    {meta.status === 'idle' && other && <p className="subtle start-hint">“{other.title}” is recording. Stop it before recording this meeting.</p>}
-    {meta.status === 'recording' && live.recording?.meetingId === meta.id && <div className="notice live" role="status"><i className="live-dot" aria-hidden="true" /><div><strong>Recording on this {device}.</strong><p>Started by you · No bot joined</p></div><div className="notice-actions"><button className="text-button" onClick={onShowCapture}>Show recorder</button><button className="text-button" onClick={onStopCapture}>Stop recording</button></div></div>}
+    {meta.status === 'idle' && other && !armed && <p className="subtle start-hint">“{other.title}” is recording. Stop it before recording this meeting.</p>}
+    {(armed || live.recording?.meetingId === meta.id || (!live.available && meta.status === 'recording')) && <Capture meeting={meeting} autoStart={armed} live={live} onUpdated={onUpdated} onClose={onCloseCapture} />}
     {meta.interrupted ? <div className={`notice ${meta.status === 'error' ? 'attention' : ''}`} role="status"><Icon name="info" size={16} /><div>
         <strong>Recovered recording</strong>
-        <p>QuietNote closed before this recording was stopped. The audio{endedAt && ` up to ${endedAt}`} was saved. {meta.status === 'processing' ? transcribing : meta.status === 'ready' ? 'The transcript was recovered.' : `The transcript couldn’t be made${meta.error ? `: ${meta.error}` : '.'} The audio is kept, so you can try again.`}</p>
-      </div><div className="notice-actions">{meta.status === 'error' && audioKept && <button className="text-button" onClick={onRetry}>Try again</button>}{meta.status !== 'processing' && <button className="text-button" onClick={onDismissRecovered}>Dismiss</button>}</div></div>
+        <p>QuietNote closed before this recording was stopped. The audio{endedAt && ` up to ${endedAt}`} was saved. {meta.status === 'processing' ? transcribing : meta.status === 'ready' ? 'Its transcript is ready.' : 'Transcription couldn’t finish. Your recording is still saved.'}</p>
+        {meta.status === 'error' && details}
+      </div><div className="notice-actions">{meta.status === 'error' && audioKept && <button className="text-button" onClick={onRetry}>Retry transcription</button>}{meta.status !== 'processing' && <button className="text-button" onClick={onDismissRecovered}>Dismiss</button>}</div></div>
     : meta.status === 'processing' ? <div className="notice" role="status"><Icon name="recent" size={16} /><div><strong>{transcribing}</strong><p>This runs on this {device}. You can keep working or close the window. The audio is kept until the transcript is saved.</p></div></div>
-    : meta.status === 'error' && audioKept ? <div className="notice attention" role="status"><Icon name="info" size={16} /><div><strong>The transcript couldn’t be made.</strong><p>{meta.error ? `${meta.error} ` : ''}The audio is saved{meta.duration > 0 ? ` (${durationLabel(meta.duration)})` : ''}, so you can try again.</p></div><div className="notice-actions"><button className="text-button" onClick={() => void revealAudio(meta)}>Show audio</button><button className="text-button" onClick={onRetry}>Try again</button></div></div>
-    : meta.status === 'error' && <div className="notice attention" role="status"><Icon name="info" size={16} /><div><strong>This meeting was interrupted before it finished.</strong><p>{meta.error ?? 'QuietNote closed while capture was running. No audio was recorded.'} Anything you wrote in Notes is kept.</p></div><div className="notice-actions"><button className="text-button" onClick={() => onTab('Notes')}>Add notes</button><button className="text-button" onClick={onMarkEnded}>Mark as ended</button></div></div>}
+    : meta.status === 'error' && audioKept ? <div className="notice attention" role="status"><Icon name="info" size={16} /><div><strong>Transcription couldn’t finish.</strong><p>Your recording is still saved{meta.duration > 0 ? ` (${durationLabel(meta.duration)})` : ''}, so you can retry.</p>{details}</div><div className="notice-actions"><button className="text-button" onClick={() => void revealAudio(meta)}>Show audio</button><button className="text-button" onClick={onRetry}>Retry transcription</button></div></div>
+    : meta.status === 'error' && <div className="notice attention" role="status"><Icon name="info" size={16} /><div><strong>This meeting was interrupted before it finished.</strong><p>{meta.error ?? (live.available ? 'QuietNote closed while it was recording, and no audio was saved.' : 'QuietNote closed while capture was running. No audio was recorded.')} Anything you wrote in Notes is kept.</p></div><div className="notice-actions"><button className="text-button" onClick={() => onTab('Notes')}>Add notes</button><button className="text-button" onClick={onMarkEnded}>Mark as ended</button></div></div>}
     <div className="meeting-content" role="tabpanel" id={tabIds(tab).panel} aria-labelledby={tabIds(tab).tab}>
       {tab === 'Summary' && <>
         {summary ? <div className="summary-text">{summary.split(/\n{2,}/).map((p, i) => <p key={i}>{p}</p>)}</div> : <div className="empty-inline"><h2>No summary yet.</h2><p>Automatic summaries aren’t available in this version. Your own notes are the record of this meeting.</p><button className="secondary" onClick={() => onTab('Notes')}>Add notes</button></div>}
@@ -92,7 +108,7 @@ export function MeetingDetail({ meeting, example, connections, live, cleanDefaul
         {actions.length ? <div className="action-list">{actions.map(renderAction)}</div> : <div className="empty-inline"><h2>No action items yet.</h2><p>Add follow-ups as you go. Write “Maya — send the plan” to note an owner.</p></div>}
         <AddItem label="Add an action item" onAdd={text => onMarkdown(appendItem(markdown, 'Action items', text))} />
       </section>}
-      {tab === 'Notes' && <div className="quiet-editor"><Suspense fallback={<p className="subtle">Opening notes…</p>}><Editor onDraftChange={onDraft} key={meta.id} previewMode={{ content: section(markdown, 'Notes'), title: 'Notes', filePath: meta.meetingPath, modified: 0, hasExternalChanges: false, reloadVersion: 0, save, reload: async () => {} }} /></Suspense></div>}
+      {tab === 'Notes' && <div className="quiet-editor"><NotesBoundary><Suspense fallback={<p className="subtle">Opening notes…</p>}><Editor onDraftChange={onDraft} key={meta.id} previewMode={{ content: section(markdown, 'Notes'), title: 'Notes', filePath: meta.meetingPath, modified: 0, hasExternalChanges: false, reloadVersion: 0, save, reload: async () => {} }} /></Suspense></NotesBoundary></div>}
       {tab === 'Transcript' && <section>
         {turns.length ? <>
           <div className="transcript-tools">{example && <span className="subtle">Example transcript · illustrative, not a recording</span>}

@@ -69,18 +69,23 @@ fn entries(state: &capture::State, listing: Option<&meetings::Listing>, project:
         if let Some(problem) = &live.problem { out.push(item("problem", format!("⚠ {}", label(problem.split_inclusive(". ").next().unwrap_or(problem))), false)); }
         out.push(item("stop", "Stop recording", true));
         out.push(item(format!("meeting:{}", live.meeting_id), "Open meeting", true));
+    } else if state.available {
+        // New meeting's primary action is Start recording, so one entry opens it.
+        out.push(item("record", "Start recording…", true));
     } else {
         out.push(item("new", "New meeting…", true));
-        if state.available { out.push(item("record", "Start recording…", true)); }
     }
     if let Some(job) = &state.transcribing { out.push(item("progress", format!("Transcribing {}… {}%", label(&job.title), job.percent), false)); }
-    out.push(Entry::Separator);
-    out.push(item("recent", "Recent", false));
-    if recent.is_empty() { out.push(item("none", "No meetings yet", false)); }
-    out.extend(recent.iter().map(|(id, title)| item(format!("meeting:{id}"), label(title), true)));
-    if !projects.is_empty() {
+    // While recording, the menu is a control surface: recent meetings and projects wait until it stops.
+    if state.recording.is_none() {
         out.push(Entry::Separator);
-        out.push(Entry::Projects(project.filter(|p| projects.contains(p)), projects.clone()));
+        out.push(item("recent", "Recent", false));
+        if recent.is_empty() { out.push(item("none", "No meetings yet", false)); }
+        out.extend(recent.iter().map(|(id, title)| item(format!("meeting:{id}"), label(title), true)));
+        if !projects.is_empty() {
+            out.push(Entry::Separator);
+            out.push(Entry::Projects(project.filter(|p| projects.contains(p)), projects.clone()));
+        }
     }
     out.extend([Entry::Separator, item("open", "Open QuietNote", true), item("settings", "Settings…", true), quit]);
     out
@@ -120,9 +125,8 @@ fn on_menu(app: &AppHandle, id: &str) {
     }
     show_main(app);
     let _ = match id {
-        "new" => app.emit_to("main", "quietnote://new-meeting", serde_json::json!({ "record": false })),
-        // Opens New meeting with "Start recording" as its action; recording starts only from there.
-        "record" => app.emit_to("main", "quietnote://new-meeting", serde_json::json!({ "record": true })),
+        // Opens New meeting; recording starts only from its Start recording button.
+        "new" | "record" => app.emit_to("main", "quietnote://new-meeting", ()),
         "settings" => app.emit_to("main", "quietnote://open-settings", ()),
         _ => match (id.strip_prefix("meeting:"), id.strip_prefix("project:")) {
             (Some(meeting), _) => app.emit_to("main", "quietnote://open-meeting", meeting),
@@ -214,18 +218,20 @@ mod tests {
     #[test]
     fn menu_says_what_the_window_says() {
         let listing: meetings::Listing = (vec!["Acme".into()], vec![("m1".into(), "Acme onboarding".into())]);
-        let idle = entries(&state(false, false, None), Some(&listing), None);
-        assert_eq!(texts(&idle)[..2], ["New meeting…", "Start recording…"]);
-        assert_eq!(texts(&idle).last(), Some(&"Quit QuietNote"));
+        let idle = entries(&state(false, false, None), Some(&listing), Some("Acme".into()));
+        assert_eq!(texts(&idle), ["Start recording…", "Recent", "Acme onboarding", "Open QuietNote", "Settings…", "Quit QuietNote"]);
+        assert!(idle.contains(&Entry::Projects(Some("Acme".into()), vec!["Acme".into()])));
+        let mut unavailable = state(false, false, None);
+        unavailable.available = false;
+        assert_eq!(texts(&entries(&unavailable, Some(&listing), None))[0], "New meeting…");
         let recording = entries(&state(true, true, Some("Microphone disconnected. Reconnecting…")), Some(&listing), Some("Acme".into()));
         let lines = texts(&recording);
         assert_eq!(lines[0], "● Recording: Acme onboarding");
         assert!(lines[1].starts_with("Started ") && lines[1].ends_with(" by you · No bot joined"));
         assert_eq!(lines[2], "⚠ Microphone disconnected.");
-        assert_eq!(&lines[3..6], ["Stop recording", "Open meeting", "Transcribing Standup… 42%"]);
-        assert!(!lines.contains(&"Start recording…") && !lines.contains(&"New meeting…"));
-        assert_eq!(lines.last(), Some(&"Stop recording and quit"));
-        assert!(recording.contains(&Entry::Projects(Some("Acme".into()), vec!["Acme".into()])));
+        // Only what matters while recording: no Start, no recent meetings, no projects.
+        assert_eq!(&lines[3..], ["Stop recording", "Open meeting", "Transcribing Standup… 42%", "Open QuietNote", "Settings…", "Stop recording and quit"]);
+        assert!(!recording.iter().any(|e| matches!(e, Entry::Projects(..))));
         let broken = entries(&state(true, false, None), None, None);
         assert_eq!(texts(&broken), ["QuietNote needs attention.", "Open QuietNote", "Stop recording and quit"]);
     }
