@@ -1,8 +1,8 @@
 [package]
-name = "Scratch"
-version = "1.0.0"
-description = "An offline markdown-based notes app"
-authors = ["erictli"]
+name = "quietnote"
+version = "0.1.0"
+description = "A local-first, bot-free meeting workspace"
+authors = ["QuietNote contributors", "Eric Li (Scratch)"]
 edition = "2021"
 
 [lib]

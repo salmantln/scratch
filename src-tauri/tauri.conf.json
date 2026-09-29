@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Scratch",
-  "version": "1.0.0",
-  "identifier": "com.scratch.app",
+  "productName": "QuietNote",
+  "version": "0.1.0",
+  "identifier": "app.quietnote.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,16 +12,19 @@
   "app": {
     "windows": [
       {
-        "title": "Scratch",
-        "width": 1080,
-        "height": 720,
+        "title": "QuietNote",
+        "width": 1280,
+        "height": 850,
         "minWidth": 600,
-        "minHeight": 400,
+        "minHeight": 540,
         "resizable": true,
         "decorations": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 16, "y": 24 },
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 24
+        },
         "visible": false
       }
     ],
@@ -31,7 +34,9 @@
         "enable": true,
         "scope": {
           "requireLiteralLeadingDot": true,
-          "allow": ["$HOME/**"]
+          "allow": [
+            "$HOME/**"
+          ]
         }
       }
     }
@@ -39,10 +44,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "fileAssociations": [
       {
-        "ext": ["md", "markdown"],
+        "ext": [
+          "md",
+          "markdown"
+        ],
         "mimeType": "text/markdown",
         "description": "Markdown Document"
       }
@@ -63,12 +71,5 @@
       }
     }
   },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE3RTQ2NTA4QzJGODdFRTYKUldUbWZ2akNDR1hrcDlud3VQSVhuYVU0cDk5V0RkaVFuVElRSGRVMjlFam9IdFVCNnU1ZlVJOXEK",
-      "endpoints": [
-        "https://github.com/erictli/scratch/releases/latest/download/latest.json"
-      ]
-    }
-  }
+  "plugins": {}
 }

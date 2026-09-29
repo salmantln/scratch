@@ -64,7 +64,8 @@ export default defineConfig(async () => ({
           // Syntax highlighting
           "highlight": ["lowlight", "highlight.js"],
           // React core
-          "react-vendor": ["react", "react-dom"],
+          "diagram": ["beautiful-mermaid"],
+          "math": ["katex"],
           // Tauri APIs
           "tauri": [
             "@tauri-apps/api",
@@ -76,8 +77,9 @@ export default defineConfig(async () => ({
     },
     // Enable source maps for debugging (optional, can disable for smaller builds)
     sourcemap: false,
-    // Increase chunk size warning limit (TipTap is large)
-    chunkSizeWarningLimit: 1000,
+    // The retained ELK diagram engine is ~1.5 MB and loads only for Mermaid blocks.
+    // App and editor chunks remain below 600 KB.
+    chunkSizeWarningLimit: 1600,
   },
 
   // Optimize dependencies

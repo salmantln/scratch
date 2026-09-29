@@ -2,11 +2,11 @@
   "app": {
     "windows": [
       {
-        "title": "Scratch",
-        "width": 1080,
-        "height": 720,
+        "title": "QuietNote",
+        "width": 1280,
+        "height": 850,
         "minWidth": 600,
-        "minHeight": 400,
+        "minHeight": 540,
         "resizable": true,
         "decorations": true,
         "visible": true

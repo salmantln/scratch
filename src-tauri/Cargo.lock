@@ -3,34 +3,6 @@
 version = 4
 
 [[package]]
-name = "Scratch"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "chrono",
- "notify",
- "objc2-foundation",
- "open",
- "regex",
- "serde",
- "serde_json",
- "tantivy",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tokio",
- "url",
- "urlencoding",
- "walkdir",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3395,6 +3367,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "958f21e8e7ceb5a1aa7fa87fab28e7c75976e0bfe7e23ff069e0a260f894067d"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "quietnote"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "notify",
+ "objc2-foundation",
+ "open",
+ "regex",
+ "serde",
+ "serde_json",
+ "tantivy",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tokio",
+ "url",
+ "urlencoding",
+ "walkdir",
 ]
 
 [[package]]

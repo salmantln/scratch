@@ -55,13 +55,13 @@ export function FolderPicker() {
             className="text-3xl text-text font-serif mb-2 tracking-[-0.01em] animate-fade-in-up"
             style={{ animationDelay: "100ms" }}
           >
-            Welcome to Scratch
+            Welcome to QuietNote
           </h1>
           <p
             className="text-text-muted mb-6 animate-fade-in-up"
             style={{ animationDelay: "100ms" }}
           >
-            Scratch is an offline-first notes app. Your notes are simply stored
+            QuietNote keeps your meeting archive and manual notes
             on your computer as markdown files.
           </p>
           <div
@@ -69,7 +69,7 @@ export function FolderPicker() {
             style={{ animationDelay: "200ms" }}
           >
             <Button onClick={handleSelectFolder} size="xl">
-              Choose your notes folder
+              Choose a Markdown folder
             </Button>
           </div>
 

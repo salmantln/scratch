@@ -1,0 +1,11 @@
+QuietNote is derived from Scratch by Eric Li and contributors:
+https://github.com/erictli/scratch
+Audited upstream commit: 9126a5adf78abbabd111302ca0b659ca9278d43a
+
+The upstream README declares the project MIT licensed. That checkout did not
+contain a LICENSE file or a separate copyright notice. The original README is
+preserved verbatim in docs/UPSTREAM-README.md. LICENSE supplies the standard MIT
+text and explicit upstream attribution; it is not represented as a verbatim
+license file recovered from upstream. Original source authorship is retained in
+git history and Cargo metadata. Scratch is acknowledged as the upstream project,
+not used as QuietNote product branding.

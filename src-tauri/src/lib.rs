@@ -17,6 +17,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
 mod git;
+mod meetings;
 
 // Note metadata for list display
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2844,28 +2845,28 @@ fn check_cli_exists(command_name: &str, path: &str) -> Result<bool, String> {
     Ok(check_output.status.success())
 }
 
-/// Marker comment embedded in CLI wrapper scripts installed by Scratch.
+/// Marker comment embedded in CLI wrapper scripts installed by QuietNote.
 /// Used to identify and validate our own wrapper before modifying or removing it.
 #[cfg(target_os = "macos")]
-const SCRATCH_CLI_MARKER: &str = "# SCRATCH_CLI_WRAPPER";
+const QUIETNOTE_CLI_MARKER: &str = "# QUIETNOTE_CLI_WRAPPER";
 
 /// Returns the path where the CLI script should be installed (macOS only).
 /// Checks PATH for Homebrew bin first, then falls back to architecture detection.
-/// Apple Silicon: /opt/homebrew/bin/scratch
-/// Intel: /usr/local/bin/scratch
+/// Apple Silicon: /opt/homebrew/bin/quietnote
+/// Intel: /usr/local/bin/quietnote
 #[cfg(target_os = "macos")]
 fn cli_target_path() -> PathBuf {
     // Check if the user's PATH contains /opt/homebrew/bin (Homebrew on Apple Silicon)
     if let Ok(path_var) = std::env::var("PATH") {
         if path_var.split(':').any(|p| p == "/opt/homebrew/bin") {
-            return PathBuf::from("/opt/homebrew/bin/scratch");
+            return PathBuf::from("/opt/homebrew/bin/quietnote");
         }
     }
     // Fall back to architecture detection
     if std::env::consts::ARCH == "aarch64" {
-        return PathBuf::from("/opt/homebrew/bin/scratch");
+        return PathBuf::from("/opt/homebrew/bin/quietnote");
     }
-    PathBuf::from("/usr/local/bin/scratch")
+    PathBuf::from("/usr/local/bin/quietnote")
 }
 
 #[tauri::command]
@@ -2881,7 +2882,7 @@ fn get_cli_status() -> Result<CliStatus, String> {
         }
         // Verify this is our wrapper (has marker) and points to the current binary
         let content = std::fs::read_to_string(&target).unwrap_or_default();
-        if !content.contains(SCRATCH_CLI_MARKER) {
+        if !content.contains(QUIETNOTE_CLI_MARKER) {
             // Foreign binary at this path — don't claim it as ours
             return Ok(CliStatus { supported: true, installed: false, path: None });
         }
@@ -2919,9 +2920,9 @@ fn install_cli() -> Result<String, String> {
         if target.exists() || target.symlink_metadata().is_ok() {
             // Only remove if it's our wrapper (contains marker)
             let content = std::fs::read_to_string(&target).unwrap_or_default();
-            if !content.contains(SCRATCH_CLI_MARKER) {
+            if !content.contains(QUIETNOTE_CLI_MARKER) {
                 return Err(format!(
-                    "A different 'scratch' command already exists at {}. Remove it manually to install the Scratch CLI.",
+                    "A different 'quietnote' command already exists at {}. Remove it manually to install the QuietNote CLI.",
                     target.display()
                 ));
             }
@@ -2941,7 +2942,7 @@ fn install_cli() -> Result<String, String> {
         // the terminal is not blocked waiting for the GUI app to exit.
         let script = format!(
             "#!/bin/sh\n{}\nnohup {} \"$@\" >/dev/null 2>&1 &\n",
-            SCRATCH_CLI_MARKER,
+            QUIETNOTE_CLI_MARKER,
             escaped_exe
         );
         std::fs::write(&target, script.as_bytes())
@@ -2968,9 +2969,9 @@ fn uninstall_cli() -> Result<(), String> {
         let target = cli_target_path();
         if target.exists() || target.symlink_metadata().is_ok() {
             let content = std::fs::read_to_string(&target).unwrap_or_default();
-            if !content.contains(SCRATCH_CLI_MARKER) {
+            if !content.contains(QUIETNOTE_CLI_MARKER) {
                 return Err(format!(
-                    "File at {} was not installed by Scratch. Refusing to remove.",
+                    "File at {} was not installed by QuietNote. Refusing to remove.",
                     target.display()
                 ));
             }
@@ -3583,7 +3584,7 @@ fn create_preview_window(app: &AppHandle, file_path: &str) -> Result<(), String>
     let url = format!("index.html?mode=preview&file={}", encoded_path);
 
     let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
-        .title(format!("{} — Scratch", filename))
+        .title(format!("{} — QuietNote", filename))
         .inner_size(800.0, 600.0)
         .min_inner_size(400.0, 300.0)
         .resizable(true)
@@ -3720,7 +3721,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Load app config on startup (contains notes folder path)
             let mut app_config = load_app_config(app.handle());
@@ -3838,6 +3838,10 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            meetings::load_meeting_archive,
+            meetings::create_meeting_bundle,
+            meetings::save_meeting_metadata,
+            meetings::quietnote_preferences,
             get_notes_folder,
             set_notes_folder,
             list_notes,

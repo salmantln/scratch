@@ -440,6 +440,7 @@ export interface PreviewModeData {
 }
 
 interface EditorProps {
+  onDraftChange?: (content: string) => void;
   onToggleSidebar?: () => void;
   sidebarVisible?: boolean;
   focusMode?: boolean;
@@ -503,6 +504,7 @@ function blockIndexToPos(
 }
 
 export function Editor({
+  onDraftChange,
   onToggleSidebar,
   sidebarVisible,
   focusMode,
@@ -1253,8 +1255,9 @@ export function Editor({
     onCreate: ({ editor: editorInstance }) => {
       editorRef.current = editorInstance;
     },
-    onUpdate: () => {
+    onUpdate: ({ editor: updatedEditor }) => {
       if (isLoadingRef.current) return;
+      onDraftChange?.(getMarkdown(updatedEditor));
       scheduleSave();
     },
     onSelectionUpdate: () => {
@@ -2121,6 +2124,7 @@ export function Editor({
   const handleSourceChange = useCallback(
     (value: string) => {
       setSourceContent(value);
+      onDraftChange?.(value);
       if (sourceTimeoutRef.current) {
         clearTimeout(sourceTimeoutRef.current);
       }
@@ -2139,7 +2143,7 @@ export function Editor({
         }
       }, 300);
     },
-    [currentNote, saveNote],
+    [currentNote, saveNote, onDraftChange],
   );
 
   if (!currentNote) {

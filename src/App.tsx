@@ -456,7 +456,7 @@ function AppContent() {
       <div className="h-full min-h-0 flex items-center justify-center bg-bg-secondary">
         <div className="text-text-muted/70 text-sm flex items-center gap-1.5 font-medium">
           <SpinnerIcon className="w-4.5 h-4.5 stroke-[1.5] animate-spin" />
-          Initializing Scratch...
+          Initializing QuietNote...
         </div>
       </div>
     );
@@ -561,6 +561,8 @@ function AppContent() {
 
 // Shared update check — used by startup and manual "Check for Updates"
 async function showUpdateToast(): Promise<"update" | "no-update" | "error"> {
+  // QuietNote does not use the upstream Scratch release feed.
+  if (!import.meta.env.VITE_QUIETNOTE_UPDATES) return "no-update";
   try {
     const update = await checkForUpdate();
     if (update) {
@@ -603,7 +605,7 @@ function UpdateToast({
     try {
       await update.downloadAndInstall();
       toast.dismiss(toastId);
-      toast.success("Update installed! Restart Scratch to apply.", {
+      toast.success("Update installed! Restart QuietNote to apply.", {
         duration: Infinity,
         closeButton: true,
       });
@@ -655,13 +657,6 @@ function App() {
     const os = isMac ? "mac" : isWindows ? "windows" : "linux";
     document.documentElement.classList.add(`platform-${os}`);
   }, []);
-
-  // Check for app updates on startup (folder mode only)
-  useEffect(() => {
-    if (isPreview) return;
-    const timer = setTimeout(() => showUpdateToast(), 3000);
-    return () => clearTimeout(timer);
-  }, [isPreview]);
 
   // Preview mode: lightweight editor without sidebar, search, git
   if (isPreview && previewFile) {
