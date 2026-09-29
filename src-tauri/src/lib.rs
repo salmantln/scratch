@@ -3839,6 +3839,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             meetings::load_meeting_archive,
+            meetings::create_project,
             meetings::create_meeting_bundle,
             meetings::save_meeting_metadata,
             meetings::quietnote_preferences,

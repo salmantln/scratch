@@ -27,7 +27,7 @@ pub struct Meeting {
     transcript: String,
 }
 #[derive(Serialize)]
-pub struct Archive { root: String, meetings: Vec<Meeting> }
+pub struct Archive { root: String, projects: Vec<String>, meetings: Vec<Meeting> }
 
 fn root(app: &AppHandle) -> Result<PathBuf, String> {
     let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("meetings");
@@ -70,40 +70,56 @@ fn write_bundle(root: &Path, meeting: &Meeting, create: bool) -> Result<(), Stri
     atomic_write(&dir.join("transcript.md"), meeting.transcript.as_bytes())?;
     atomic_write(&dir.join("metadata.json"), &serde_json::to_vec_pretty(&meeting.metadata).map_err(|e| e.to_string())?)
 }
+fn list_projects(root: &Path) -> Result<Vec<String>, String> {
+    let mut projects = Vec::new();
+    for entry in std::fs::read_dir(root).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.file_type().map_err(|e| e.to_string())?.is_dir() && safe_component(&name) { projects.push(name); }
+    }
+    projects.sort_by_key(|name| name.to_lowercase());
+    Ok(projects)
+}
+fn read_archive(root: &Path) -> Result<Archive, String> {
+    let mut meetings = Vec::new();
+    for entry in walkdir::WalkDir::new(root).min_depth(3).max_depth(3).follow_links(false) {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_name() != "metadata.json" || !entry.file_type().is_file() { continue; }
+        let metadata: Metadata = serde_json::from_slice(&std::fs::read(entry.path()).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("Invalid metadata at {}: {}", entry.path().display(), e))?;
+        let dir = bundle(root, &metadata)?;
+        if dir.join("metadata.json") != entry.path() { return Err("Meeting metadata does not match its directory".into()); }
+        for name in ["meeting.md", "transcript.md"] {
+            if !dir.join(name).canonicalize().map_err(|e| e.to_string())?.starts_with(root) {
+                return Err("Meeting file leaves the archive".into());
+            }
+        }
+        meetings.push(Meeting {
+            markdown: std::fs::read_to_string(dir.join("meeting.md")).map_err(|e| e.to_string())?,
+            transcript: std::fs::read_to_string(dir.join("transcript.md")).map_err(|e| e.to_string())?,
+            metadata,
+        });
+    }
+    Ok(Archive { root: root.to_string_lossy().into(), projects: list_projects(root)?, meetings })
+}
+fn make_project(root: &Path, name: &str) -> Result<(), String> {
+    if !safe_component(name) { return Err("Use letters, numbers, spaces, hyphens or underscores".into()); }
+    if list_projects(root)?.iter().any(|p| p.eq_ignore_ascii_case(name)) { return Err("A project with this name already exists".into()); }
+    let path = root.join(name);
+    if path.exists() { return Err("A file with this name already exists in the archive".into()); }
+    std::fs::create_dir(&path).map_err(|e| e.to_string())?;
+    if !path.canonicalize().map_err(|e| e.to_string())?.starts_with(root) { return Err("Project path leaves the archive".into()); }
+    Ok(())
+}
 #[tauri::command]
-pub async fn load_meeting_archive(app: AppHandle, seeds: Vec<Meeting>) -> Result<Archive, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let root = root(&app)?;
-        let marker = root.join(".initialized");
-        if !marker.exists() {
-            // Resume interrupted initialization without replacing user files.
-            for meeting in &seeds {
-                let dir = bundle(&root, &meeting.metadata)?;
-                if !dir.exists() { write_bundle(&root, meeting, true)?; }
-            }
-            atomic_write(&marker, b"QuietNote demo archive v1")?;
-        }
-        let mut meetings = Vec::new();
-        for entry in walkdir::WalkDir::new(&root).min_depth(3).max_depth(3).follow_links(false) {
-            let entry = entry.map_err(|e| e.to_string())?;
-            if entry.file_name() != "metadata.json" || !entry.file_type().is_file() { continue; }
-            let metadata: Metadata = serde_json::from_slice(&std::fs::read(entry.path()).map_err(|e| e.to_string())?)
-                .map_err(|e| format!("Invalid metadata at {}: {}", entry.path().display(), e))?;
-            let dir = bundle(&root, &metadata)?;
-            if dir.join("metadata.json") != entry.path() { return Err("Meeting metadata does not match its directory".into()); }
-            for name in ["meeting.md", "transcript.md"] {
-                if !dir.join(name).canonicalize().map_err(|e| e.to_string())?.starts_with(&root) {
-                    return Err("Meeting file leaves the archive".into());
-                }
-            }
-            meetings.push(Meeting {
-                markdown: std::fs::read_to_string(dir.join("meeting.md")).map_err(|e| e.to_string())?,
-                transcript: std::fs::read_to_string(dir.join("transcript.md")).map_err(|e| e.to_string())?,
-                metadata,
-            });
-        }
-        Ok(Archive { root: root.to_string_lossy().into(), meetings })
-    }).await.map_err(|e| e.to_string())?
+pub async fn load_meeting_archive(app: AppHandle) -> Result<Archive, String> {
+    tauri::async_runtime::spawn_blocking(move || read_archive(&root(&app)?))
+        .await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub async fn create_project(app: AppHandle, name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || make_project(&root(&app)?, name.trim()))
+        .await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub async fn create_meeting_bundle(app: AppHandle, meeting: Meeting) -> Result<(), String> {
@@ -150,6 +166,22 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.join("transcript.md")).unwrap(), meeting.transcript);
         let restored: Metadata = serde_json::from_slice(&std::fs::read(dir.join("metadata.json")).unwrap()).unwrap();
         assert_eq!(restored.id, meeting.metadata.id);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn projects_are_directories_and_names_are_validated() {
+        let root = std::env::temp_dir().join(format!("quietnote-projects-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".scratch")).unwrap();
+        let root = root.canonicalize().unwrap();
+        std::fs::write(root.join(".privacy.json"), "{}").unwrap();
+        make_project(&root, "Northstar").unwrap();
+        make_project(&root, "acme").unwrap();
+        assert!(make_project(&root, "ACME").is_err());
+        assert!(make_project(&root, "../Escape").is_err());
+        assert!(make_project(&root, "").is_err());
+        let archive = read_archive(&root).unwrap();
+        assert_eq!(archive.projects, vec!["acme".to_string(), "Northstar".to_string()]);
+        assert!(archive.meetings.is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

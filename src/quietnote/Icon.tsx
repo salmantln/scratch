@@ -1,23 +1,22 @@
 import type { CSSProperties } from 'react';
 const paths = {
-  meetings: 'M4 3h12l4 4v14H4z M8 8h5 M8 12h8 M8 16h6',
+  meeting: 'M3 5h18v16H3z M3 10h18 M8 3v4 M16 3v4',
+  recent: 'M12 8v5l3 2 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',
   search: 'M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
-  settings: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',
+  settings: 'M4 7h10 M18 7h2 M4 17h4 M12 17h8 M16 5v4 M10 15v4',
   plus: 'M12 5v14 M5 12h14',
   folder: 'M3 6h6l2 2h10v12H3z',
   arrow: 'M5 12h14 M14 7l5 5-5 5',
   back: 'M19 12H5 M10 7l-5 5 5 5',
   check: 'M5 12l4 4L19 6',
-  clock: 'M12 8v5l3 2 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',
-  shield: 'M12 2l8 4v6c0 5-8 10-8 10S4 17 4 12V6z M8 12l3 3 5-6',
+  decision: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0 M8 12l3 3 5-6',
   close: 'M6 6l12 12 M6 18L18 6',
-  mic: 'M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0z M5 10v2a7 7 0 0 0 14 0v-2 M12 19v3 M8 22h8',
-  pause: 'M8 5v14 M16 5v14',
-  play: 'M7 4l14 8-14 8z',
   stop: 'M6 6h12v12H6z',
-  monitor: 'M2 3h20v14H2z M12 17v4 M7 21h10',
-  chevron: 'M8 5l7 7-7 7',
-  review: 'M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5',
+  archive: 'M3 13h18v7H3z M3 13l3-8h12l3 8 M7 16.5h.01',
+  privacy: 'M3 3l18 18 M10.6 5.1A10 10 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3 3.6 M6.6 6.6C3.9 8.4 2 12 2 12s4 7 10 7c1.9 0 3.6-.6 5-1.5 M9.9 9.9a3 3 0 0 0 4.2 4.2',
+  info: 'M12 11v6 M12 7.5h.01 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',
+  open: 'M14 4h6v6 M20 4l-9 9 M18 14v6H4V6h6',
+  copy: 'M8 8h12v12H8z M16 8V4H4v12h4',
   refresh: 'M20 7a9 9 0 1 0 1 9 M20 2v6h-6',
 };
 export function Icon({ name, size = 18, style }: { name: keyof typeof paths; size?: number; style?: CSSProperties }) {
@@ -30,4 +29,3 @@ export function Logo({ size = 28 }: { size?: number }) {
     <path d="M52 168C52 137.624 76.6243 113 107 113H155C155 143.376 130.376 168 100 168H52Z" fill="#4076FC" />
   </svg>;
 }
-export function Pulse({ small = false }: { small?: boolean }) { return <span className={`quiet-pulse ${small ? 'small' : ''}`} aria-hidden="true"><i /><i /><i /></span>; }

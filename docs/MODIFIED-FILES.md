@@ -46,30 +46,34 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/main.tsx`
 - `vite.config.ts`
 
-## Added files (27)
+## Added files (31)
 
 - `LICENSE`
 - `NOTICE`
 - `docs/MODIFIED-FILES.md`
 - `docs/SCRATCH-AUDIT.md`
 - `docs/SCREENSHOTS.md`
+- `docs/UX-AUDIT.md`
 - `docs/UPSTREAM-README.md`
 - `docs/VALIDATION.md`
+- `docs/screenshots/00-welcome.png`
 - `docs/screenshots/01-library.png`
 - `docs/screenshots/02-summary.png`
 - `docs/screenshots/03-capture.png`
 - `docs/screenshots/04-privacy.png`
 - `docs/screenshots/05-notes.png`
 - `docs/screenshots/06-transcript.png`
+- `docs/screenshots/07-search.png`
 - `eslint.config.js`
 - `playwright.config.ts`
 - `public/quietnote.svg`
 - `src-tauri/src/meetings.rs`
 - `src/quietnote/Capture.tsx`
+- `src/quietnote/Dialogs.tsx`
 - `src/quietnote/Icon.tsx`
 - `src/quietnote/MeetingDetail.tsx`
-- `src/quietnote/Privacy.tsx`
 - `src/quietnote/QuietNoteApp.tsx`
+- `src/quietnote/Settings.tsx`
 - `src/quietnote/model.ts`
 - `src/quietnote/quietnote.css`
 - `src/quietnote/seeds.ts`

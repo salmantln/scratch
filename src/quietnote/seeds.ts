@@ -57,3 +57,5 @@ export const demoMeetings: Meeting[] = records.map(r => {
     transcript: `# Transcript\n\nDemo excerpt · illustrative content, not a recording\n\n${r.transcript.map(([time, speaker, words]) => `### ${time} ${speaker}\n${words}`).join('\n\n')}\n`,
   };
 });
+const exampleIds = new Set(demoMeetings.map(m => m.metadata.id));
+export function isExample(id: string): boolean { return exampleIds.has(id); }

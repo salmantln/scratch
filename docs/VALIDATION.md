@@ -1,5 +1,23 @@
 # QuietNote validation
 
+## UX refinement pass: 29 September 2026
+
+Validated on macOS Apple Silicon. See [UX-AUDIT.md](UX-AUDIT.md) for the design rationale.
+
+| Check | Result |
+| --- | --- |
+| Frontend build | `npm run build` passed. |
+| Typecheck | `npm run typecheck` passed. |
+| Lint | `npm run lint` passed. |
+| Browser/model tests | All 8 Playwright tests passed. They cover the model plus flows A–G: first launch → project → meeting; honest prototype capture; example review, action toggle, notes persistence, transcript; ⌘K search that opens the matching tab; privacy active vs planned, the enforced confirm switch, and widths 600/800/1080/1440; failed save → retry / discard; interrupted meeting → Needs attention → Mark as ended. |
+| Native tests | `cargo test` passed 3 tests, including the new one: project listing ignores dot-directories, and `create_project` rejects invalid names and case-insensitive duplicates. |
+| Clippy | `cargo clippy -- -D warnings` passed. |
+| Diff hygiene | `git diff --check` passed. |
+| Visual review | Screenshots were reviewed for the welcome screen, library, new-meeting dialog, blank meeting, capture (running and ended), notes (empty and filled), search, privacy, local archive, and 700px icon rail. |
+| Not run | `npm run tauri dev`: no native launch in this pass. Still unverified on desktop: the empty-archive first run, **Open archive**, and suppression of the outside-changes prompt for QuietNote's own saves. |
+
+The tables below record the earlier implementation pass (28 September). They describe automatic demo seeding, which new archives no longer do.
+
 Validated on macOS Apple Silicon, 28 September 2026.
 
 | Check | Result |

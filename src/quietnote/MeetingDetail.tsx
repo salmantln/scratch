@@ -1,36 +1,74 @@
 import { lazy, Suspense, useCallback, useRef, useState } from 'react';
-const Editor = lazy(() => import('../components/editor/Editor').then(module => ({ default: module.Editor }))); 
+const Editor = lazy(() => import('../components/editor/Editor').then(module => ({ default: module.Editor })));
 import { Icon } from './Icon';
-import { dateLabel, durationLabel, section, toggleAction, type Meeting } from './model';
-export type MeetingTab = 'Summary' | 'Decisions' | 'Action items' | 'Notes' | 'Transcript';
-export function MeetingDetail({ meeting, tab, onTab, onMarkdown, onNotes, onDraft, onBack, onReview, review }: {
-  meeting: Meeting; tab: MeetingTab; onTab: (tab: MeetingTab) => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void; onBack: () => void; onReview: () => void; review: boolean;
+import { actionItems, appendItem, dateLabel, decisions, durationLabel, meetingTabs, section, statusLabel, timeLabel, toggleAction, transcriptTurns, type Meeting, type MeetingTab } from './model';
+function AddItem({ label, onAdd }: { label: string; onAdd: (text: string) => Promise<void> }) {
+  const [text, setText] = useState('');
+  return <form className="add-item" onSubmit={e => { e.preventDefault(); if (text.trim()) void onAdd(text).then(() => setText('')); }}>
+    <Icon name="plus" size={15} /><input aria-label={label} placeholder={label} value={text} maxLength={300} onChange={e => setText(e.target.value)} />
+    {text.trim() && <button type="submit" className="text-button">Add</button>}
+  </form>;
+}
+export function MeetingDetail({ meeting, example, tab, onTab, onMarkdown, onNotes, onDraft, onStartCapture, onMarkEnded }: {
+  meeting: Meeting; example: boolean; tab: MeetingTab; onTab: (tab: MeetingTab) => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void; onStartCapture: () => void; onMarkEnded: () => void;
 }) {
   const { metadata: meta, markdown, transcript } = meeting;
   const [transcriptQuery, setTranscriptQuery] = useState('');
   const latestSave = useRef(onNotes); latestSave.current = onNotes;
   const save = useCallback((notes: string) => latestSave.current(notes), []);
-  const decisions = section(markdown, 'Decisions').split('\n').filter(l => /^[-*] /.test(l)).map(l => l.slice(2));
-  const actions = section(markdown, 'Action items').split('\n').filter(l => /^- \[[ xX]\] /.test(l));
-  const complete = actions.filter(l => /^- \[[xX]\]/.test(l)).length;
-  const chunks = transcript.split(/^### /m).slice(1).filter(chunk => chunk.toLowerCase().includes(transcriptQuery.toLowerCase()));
-  const renderDecisions = () => <section className="decisions-section"><div className="section-heading"><h2>Decisions</h2><span>{decisions.length} agreed</span></div>{decisions.length ? <ul>{decisions.map((decision, i) => <li key={i}><span className="decision-check"><Icon name="check" size={15} /></span>{decision}</li>)}</ul> : <p className="subtle">No decisions yet. Add them in the Markdown workspace.</p>}</section>;
-  const renderActions = () => <section className="actions-section"><div className="section-heading"><h2>Action items</h2><span>{complete} of {actions.length} complete</span></div><div className="action-list">{actions.map((line, i) => {
-    const done = /^- \[[xX]\]/.test(line); const text = line.slice(6); const [owner, ...rest] = text.split(' — ');
-    return <label className={`action-row ${done ? 'complete' : ''}`} key={i}><input type="checkbox" checked={done} onChange={() => void onMarkdown(toggleAction(markdown, i))} /><span className="action-text">{rest.length ? rest.join(' — ') : text}</span>{rest.length > 0 && <span className="action-owner"><span className="avatar">{owner.slice(0, 1)}</span>{owner}</span>}</label>;
-  })}{!actions.length && <p className="subtle">No action items yet. Your manual notes are ready to edit.</p>}</div></section>;
+  const summary = section(markdown, 'Summary');
+  const agreed = decisions(markdown);
+  const actions = actionItems(markdown);
+  const open = actions.filter(a => !a.done);
+  const turns = transcriptTurns(transcript);
+  const shownTurns = turns.filter(t => `${t.speaker} ${t.text}`.toLowerCase().includes(transcriptQuery.toLowerCase()));
+  const status = statusLabel(meta.status);
+  const duration = durationLabel(meta.duration);
+  const tabIds = (t: MeetingTab) => ({ tab: `tab-${t.replace(' ', '-')}`, panel: `panel-${t.replace(' ', '-')}` });
+  const renderAction = (a: typeof actions[number]) => <label className={`action-row ${a.done ? 'complete' : ''}`} key={a.index}>
+    <input type="checkbox" checked={a.done} onChange={() => void onMarkdown(toggleAction(markdown, a.index))} />
+    <span><span className="action-text">{a.text}</span>{a.owner && <span className="action-owner">{a.owner}</span>}</span>
+  </label>;
   return <article className="meeting-detail">
-    <div className="detail-navigation"><button className="text-button" onClick={onBack}><Icon name="back" size={16} />All meetings</button><button className="icon-button" title={review ? 'Exit review mode' : 'Meeting review mode'} aria-label={review ? 'Exit review mode' : 'Meeting review mode'} onClick={onReview}><Icon name="review" /></button></div>
-    <header className="meeting-header"><div className="eyebrow"><span className={`project-dot ${meta.project.toLowerCase()}`} />{meta.project.toUpperCase()}<span className="eyebrow-divider">/</span>MEETING</div><h1>{meta.title}</h1><div className="meeting-meta"><span>{dateLabel(meta.date)}</span><span>{new Date(meta.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span><span><Icon name="clock" size={14} />{durationLabel(meta.duration)}</span><span className={`status-badge ${meta.status}`}>{meta.status}</span></div><div className="participants"><div className="avatar-stack">{meta.participants.slice(0, 4).map((p, i) => <span className={`avatar tone-${i}`} key={p}>{p.split(' ').map(n => n[0]).join('')}</span>)}</div><span>{meta.participants.join(', ')}</span></div></header>
-    <nav className="meeting-tabs" aria-label="Meeting sections">{(['Summary', 'Decisions', 'Action items', 'Notes', 'Transcript'] as MeetingTab[]).map(t => <button key={t} aria-current={t === tab ? 'page' : undefined} className={t === tab ? 'selected' : ''} onClick={() => onTab(t)}>{t}{t === 'Action items' && <span>{actions.length}</span>}</button>)}</nav>
-    <div className="meeting-content">
-      {tab === 'Summary' && <><section className="summary-section"><div className="section-heading"><h2>At a glance</h2><span className="quiet-label">{meta.tags.includes('Prototype') ? 'Prototype record' : 'Demo meeting'}</span></div><p>{section(markdown, 'Summary') || 'No summary yet.'}</p></section>{renderDecisions()}{renderActions()}<div className="meeting-endnote"><Icon name="shield" size={15} />{meta.tags.includes('Prototype') ? 'Prototype capture · no audio recorded' : 'Illustrative meeting · seeded for this prototype'}<span>Markdown, all the way down.</span></div></>}
-      {tab === 'Decisions' && renderDecisions()}{tab === 'Action items' && renderActions()}
-      {tab === 'Notes' && <section className="notes-section"><div className="section-heading"><div><h2>Manual notes</h2><p className="subtle">Your thoughts, in your own words. Saved as Markdown.</p></div><span className="quiet-label">⌘ B · bold &nbsp; / · format</span></div><div className="quiet-editor"><Suspense fallback={<p className="subtle">Opening your editor…</p>}><Editor onDraftChange={onDraft} key={meta.id} previewMode={{ content: section(markdown, 'Notes'), title: 'Manual notes', filePath: meta.meetingPath, modified: 0, hasExternalChanges: false, reloadVersion: 0, save, reload: async () => {} }} /></Suspense></div></section>}
-      {tab === 'Transcript' && <section className="transcript-section"><div className="section-heading"><div><h2>Transcript</h2><p className="subtle">{meta.tags.includes('Prototype') ? 'No transcription was performed.' : 'Demo excerpt · illustrative conversation'}</p></div><label className="transcript-search"><Icon name="search" size={15} /><input placeholder="Find in transcript…" aria-label="Find in transcript" value={transcriptQuery} onChange={e => setTranscriptQuery(e.target.value)} /></label></div>{chunks.map((chunk, i) => {
-        const [heading, ...body] = chunk.trim().split('\n'); const [timestamp, ...speaker] = heading.split(' ');
-        return <div className="transcript-turn" key={i}><span className="timestamp">{timestamp}</span><div><h3>{speaker.join(' ')}</h3><p>{body.join('\n').trim()}</p></div></div>;
-      })}{!chunks.length && <p className="subtle">{transcriptQuery ? 'No matching transcript passages.' : 'There is no transcript for this prototype capture. Add your own notes in Manual notes.'}</p>}</section>}
+    <header className="meeting-header">
+      <div className="meeting-title-row">
+        <div className="meeting-title">
+          <h1>{meta.title}{example && <span className="badge example">Example</span>}</h1>
+          <p className="meeting-meta"><span>{meta.project}</span><span>{dateLabel(meta.date)}, {timeLabel(meta.date)}</span>{duration && <span>{duration}</span>}{status && <span className={`status ${meta.status}`}><i aria-hidden="true" />{status}</span>}{meta.participants.length > 0 && <span className="participants" title={meta.participants.join(', ')}>{meta.participants.join(', ')}</span>}</p>
+        </div>
+        {meta.status === 'idle' && <button className="secondary" onClick={onStartCapture}>Start capture</button>}
+      </div>
+      <div className="meeting-tabs" role="tablist" aria-label="Meeting sections" onKeyDown={e => {
+        const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+        if (!step) return;
+        e.preventDefault();
+        const next = meetingTabs[(meetingTabs.indexOf(tab) + step + meetingTabs.length) % meetingTabs.length];
+        onTab(next); document.getElementById(tabIds(next).tab)?.focus();
+      }}>{meetingTabs.map(t => <button key={t} id={tabIds(t).tab} role="tab" aria-selected={t === tab} aria-controls={tabIds(t).panel} tabIndex={t === tab ? 0 : -1} onClick={() => onTab(t)}>{t}{t === 'Action items' && open.length > 0 && <><span className="count" aria-hidden="true">{open.length}</span><span className="sr-only">, {open.length} open</span></>}</button>)}</div>
+    </header>
+    {meta.status === 'error' && <div className="notice attention" role="status"><Icon name="info" size={16} /><div><strong>This meeting was interrupted before it finished.</strong><p>QuietNote closed while capture was running. No audio was recorded. Anything you wrote in Notes is kept.</p></div><div className="notice-actions"><button className="text-button" onClick={() => onTab('Notes')}>Add notes</button><button className="text-button" onClick={onMarkEnded}>Mark as ended</button></div></div>}
+    <div className="meeting-content" role="tabpanel" id={tabIds(tab).panel} aria-labelledby={tabIds(tab).tab}>
+      {tab === 'Summary' && <>
+        {summary ? <div className="summary-text">{summary.split(/\n{2,}/).map((p, i) => <p key={i}>{p}</p>)}</div> : <div className="empty-inline"><h2>No summary yet.</h2><p>Automatic summaries aren’t available in this version. Your own notes are the record of this meeting.</p><button className="secondary" onClick={() => onTab('Notes')}>Add notes</button></div>}
+        {agreed.length > 0 && <section className="summary-preview"><h2>Decisions</h2><ul className="decision-list">{agreed.slice(0, 3).map((d, i) => <li key={i}><Icon name="decision" size={16} />{d}</li>)}</ul>{agreed.length > 3 && <button className="text-button" onClick={() => onTab('Decisions')}>All {agreed.length} decisions<Icon name="arrow" size={14} /></button>}</section>}
+        {actions.length > 0 && <section className="summary-preview"><h2>Action items</h2><button className="text-button" onClick={() => onTab('Action items')}>{open.length ? `${open.length} of ${actions.length} open` : `All ${actions.length} complete`}<Icon name="arrow" size={14} /></button></section>}
+      </>}
+      {tab === 'Decisions' && <section>
+        {agreed.length ? <ul className="decision-list">{agreed.map((d, i) => <li key={i}><Icon name="decision" size={16} />{d}</li>)}</ul> : <div className="empty-inline"><h2>No decisions yet.</h2><p>Add what was agreed so it’s easy to find later.</p></div>}
+        <AddItem label="Add a decision" onAdd={text => onMarkdown(appendItem(markdown, 'Decisions', text))} />
+      </section>}
+      {tab === 'Action items' && <section>
+        {actions.length ? <div className="action-list">{actions.map(renderAction)}</div> : <div className="empty-inline"><h2>No action items yet.</h2><p>Add follow-ups as you go. Write “Maya — send the plan” to note an owner.</p></div>}
+        <AddItem label="Add an action item" onAdd={text => onMarkdown(appendItem(markdown, 'Action items', text))} />
+      </section>}
+      {tab === 'Notes' && <div className="quiet-editor"><Suspense fallback={<p className="subtle">Opening notes…</p>}><Editor onDraftChange={onDraft} key={meta.id} previewMode={{ content: section(markdown, 'Notes'), title: 'Notes', filePath: meta.meetingPath, modified: 0, hasExternalChanges: false, reloadVersion: 0, save, reload: async () => {} }} /></Suspense></div>}
+      {tab === 'Transcript' && <section>
+        {turns.length ? <>
+          <div className="transcript-tools">{example && <span className="subtle">Example transcript · illustrative, not a recording</span>}<label className="inline-search"><Icon name="search" size={15} /><input placeholder="Find in transcript" aria-label="Find in transcript" value={transcriptQuery} onChange={e => setTranscriptQuery(e.target.value)} /></label></div>
+          {shownTurns.map((t, i) => <div className="transcript-turn" key={i}><h3>{t.speaker}<span className="timestamp">{t.time}</span></h3><p>{t.text}</p></div>)}
+          {!shownTurns.length && <p className="subtle">Nothing in the transcript matches “{transcriptQuery}”.</p>}
+        </> : <div className="empty-inline"><h2>Transcript unavailable.</h2><p>This version doesn’t transcribe audio.</p></div>}
+      </section>}
     </div>
   </article>;
 }
