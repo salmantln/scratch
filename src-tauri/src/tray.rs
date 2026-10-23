@@ -2,18 +2,21 @@
 //! Recent meetings and projects are read from disk, so the tray works while the window is hidden.
 //! While recording it shows the meeting, the elapsed time and Stop; it never starts a recording itself.
 use crate::{app_state::Shared, capture, meetings};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 const TRAY: &str = "quietnote";
 /// The "Transcribing…" line, updated in place so the menu isn't rebuilt on every percent.
 static PROGRESS: Mutex<Option<MenuItem<Wry>>> = Mutex::new(None);
-static RECORDING_ICON: AtomicBool = AtomicBool::new(false);
+/// What the icon shows: 0 idle, 1 recording, 2 paused.
+static STATE: AtomicU8 = AtomicU8::new(0);
+/// Hush in that state (Settings → Appearance → Show Hush), or the logo.
+static HUSH: AtomicBool = AtomicBool::new(true);
 
 pub fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -157,23 +160,36 @@ pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn icon(recording: bool) -> tauri::Result<Image<'static>> {
+fn icon(state: u8, hush: bool) -> tauri::Result<Image<'static>> {
     #[cfg(target_os = "macos")]
-    let bytes: &[u8] = if recording { include_bytes!("../icons/tray-recording-template.png") } else { include_bytes!("../icons/tray-template.png") };
+    let bytes: &[u8] = match (hush, state) {
+        (true, 0) => include_bytes!("../icons/tray-template.png"),
+        (true, 1) => include_bytes!("../icons/tray-recording-template.png"),
+        (true, _) => include_bytes!("../icons/tray-paused-template.png"),
+        (false, 0) => include_bytes!("../icons/tray-logo-template.png"),
+        (false, _) => include_bytes!("../icons/tray-logo-recording-template.png"),
+    };
     #[cfg(not(target_os = "macos"))]
-    let bytes: &[u8] = if recording { include_bytes!("../icons/tray-recording.png") } else { include_bytes!("../icons/32x32.png") };
+    let bytes: &[u8] = { let _ = hush; if state == 0 { include_bytes!("../icons/32x32.png") } else { include_bytes!("../icons/tray-recording.png") } };
     Image::from_bytes(bytes)
 }
+fn draw(tray: &TrayIcon) {
+    if let Ok(image) = icon(STATE.load(Ordering::Relaxed), HUSH.load(Ordering::Relaxed)) { let _ = tray.set_icon(Some(image)); }
+    #[cfg(target_os = "macos")]
+    let _ = tray.set_icon_as_template(true);
+}
+fn shows_hush(app: &AppHandle) -> bool { meetings::root(app).map_or(true, |root| meetings::preference(&root, "showHush", true)) }
+/// Redraws the icon when Show Hush changed (after the preferences are saved).
+pub fn restyle(app: &AppHandle) {
+    let hush = shows_hush(app);
+    if HUSH.swap(hush, Ordering::Relaxed) != hush { if let Some(tray) = app.tray_by_id(TRAY) { draw(&tray); } }
+}
 /// Shows the recorded time (next to the menu bar icon on macOS, in the tooltip elsewhere), whether
-/// it's paused, and the recording icon; `None` restores the idle tray.
+/// it's paused, and the icon for that; `None` restores the idle tray.
 pub fn recording_tick(app: &AppHandle, clock: Option<(Duration, bool)>) {
     let Some(tray) = app.tray_by_id(TRAY) else { return };
-    let recording = clock.is_some();
-    if RECORDING_ICON.swap(recording, Ordering::Relaxed) != recording {
-        if let Ok(image) = icon(recording) { let _ = tray.set_icon(Some(image)); }
-        #[cfg(target_os = "macos")]
-        let _ = tray.set_icon_as_template(true);
-    }
+    let state = match clock { None => 0, Some((_, false)) => 1, Some((_, true)) => 2 };
+    if STATE.swap(state, Ordering::Relaxed) != state { draw(&tray); }
     let time = |e: Duration| { let s = e.as_secs(); if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{:02}:{:02}", s / 60, s % 60) } };
     #[cfg(target_os = "macos")]
     let _ = tray.set_title(clock.map(|(e, paused)| if paused { format!("❙❙ {}", time(e)) } else { time(e) }).as_deref());
@@ -194,7 +210,7 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
         .menu(&build_menu(app)?)
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()));
     #[cfg(target_os = "macos")]
-    let builder = builder.icon(icon(false)?).icon_as_template(true);
+    let builder = { HUSH.store(shows_hush(app), Ordering::Relaxed); builder.icon(icon(0, HUSH.load(Ordering::Relaxed))?).icon_as_template(true) };
     // Windows convention: left click restores the app, right click opens the menu.
     #[cfg(not(target_os = "macos"))]
     let builder = {

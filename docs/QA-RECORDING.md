@@ -120,7 +120,7 @@ Use a signed build (`npm run tauri build`) for anything involving permissions. D
 ### Notes, last time and enhancing (any platform)
 | Check | Status |
 |---|---|
-| The next "Weekly sync" shows the last one's open action items and decisions above its notes; ticking one there ticks it in the last meeting's file | ✓ auto |
+| The next "Weekly sync" shows the last one's open action items above its notes; ticking one there ticks it in the last meeting's file | ✓ auto |
 | Enhance notes with Claude and with an Ollama model: the confirm says what's sent, the template matches the title, the preview's lines quote your notes or the transcript, and Use as summary writes headed sections without touching Notes | ✓ auto (UI, grounding) ☐ (a real model) |
 | Edit templates opens `.templates` with an example; a template added there appears in the picker, and one named like a built-in replaces it | ✓ auto (parsing) ☐ (real folder) |
 

@@ -30,8 +30,9 @@ export interface Attendee { name: string; email: string; me?: boolean }
 /** One occurrence of a calendar event, read from the Mac's calendars (Rust `calendar`). */
 export interface CalendarEvent { id: string; series: string | null; title: string; startMs: number; endMs: number; attendees: Attendee[]; link: string | null }
 export interface Meeting { metadata: MeetingMetadata; markdown: string; transcript: string }
-export type MeetingTab = 'Summary' | 'Decisions' | 'Action items' | 'Notes' | 'Transcript';
-export const meetingTabs: MeetingTab[] = ['Summary', 'Decisions', 'Action items', 'Notes', 'Transcript'];
+/** A meeting has two tabs, Notes and Transcript; Notes shows either the enhanced notes (action items, then the
+ * Summary section) or your own notes. */
+export type MeetingTab = 'Enhanced' | 'Notes' | 'Transcript';
 export interface ActionItem { index: number; done: boolean; text: string; owner: string; link?: { label: string; url: string } }
 export interface TranscriptTurn { time: string; speaker: string; text: string }
 export function section(markdown: string, name: string): string {
@@ -61,13 +62,17 @@ export function linkAction(markdown: string, index: number, label: string, url: 
   let current = -1;
   return replaceSection(markdown, 'Action items', section(markdown, 'Action items').replace(/^- \[([ xX])\] (.*)$/gm, line => ++current === index && !trailingLink.test(line) ? `${line} [${label.replace(/[[\]]/g, '')}](${url})` : line));
 }
-export function appendItem(markdown: string, name: 'Decisions' | 'Action items', text: string): string {
-  const line = name === 'Decisions' ? `- ${text.trim()}` : `- [ ] ${text.trim()}`;
-  return replaceSection(markdown, name, [section(markdown, name), line].filter(Boolean).join('\n'));
+export function appendAction(markdown: string, text: string): string {
+  return replaceSection(markdown, 'Action items', [section(markdown, 'Action items'), `- [ ] ${text.trim()}`].filter(Boolean).join('\n'));
 }
-export function decisions(markdown: string): string[] {
-  return section(markdown, 'Decisions').split('\n').filter(l => /^[-*] /.test(l)).map(l => l.slice(2).trim());
+/** The enhanced notes below the action items: the Summary section, and the Decisions section meetings from
+ * earlier versions have (no longer added to, but never hidden). */
+export function enhancedNotes(markdown: string): string {
+  const decided = section(markdown, 'Decisions');
+  return [section(markdown, 'Summary'), decided && `### Decisions\n${decided}`].filter(Boolean).join('\n\n');
 }
+/** Where a meeting opens: its enhanced notes once it has some or has a transcript (enhancing starts there), else your own notes. */
+export const openingTab = ({ markdown, transcript }: Meeting): MeetingTab => enhancedNotes(markdown) || actionItems(markdown).length || transcriptTurns(transcript).length ? 'Enhanced' : 'Notes';
 export function actionItems(markdown: string): ActionItem[] {
   return section(markdown, 'Action items').split('\n').filter(l => /^- \[[ xX]\] /.test(l)).map((line, index) => {
     const match = line.match(trailingLink);
@@ -125,7 +130,7 @@ export function retitle(markdown: string, title: string): string {
 export const madeUp = (title: string) => generic.test(title.trim());
 /** Titles QuietNote gives a meeting by itself ("Zoom call"), which don't make meetings a series. */
 const generic = /^(untitled meeting|new meeting|.+ call)$/i;
-/** The meeting before this one, to carry its open action items and decisions into this one: the latest earlier
+/** The meeting before this one, to carry its open action items into this one: the latest earlier
  * meeting of the same series (same title) in the project, or else the latest earlier one in the project. Only
  * worth showing when it left something open, so `null` otherwise. Examples only lead to examples. */
 export function previousMeeting(meeting: Meeting, all: Meeting[], example: (id: string) => boolean): Meeting | null {
@@ -135,7 +140,7 @@ export function previousMeeting(meeting: Meeting, all: Meeting[], example: (id: 
   const calendar = meeting.metadata.calendarSeries && earlier.find(m => m.metadata.calendarSeries === meeting.metadata.calendarSeries);
   const series = calendar || (generic.test(title.trim()) ? undefined : earlier.find(m => m.metadata.title.trim().toLowerCase() === title.trim().toLowerCase()));
   const previous = series ?? earlier[0];
-  return previous && (actionItems(previous.markdown).some(a => !a.done) || decisions(previous.markdown).length > 0) ? previous : null;
+  return previous && actionItems(previous.markdown).some(a => !a.done) ? previous : null;
 }
 /** Enhanced notes as Markdown for the Summary section: a `###` heading per section, a line per point, and the
  * transcript time after each point that came from it (`[12:04]`). Points from the user's own notes have none. */
@@ -189,15 +194,13 @@ export function searchMeeting(meeting: Meeting, query: string): { tab: MeetingTa
   if (!terms.length || !matchesMeeting(meeting, query)) return null;
   const { markdown, metadata } = meeting;
   const fields: [MeetingTab, string][] = [
-    ['Summary', section(markdown, 'Summary')],
-    ['Decisions', decisions(markdown).join(' · ')],
-    ['Action items', actionItems(markdown).map(a => a.owner ? `${a.text} (${a.owner})` : a.text).join(' · ')],
+    ['Enhanced', [enhancedNotes(markdown).replace(/^#+ /gm, ''), ...actionItems(markdown).map(a => a.owner ? `${a.text} (${a.owner})` : a.text)].filter(Boolean).join(' · ')],
     ['Notes', section(markdown, 'Notes').replace(/^#+ |^[-*] |\*\*/gm, '')],
     ['Transcript', transcriptTurns(meeting.transcript).map(t => `${t.speaker}: ${t.text}`).join(' · ')],
   ];
   const phrase = terms.join(' ');
   const hit = fields.find(([, text]) => text.toLowerCase().includes(phrase)) ?? fields.find(([, text]) => terms.some(term => text.toLowerCase().includes(term)));
-  if (!hit) return { tab: 'Summary', snippet: excerpt(section(markdown, 'Summary') || metadata.participants.join(', '), '') };
+  if (!hit) return { tab: openingTab(meeting), snippet: excerpt(section(markdown, 'Summary') || metadata.participants.join(', '), '') };
   const lower = hit[1].toLowerCase();
   return { tab: hit[0], snippet: excerpt(hit[1], lower.includes(phrase) ? phrase : terms.find(term => lower.includes(term)) ?? '') };
 }
@@ -255,7 +258,7 @@ export function makeMeeting(title: string, project: string, event?: CalendarEven
   const invited = event ? { participants: event.attendees.filter(a => !a.me).map(a => a.name), attendees: event.attendees, calendarEvent: event.id, ...(event.series && { calendarSeries: event.series }) } : { participants: [] };
   return {
     metadata: { id, title, project, date: now, duration: 0, status: 'idle', captureStartedAt: null, captureEndedAt: null, audioPath: null, transcriptPath: `${project}/${id}/transcript.md`, meetingPath: `${project}/${id}/meeting.md`, tags: [], ...invited },
-    markdown: `# ${title}\n\nDate: ${dateLabel(now)}\nProject: ${project}\n\n## Summary\n\n## Decisions\n\n## Action items\n\n## Notes\n`,
+    markdown: `# ${title}\n\nDate: ${dateLabel(now)}\nProject: ${project}\n\n## Summary\n\n## Action items\n\n## Notes\n`,
     transcript: '# Transcript\n',
   };
 }

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Icon } from './Icon';
+import { Hush } from './Hush';
 import { serviceName } from './catalog';
-import { calendarAccess, callAccessibility, cliSetupCommand, desktop, mcpConfig, ollamaModels, openPrivacySettings, removeSummaryKey, saveSummaryKey, type Connections, type PrivacyPreferences, type Service } from './storage';
-export type SettingsSection = 'Privacy' | 'Local archive' | 'About';
+import { calendarAccess, callAccessibility, cliSetupCommand, desktop, mcpAgents, mcpConfig, ollamaModels, openPrivacySettings, removeSummaryKey, saveSummaryKey, setMcpAgent, type Agent, type Connections, type PrivacyPreferences, type Service } from './storage';
+export type SettingsSection = 'Privacy' | 'Appearance' | 'Local archive' | 'About';
 const mac = /Mac/.test(navigator.userAgent);
-const sections: [SettingsSection, 'privacy' | 'archive' | 'info'][] = [['Privacy', 'privacy'], ['Local archive', 'archive'], ['About', 'info']];
+const sections: [SettingsSection, 'privacy' | 'appearance' | 'archive' | 'info'][] = [['Privacy', 'privacy'], ['Appearance', 'appearance'], ['Local archive', 'archive'], ['About', 'info']];
 /** Who drafts summary suggestions. The Anthropic key is checked, then kept in the Keychain; Ollama runs on this computer. */
 function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; summaryKey: boolean; onSummaryKey: (saved: boolean) => void }) {
   const provider = values.summaryProvider === 'anthropic' || values.summaryProvider === 'ollama' ? values.summaryProvider : '';
@@ -31,7 +32,7 @@ function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { value
   }
   const model = typeof values.ollamaModel === 'string' ? values.ollamaModel : '';
   return <section><h2>Summary suggestions</h2>
-    <p className="group-note">When you ask, a model drafts a summary, decisions and action items from a recorded transcript, or writes up your notes under a template and fills them in from it. Each line quotes the transcript or your notes, and nothing is saved until you add it. Your own templates are Markdown files in the archive’s .templates folder (Enhance notes → Edit templates).</p>
+    <p className="group-note">When you ask, a model drafts a summary and action items from a recorded transcript, or writes up your notes under a template and fills them in from it. Each line quotes the transcript or your notes, and nothing is saved until you add it. Your own templates are Markdown files in the archive’s .templates folder (Enhance notes → Edit templates).</p>
     <div className="setting-row"><div><div className="setting-title">Drafted by</div><p>{provider === 'anthropic' ? 'Claude, with your own Anthropic key. When you ask, the meeting’s transcript text is sent to Anthropic, with your notes when you enhance them and the invited people’s names when you ask for names. Audio and titles are never sent.' : provider === 'ollama' ? 'A model in Ollama on this computer. Nothing leaves this computer.' : 'Off. Nothing is drafted and nothing is sent.'}</p></div>
       <select aria-label="Drafted by" value={provider} onChange={e => { setError(''); onChange('summaryProvider', e.target.value); }}><option value="">Off</option><option value="anthropic">Claude (your Anthropic key)</option><option value="ollama">Ollama on this computer</option></select></div>
     {provider === 'anthropic' && (summaryKey
@@ -46,13 +47,51 @@ function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { value
     {error && provider === 'anthropic' && <p className="field-error setting-error" role="alert">{error}</p>}
   </section>;
 }
+/** The AI apps on this computer that can read the archive through `quietnote mcp`, each added or removed in its own settings file. */
+function AiApps() {
+  const [agents, setAgents] = useState<Agent[] | null>(null);
+  const [busy, setBusy] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [mcp, setMcp] = useState<'idle' | 'copied' | 'failed'>('idle');
+  useEffect(() => {
+    let cancelled = false;
+    // Again on coming back, after installing an app or editing its settings.
+    const check = () => { mcpAgents().then(a => { if (!cancelled) setAgents(a); }).catch(() => { if (!cancelled) setAgents([]); }); };
+    check();
+    window.addEventListener('focus', check);
+    return () => { cancelled = true; window.removeEventListener('focus', check); };
+  }, []);
+  async function set(agent: Agent, on: boolean) {
+    setBusy(agent.id); setErrors(e => ({ ...e, [agent.id]: '' }));
+    try { const next = await setMcpAgent(agent.id, on); setAgents(list => list?.map(a => a.id === next.id ? next : a) ?? null); }
+    catch (e) { setErrors(errs => ({ ...errs, [agent.id]: String(e).replace(/^Error: /, '') })); }
+    setBusy('');
+  }
+  async function copyMcp() {
+    try { await writeText(await mcpConfig()); setMcp('copied'); window.setTimeout(() => setMcp('idle'), 2500); }
+    catch { setMcp('failed'); }
+  }
+  const file = (path: string) => path.replace(/^\/Users\/[^/]+/, '~');
+  return <section><h2>Use with AI apps</h2>
+    <p className="group-note">Lets the AI apps on this computer read your meetings through MCP: list, search, notes and transcripts. They can’t change anything, and QuietNote runs only while an app uses it. What an app sends to its own servers is up to that app; most send what they read to their AI model.</p>
+    {agents?.map(agent => {
+      const on = agent.state === 'on' || agent.state === 'other';
+      const error = errors[agent.id] || agent.problem;
+      return <div className="setting-row" key={agent.id}><div><div className="setting-title">{agent.name}</div>
+        {agent.state !== 'unreadable' && <p>{agent.state === 'on' ? `Added to ${file(agent.path)}. Restart ${agent.name} if it’s open.` : agent.state === 'other' ? 'Set up for another copy of QuietNote, which may have moved.' : `Adds QuietNote to ${file(agent.path)}.`}
+          {agent.state === 'other' && <> <button className="text-button" disabled={busy === agent.id} onClick={() => void set(agent, true)}>Use this copy</button></>}</p>}
+        {error && <p className="field-error" role="alert">{error}</p>}</div>
+        {agent.state !== 'unreadable' && <button type="button" className={`toggle ${on ? 'on' : ''}`} role="switch" aria-checked={on} aria-label={`Use with ${agent.name}`} disabled={busy === agent.id} onClick={() => void set(agent, !on)}><span /></button>}</div>;
+    })}
+    <div className="setting-row"><div><div className="setting-title">{agents?.length ? 'Another app' : 'Any MCP app'}</div><p>Paste the copied configuration into the app’s MCP settings. ChatGPT connects only to servers on the internet, so it can’t use QuietNote on this computer.</p>{mcp === 'failed' && <p className="field-error" role="alert">Couldn’t copy the configuration.</p>}</div><button className="text-button" onClick={() => void copyMcp()}><Icon name="copy" size={15} />{mcp === 'copied' ? 'Copied' : 'Copy configuration'}</button></div>
+  </section>;
+}
 export function Settings({ recording, detectsCalls = false, liveTranscript = false, connections, summaryKey = false, onSummaryKey = () => {}, section, onSection, values, onChange, root, hasAllExamples, onOpenArchive, onReload, onWorkspace, onExamples }: {
   recording: boolean; detectsCalls?: boolean; liveTranscript?: boolean; connections: Connections; summaryKey?: boolean; onSummaryKey?: (saved: boolean) => void; section: SettingsSection; onSection: (section: SettingsSection) => void; values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; root: string; hasAllExamples: boolean;
   onOpenArchive: () => void; onReload: () => void; onWorkspace: () => void; onExamples: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [cli, setCli] = useState<'idle' | 'copied' | 'failed'>('idle');
-  const [mcp, setMcp] = useState<'idle' | 'copied' | 'failed'>('idle');
   // The Calendar permission, checked while the calendar is on (and on coming back from System Settings).
   const [calendar, setCalendar] = useState('');
   const calendarOn = desktop && mac && values.calendar === true;
@@ -87,10 +126,6 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
   async function copyCli() {
     try { await writeText(await cliSetupCommand()); setCli('copied'); window.setTimeout(() => setCli('idle'), 2500); }
     catch { setCli('failed'); }
-  }
-  async function copyMcp() {
-    try { await writeText(await mcpConfig()); setMcp('copied'); window.setTimeout(() => setMcp('idle'), 2500); }
-    catch { setMcp('failed'); }
   }
   async function copyPath() {
     try { if (desktop) await writeText(root); else await navigator.clipboard.writeText(root); setCopied(true); window.setTimeout(() => setCopied(false), 1500); }
@@ -140,14 +175,20 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
           <div className="setting-row"><div><div className="setting-title">Keep meeting data</div><p>Saved preference only. QuietNote never deletes files automatically.</p></div><select aria-label="Keep meeting data" value={String(values.retention ?? 'forever')} onChange={e => onChange('retention', e.target.value)}><option value="forever">Forever</option><option value="30">30 days</option><option value="7">7 days</option></select></div>
         </section>}
       </>}
+      {section === 'Appearance' && <>
+        <h1>Appearance</h1>
+        <p className="lede">How QuietNote shows what it’s doing.</p>
+        <section><div className="setting-row hush-setting"><Hush mood="ready" size={56} /><div><div className="setting-title">Show Hush</div><p>His face shows what QuietNote is doing, on the Home card{detectsCalls ? ', the call panel' : ''}{desktop && mac ? ' and in the menu bar' : ''}. He never joins a call. Turned off, the status dot and the logo come back.</p></div>
+          <button type="button" className={`toggle ${flag('showHush', true) ? 'on' : ''}`} role="switch" aria-checked={flag('showHush', true)} aria-label="Show Hush" onClick={() => onChange('showHush', !flag('showHush', true))}><span /></button></div></section>
+      </>}
       {section === 'Local archive' && <>
         <h1>Local archive</h1>
         <p className="lede">{desktop ? 'QuietNote stores meeting files in a local archive that you control. Each meeting is a folder of Markdown files you can open in any editor.' : 'This browser preview keeps meetings in this browser only. The desktop app stores them as Markdown files on your device.'}</p>
         <div className="button-row">{desktop && <button className="secondary" onClick={onOpenArchive}><Icon name="open" size={15} />Open archive</button>}<button className="secondary" onClick={onReload}><Icon name="refresh" size={15} />Reload from disk</button></div>
+        {desktop && <AiApps />}
         <details className="advanced"><summary>Advanced</summary>
           {desktop && <div className="setting-row"><div><div className="setting-title">Location</div><p className="path">{root}</p></div><button className="text-button" onClick={() => void copyPath()}><Icon name="copy" size={15} />{copied ? 'Copied' : 'Copy path'}</button></div>}
           {desktop && mac && <div className="setting-row"><div><div className="setting-title">Command line</div><p>Read meetings in Terminal: <code>quietnote meetings</code>, <code>show</code>, <code>transcript</code> and <code>search</code>. It only reads the archive. To set it up, paste the copied command into Terminal; it asks for your password to link QuietNote into /usr/local/bin.</p>{cli === 'failed' && <p className="field-error" role="alert">Couldn’t copy the command.</p>}</div><button className="text-button" onClick={() => void copyCli()}><Icon name="copy" size={15} />{cli === 'copied' ? 'Copied' : 'Copy setup command'}</button></div>}
-          {desktop && <div className="setting-row"><div><div className="setting-title">Use with AI apps (MCP)</div><p>Lets Claude Desktop, Claude Code or another MCP app read your meetings: list, search, notes and transcripts. It can’t change anything, and it runs only while that app uses it. What that app sends to its own servers is up to that app. Paste the copied configuration into its MCP settings.</p>{mcp === 'failed' && <p className="field-error" role="alert">Couldn’t copy the configuration.</p>}</div><button className="text-button" onClick={() => void copyMcp()}><Icon name="copy" size={15} />{mcp === 'copied' ? 'Copied' : 'Copy configuration'}</button></div>}
           <div className="setting-row"><div><div className="setting-title">Markdown workspace</div><p>Browse and edit the archive’s files in the full Scratch editor.</p></div><button className="text-button" disabled={!desktop} onClick={onWorkspace}>{desktop ? 'Open' : 'Desktop only'}</button></div>
           {!hasAllExamples && <div className="setting-row"><div><div className="setting-title">Example meetings</div><p>Add six illustrative meetings, marked Example, to see a finished workspace.</p></div><button className="text-button" onClick={onExamples}>Add examples</button></div>}
         </details>

@@ -41,7 +41,7 @@ fn handle(line: &str, archive: impl Fn() -> Result<PathBuf, Error>) -> Option<Va
                 "protocolVersion": VERSIONS.iter().find(|v| **v == asked).unwrap_or(&VERSIONS[0]),
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "quietnote", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Read-only access to the user's QuietNote meetings: notes, decisions, action items and transcripts, kept on their Mac. Find meetings with list_meetings or search_meetings, then read one with get_meeting or get_transcript.",
+                "instructions": "Read-only access to the user's QuietNote meetings: notes, action items and transcripts, kept on their Mac. Find meetings with list_meetings or search_meetings, then read one with get_meeting or get_transcript.",
             }))
         }
         "ping" => reply(id, json!({})),
@@ -62,7 +62,7 @@ fn tools() -> Value {
           "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }, "annotations": read_only },
         { "name": "search_meetings", "title": "Search meetings", "description": "Meetings whose title, notes or transcript mention every word of the query, newest first, each with the first line that matches.",
           "inputSchema": { "type": "object", "properties": { "query": { "type": "string" }, "limit": limit }, "required": ["query"], "additionalProperties": false }, "annotations": read_only },
-        { "name": "get_meeting", "title": "Read a meeting", "description": "A meeting's metadata and its notes file: summary, decisions, action items (`- [ ]` open, `- [x]` done, `Owner — task`) and the user's notes.",
+        { "name": "get_meeting", "title": "Read a meeting", "description": "A meeting's metadata and its notes file: summary, action items (`- [ ]` open, `- [x]` done, `Owner — task`) and the user's notes.",
           "inputSchema": { "type": "object", "properties": { "meeting": meeting }, "required": ["meeting"], "additionalProperties": false }, "annotations": read_only },
         { "name": "get_transcript", "title": "Read a transcript", "description": "A recorded meeting's transcript as `### mm:ss Speaker` turns. \"You\" is the user; the others are \"Others\" or \"Speaker 1\", \"Speaker 2\"… unless named. Clean by default (filler words removed); verbatim keeps every recognized word.",
           "inputSchema": { "type": "object", "properties": { "meeting": meeting, "verbatim": { "type": "boolean" } }, "required": ["meeting"], "additionalProperties": false }, "annotations": read_only },

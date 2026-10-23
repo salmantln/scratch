@@ -71,10 +71,11 @@ pub(crate) fn samples(path: &Path) -> Result<Vec<f32>, String> {
     // A truncated final sample (from an abrupt exit) ends the track rather than failing it.
     Ok(reader.into_samples::<i16>().map_while(Result::ok).map(|s| s as f32 / 32768.0).collect())
 }
-/// Whisper's annotations for non-speech ("[BLANK_AUDIO]", "(music)") aren't words anyone said.
+/// Whisper's annotations for non-speech ("[BLANK_AUDIO]", "(music)") aren't words anyone said, and
+/// neither is a sentence of punctuation alone (a "." left after a pause).
 fn is_annotation(text: &str) -> bool {
     let t = text.trim();
-    t.is_empty() || (t.starts_with('[') && t.ends_with(']')) || (t.starts_with('(') && t.ends_with(')')) || (t.starts_with('*') && t.ends_with('*'))
+    !t.chars().any(char::is_alphanumeric) || (t.starts_with('[') && t.ends_with(']')) || (t.starts_with('(') && t.ends_with(')')) || (t.starts_with('*') && t.ends_with('*'))
 }
 
 /// Transcribes the mic and system tracks in `audio` from sample `from` on, timed from `offset_ms` (where
@@ -329,6 +330,11 @@ mod tests {
         align(&mut early, &[(400, 6_500), (17_500, 22_500)]);
         assert_eq!(early.iter().map(|p| p.start_ms).collect::<Vec<_>>(), vec![17_500, 17_500]);
         assert_eq!(pieces.iter().map(|p| p.pause_before).collect::<Vec<_>>(), vec![false, false, true]);
+    }
+    #[test]
+    fn annotations_and_bare_punctuation_are_not_speech() {
+        for text in ["[BLANK_AUDIO]", "(music)", "*laughs*", ".", " ... ", "", "?!"] { assert!(is_annotation(text), "{text:?}"); }
+        for text in ["Okay.", "25", "Right..."] { assert!(!is_annotation(text), "{text:?}"); }
     }
     #[test]
     fn decoder_loops_are_cut_to_one_occurrence() {

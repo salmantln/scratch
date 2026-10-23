@@ -40,7 +40,7 @@ export const connectors: Connector[] = [
   { id: 'outlook', name: 'Outlook Calendar', category: 'Calendars', blurb: events, logo: outlook },
   { id: 'ical', name: 'Apple Calendar', category: 'Calendars', blurb: events, app: true, color: 'FF3B30', monogram: '31' },
   { id: 'gmail', name: 'Gmail', category: 'Email & chat', blurb: 'Draft a follow-up email for you to review and send yourself.', logo: gmail },
-  { id: 'slack', name: 'Slack', category: 'Email & chat', blurb: 'Draft a post of a meeting’s decisions for you to review before sending.', logo: slack },
+  { id: 'slack', name: 'Slack', category: 'Email & chat', blurb: 'Draft a post of a meeting’s notes for you to review before sending.', logo: slack },
   { id: 'notion', name: 'Notion', category: 'Notes & docs', blurb: 'Export a meeting to a Notion page when you choose.', logo: notion },
   { id: 'obsidian', name: 'Obsidian', category: 'Notes & docs', blurb: 'Copy a meeting into an Obsidian vault on this Mac.', logo: obsidian },
   { id: 'gdocs', name: 'Google Docs', category: 'Notes & docs', blurb: 'Export a meeting as a Google Doc when you choose.', logo: googleDocs },

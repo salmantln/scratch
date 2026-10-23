@@ -154,6 +154,11 @@ export async function calendarEvents(days = 1): Promise<CalendarEvent[]> { retur
 export async function calendarNow(): Promise<CalendarEvent | null> { return desktop ? invoke('calendar_now') : null; }
 /** The configuration that lets an AI app (Claude Desktop, Claude Code) read the archive through `quietnote mcp`. */
 export async function mcpConfig(): Promise<string> { return desktop ? invoke('mcp_config') : desktopOnly(); }
+/** An AI app on this computer and whether its MCP settings run this copy of QuietNote ("other": a `quietnote` server that runs something else). */
+export type Agent = { id: string; name: string; state: 'on' | 'off' | 'other' | 'unreadable'; path: string; problem: string | null };
+export async function mcpAgents(): Promise<Agent[]> { return desktop ? invoke('mcp_agents') : []; }
+/** Adds QuietNote to (or removes it from) that app's MCP settings file. */
+export async function setMcpAgent(id: string, on: boolean): Promise<Agent> { return invoke('mcp_agent_set', { id, on }); }
 export async function openPrivacySettings(kind: 'microphone' | 'systemAudio' | 'accessibility' | 'calendars'): Promise<void> { if (desktop) await invoke('open_privacy_settings', { kind }); }
 /** Whether QuietNote may read browser window and tab titles (macOS Accessibility); `ask` shows macOS's prompt first. */
 export async function callAccessibility(ask: boolean): Promise<boolean> { return desktop ? invoke('call_accessibility', { ask }) : false; }
@@ -188,10 +193,10 @@ export async function openLink(url: string): Promise<void> {
 // Summary suggestions (desktop): drafted from the transcript by Claude with the user's own key, or by a model in
 // Ollama on this computer. The key stays in the Keychain; nothing is written until the user accepts an item.
 export type SummaryProvider = 'anthropic' | 'ollama';
-/** A suggested decision or action item and the transcript line it cites. */
+/** A suggested action item and the transcript line it cites. */
 export type Cited = { text: string; owner: string; atMs: number; quote: string };
 /** `dropped` counts the items left out because they couldn't be traced to the transcript. */
-export type Suggestions = { summary: string; decisions: Cited[]; actions: Cited[]; dropped: number };
+export type Suggestions = { summary: string; actions: Cited[]; dropped: number };
 export async function summaryKeySaved(): Promise<boolean> { return desktop ? invoke('summary_key_status') : false; }
 export async function saveSummaryKey(key: string): Promise<void> { return desktop ? invoke('summary_set_key', { key }) : desktopOnly(); }
 export async function removeSummaryKey(): Promise<void> { return desktop ? invoke('summary_remove_key') : desktopOnly(); }

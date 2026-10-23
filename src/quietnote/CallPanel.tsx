@@ -3,9 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Menu } from '@tauri-apps/api/menu';
 import { Icon, Logo } from './Icon';
+import { Hush, showHush } from './Hush';
 import { stopsIn } from './model';
 import type { CalendarEvent } from './model';
-import type { CaptureState } from './storage';
+import type { CaptureState, PrivacyPreferences } from './storage';
 import './quietnote.css';
 type Ending = NonNullable<NonNullable<CaptureState['recording']>['ending']>;
 /** The "Meeting detected" panel Rust shows when a call app starts using the microphone (see calls.rs). The same
@@ -22,6 +23,10 @@ export default function CallPanel() {
     const track = (fn: () => void) => { if (cancelled) fn(); else unlisten.push(fn); };
     listen<string>('quietnote://call', e => { setApp(e.payload); setEnding(null); lookUp(); }).then(track);
     lookUp();
+    // Show Hush, read again whenever Settings saves the preferences.
+    const prefer = () => { invoke<PrivacyPreferences>('quietnote_preferences', { value: null }).then(p => showHush(p.showHush !== false)).catch(() => { /* Hush stays. */ }); };
+    listen('quietnote://preferences-changed', prefer).then(track);
+    prefer();
     listen<CaptureState>('quietnote://capture-state', e => setEnding(e.payload.recording?.ending ?? null)).then(track);
     invoke<CaptureState>('capture_status').then(s => { if (!cancelled) setEnding(s.recording?.ending ?? null); }).catch(() => { /* The next state update brings it. */ });
     const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') void invoke('call_dismiss'); };
@@ -43,7 +48,7 @@ export default function CallPanel() {
     await menu.popup();
   }
   if (ending) return <div className="quietnote-shell call-panel" role="dialog" aria-label="Recording stops soon">
-    <Logo size={26} />
+    <Hush mood="winding" size={48} fallback={<Logo size={26} />} />
     <div className="call-text"><strong>{ending.reason}</strong><span>{stopsIn(ending.stopsAt, now)}</span></div>
     <div className="call-actions">
       <button className="secondary" onClick={() => void invoke('capture_stop')}>Stop now</button>
@@ -52,7 +57,7 @@ export default function CallPanel() {
   </div>;
   return <div className="quietnote-shell call-panel" role="dialog" aria-label="Meeting detected">
     <button className="icon-button small call-dismiss" aria-label="Dismiss" onClick={() => void invoke('call_dismiss')}><Icon name="close" size={13} /></button>
-    <Logo size={26} />
+    <Hush mood="ready" size={48} fallback={<Logo size={26} />} />
     <div className="call-text"><strong>{event ? event.title : 'Meeting detected'}</strong><span>{event ? `${app} · from your calendar` : app}</span></div>
     <div className="call-actions">
       <button className="primary" onClick={() => void invoke('call_record')}><span className="record-dot" />Start recording</button>

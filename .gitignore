@@ -40,3 +40,6 @@ latest.json
 # Browser test output
 test-results/
 playwright-report/
+
+# Test meetings for the accuracy test, made by scripts/fetch-ami.mjs
+test-audio/

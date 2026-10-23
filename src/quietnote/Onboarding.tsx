@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Folder, Icon, Logo } from './Icon';
+import { Hush, useHushShown } from './Hush';
 import { validProjectName } from './model';
 import * as storage from './storage';
 
@@ -39,6 +40,7 @@ type Props = {
 /** First launch: what QuietNote does, one screen at a time; each permission explained before macOS asks for it;
  * one question, which can be skipped; then the first project. Nothing records here. */
 export function Onboarding({ live, preferences, busy, onPreference, onCreate, onExamples }: Props) {
+  const hush = useHushShown();
   // Fixed when it opens, so a permission granted along the way doesn't remove the step you're on.
   const [steps] = useState<Step[]>(() => [
     'hello',
@@ -89,7 +91,8 @@ export function Onboarding({ live, preferences, busy, onPreference, onCreate, on
   let scene: ReactNode = null, extra: ReactNode = null, title: string, body: ReactNode, action: ReactNode;
   if (step === 'hello') {
     scene = <CallScene />; title = 'Keep the useful part of every meeting.';
-    body = <><p>{live.available ? `QuietNote records and transcribes your meetings on this ${storage.device}. No bot joins the call, and nothing records until you press Start.` : 'Notes, decisions and action items for your meetings, organized by project and kept on your device.'}</p>
+    body = <><p>{live.available ? `QuietNote records and transcribes your meetings on this ${storage.device}. No bot joins the call, and nothing records until you press Start.` : 'Notes and action items for your meetings, organized by project and kept on your device.'}</p>
+      {hush && <p className="ob-hush"><Hush mood="ready" size={40} />This is Hush. Its face shows what QuietNote is doing.</p>}
       {!storage.desktop && <p className="subtle">Browser preview · meetings are saved in this browser only.</p>}</>;
     action = <button className="primary large" onClick={() => go(1)}>Get started</button>;
     extra = <button className="text-button" disabled={busy} onClick={onExamples}>{busy ? 'Adding examples…' : 'Explore example meetings'}</button>;

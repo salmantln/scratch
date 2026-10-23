@@ -1,7 +1,7 @@
-//! Summary suggestions: a summary, decisions and action items drafted from a recorded transcript by the model
+//! Summary suggestions: a summary and action items drafted from a recorded transcript by the model
 //! the user chose, Claude with their own Anthropic key or a model in Ollama on this computer. Only the
 //! transcript's text is sent, only when the user asks, and nothing is written: the user accepts each item.
-//! Every decision and action item must cite the transcript line it came from with an exact quote, or it's dropped.
+//! Every action item must cite the transcript line it came from with an exact quote, or it's dropped.
 //!
 //! Enhanced notes (`notes_enhance`) send the user's notes too, with a template (`templates`): the notes are
 //! rewritten under its sections and filled in from the transcript. Each line must quote either the
@@ -29,41 +29,38 @@ The speakers are \"You\" (the person who recorded the meeting), and \"Others\" o
 
 Return:
 - summary: two to four short sentences on what the meeting covered and where it ended up. Plain prose, no lists or headings.
-- decisions: only what the participants clearly agreed or settled. Not suggestions, options or open questions.
 - actions: only tasks someone clearly committed to, or was asked to do and accepted.
 
-For every decision and action, `at` is the timestamp of the line where it was said, copied exactly (for example \"12:04\"), \
+For every action, `at` is the timestamp of the line where it was said, copied exactly (for example \"12:04\"), \
 and `quote` is a short phrase of three to twelve words copied word for word from that line.
 An action's owner is a person's name only if the transcript says who will do it, \"You\" if the person who recorded committed to it, \
-and otherwise an empty string. Never guess a name. A decision's owner is always an empty string.
+and otherwise an empty string. Never guess a name.
 
-A wrong decision or action item is worse than a missing one: when unsure, leave it out. Empty lists are fine. \
+A wrong action item is worse than a missing one: when unsure, leave it out. An empty list is fine. \
 Write in the language of the meeting.";
 
 fn schema() -> Value {
-    let item = |owner: bool| {
-        let mut properties = json!({ "text": { "type": "string" }, "at": { "type": "string" }, "quote": { "type": "string" } });
-        if owner { properties["owner"] = json!({ "type": "string" }); }
-        let required: Vec<&str> = if owner { vec!["text", "owner", "at", "quote"] } else { vec!["text", "at", "quote"] };
-        json!({ "type": "object", "additionalProperties": false, "required": required, "properties": properties })
-    };
+    let item = json!({
+        "type": "object", "additionalProperties": false, "required": ["text", "owner", "at", "quote"],
+        "properties": { "text": { "type": "string" }, "owner": { "type": "string" }, "at": { "type": "string" }, "quote": { "type": "string" } }
+    });
     json!({
-        "type": "object", "additionalProperties": false, "required": ["summary", "decisions", "actions"],
-        "properties": { "summary": { "type": "string" }, "decisions": { "type": "array", "items": item(false) }, "actions": { "type": "array", "items": item(true) } }
+        "type": "object", "additionalProperties": false, "required": ["summary", "actions"],
+        "properties": { "summary": { "type": "string" }, "actions": { "type": "array", "items": item } }
     })
 }
 
 #[derive(Deserialize)]
-struct Draft { summary: String, decisions: Vec<Claim>, actions: Vec<Claim> }
+struct Draft { summary: String, actions: Vec<Claim> }
 #[derive(Deserialize)]
 struct Claim { text: String, #[serde(default)] owner: String, at: String, quote: String }
-/// A suggested decision or action item and the transcript line it cites.
+/// A suggested action item and the transcript line it cites.
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Cited { text: String, owner: String, at_ms: u64, quote: String }
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct Suggestions { summary: String, decisions: Vec<Cited>, actions: Vec<Cited>, dropped: usize }
+pub struct Suggestions { summary: String, actions: Vec<Cited>, dropped: usize }
 
 /// The lines the model reads: the clean text of each turn, under the timestamp the Transcript tab shows.
 fn lines(turns: &[Turn]) -> String {
@@ -90,21 +87,16 @@ fn owner(turns: &[Turn], owner: &str) -> String {
 /// Keeps only the claims that trace back to the transcript, once each.
 fn ground(turns: &[Turn], draft: Draft) -> Suggestions {
     let mut dropped = 0;
-    let mut keep = |claims: Vec<Claim>, owned: bool| {
-        let mut kept: Vec<Cited> = Vec::new();
-        for claim in claims {
-            let text = claim.text.trim().to_string();
-            match cited(turns, &claim) {
-                Some(turn) if !text.is_empty() && !kept.iter().any(|k| k.text.eq_ignore_ascii_case(&text)) =>
-                    kept.push(Cited { owner: if owned { owner(turns, &claim.owner) } else { String::new() }, text, at_ms: turn.start_ms, quote: claim.quote.trim().into() }),
-                _ => dropped += 1,
-            }
+    let mut actions: Vec<Cited> = Vec::new();
+    for claim in draft.actions {
+        let text = claim.text.trim().to_string();
+        match cited(turns, &claim) {
+            Some(turn) if !text.is_empty() && !actions.iter().any(|k| k.text.eq_ignore_ascii_case(&text)) =>
+                actions.push(Cited { owner: owner(turns, &claim.owner), text, at_ms: turn.start_ms, quote: claim.quote.trim().into() }),
+            _ => dropped += 1,
         }
-        kept
-    };
-    let decisions = keep(draft.decisions, false);
-    let actions = keep(draft.actions, true);
-    Suggestions { summary: draft.summary.trim().into(), decisions, actions, dropped }
+    }
+    Suggestions { summary: draft.summary.trim().into(), actions, dropped }
 }
 
 fn client(seconds: u64) -> Result<reqwest::Client, String> {
@@ -385,29 +377,24 @@ mod tests {
     fn keeps_only_claims_that_cite_the_transcript() {
         let draft = Draft {
             summary: " Pricing was settled. ".into(),
-            decisions: vec![
-                claim("Go with the annual plan", "", "01:05", "we go with the annual plan"),
-                claim("Launch next week", "", "01:05", "we launch next week"),
-                claim("Annual plan", "", "[01:05]", "go with the annual plan"),
-            ],
             actions: vec![
                 claim("Send the pricing draft by Friday", "Maya", "00:00", "Maya will send the pricing draft"),
-                claim("Update the landing page", "You", "01:05", "I'll update the landing page"),
+                claim("Update the landing page", "You", "[01:05]", "I'll update the landing page"),
+                claim("Launch next week", "", "01:05", "we launch next week"),
                 claim("Book the venue", "Tim", "00:30", "book the venue"),
                 claim("Follow up", "Jordan", "1:02:05", "Sounds good"),
             ],
         };
         let s = ground(&meeting(), draft);
         assert_eq!(s.summary, "Pricing was settled.");
-        assert_eq!(s.decisions.iter().map(|d| (d.text.as_str(), d.at_ms)).collect::<Vec<_>>(), [("Go with the annual plan", 65_000), ("Annual plan", 65_000)]);
-        assert_eq!(s.actions.iter().map(|a| (a.text.as_str(), a.owner.as_str())).collect::<Vec<_>>(), [("Send the pricing draft by Friday", "Maya"), ("Update the landing page", "You"), ("Follow up", "")]);
+        assert_eq!(s.actions.iter().map(|a| (a.text.as_str(), a.owner.as_str(), a.at_ms)).collect::<Vec<_>>(), [("Send the pricing draft by Friday", "Maya", 0), ("Update the landing page", "You", 65_000), ("Follow up", "", 3_725_000)]);
         assert_eq!(s.dropped, 2);
     }
     #[test]
     fn drops_duplicates_and_empty_text() {
-        let draft = Draft { summary: String::new(), decisions: vec![claim("Annual plan", "", "01:05", "annual plan"), claim("annual plan", "", "01:05", "annual plan"), claim(" ", "", "01:05", "annual plan")], actions: vec![] };
+        let draft = Draft { summary: String::new(), actions: vec![claim("Annual plan", "", "01:05", "annual plan"), claim("annual plan", "", "01:05", "annual plan"), claim(" ", "", "01:05", "annual plan")] };
         let s = ground(&meeting(), draft);
-        assert_eq!(s.decisions.len(), 1);
+        assert_eq!(s.actions.len(), 1);
         assert_eq!(s.dropped, 2);
     }
     #[test]
@@ -499,6 +486,7 @@ mod tests {
     fn schema_requires_every_field() {
         let s = schema();
         assert_eq!(s["properties"]["actions"]["items"]["required"], json!(["text", "owner", "at", "quote"]));
-        assert_eq!(s["properties"]["decisions"]["items"]["additionalProperties"], json!(false));
+        assert_eq!(s["properties"]["actions"]["items"]["additionalProperties"], json!(false));
+        assert_eq!(s["required"], json!(["summary", "actions"]));
     }
 }

@@ -44,6 +44,31 @@ Synthetic two-voice meetings (the macOS `say` voices, with fillers and pauses) o
 
 - **No initial prompt.** With a prompt built from the meeting name, Whisper wrote the name ("Acme.") into the transcript as if someone had said it, so no prompt is used.
 
+## Accuracy on real meetings
+Measured with the ignored `measures_accuracy` test (`src-tauri/src/accuracy.rs`), which runs the whole job after Stop (both tracks transcribed, the others told apart, the transcript merged) on meetings with a transcript made by people, and scores the result (2026-10-23, same machine):
+
+- **The meetings:** four from the [AMI Meeting Corpus](https://groups.inf.ed.ac.uk/ami/corpus/) (ES2002a, ES2004a, IS1009a, TS3003a, 78 minutes in all): real people, three sites, many speaking English as a second language, talking over each other. Each person wore a headset. `scripts/fetch-ami.mjs` makes whoever talks most "You" (their headset is the mic) and adds the other three headsets together as the call audio. They sat in one room, so each headset also hears the others; on a call, the call app keeps that out. The script therefore silences each headset between its owner's words (with a quarter second on either side), using the reference's timing. That's kinder than a real call in one way (no line noise between words), and `--as-recorded` keeps the room as it was.
+- **Word error rate** (substituted, missing and added words over the words said; fillers, punctuation and how numbers are written don't count):
+
+  | | Words said | Verbatim | Clean |
+  |---|---|---|---|
+  | You | 5,256 | 10.0% (7.0–11.2% per meeting) | 10.2% |
+  | The others | 3,908 | 19.7% (17.2–24.0%) | 19.9% |
+
+  Most of it is missing words, mostly short replies: "yeah" (69 missed), "okay" (50), "like" (18). Whisper leaves out many backchannels said on their own, and about 16% of the others' speaking time is in no sentence at all. Few words were wrong (414 of 9,164); fewer were added (145), mostly the same short words. The others score worse than you because they're three voices on one track, often over each other. Cleanup only deletes words, and the clean transcript is within 0.4 points of verbatim, so it isn't removing what people said.
+- **Who said what** (of the time exactly one of the others is talking, the share inside a sentence labelled with their voice, each label matched to one person):
+
+  | Voice threshold | Voices found for 3 people | Right voice | Another voice | No sentence |
+  |---|---|---|---|---|
+  | 0.6 (before) | 21–44 | 50% | 34% | 16% |
+  | 0.9 | 8–18 | 74% | 10% | 16% |
+  | **1.0 (now)** | 6–12 | 77% | 7% | 16% |
+  | 1.1 | 3–6 | 76% | 8% | 16% |
+
+  The threshold had been chosen on synthetic voices; on real ones 0.6 split each person into many voices. It's now 1.0. 1.1 scored the same with fewer voices, but at 1.2 (in an earlier run) people were merged, and naming can't undo a merge, while two labels for one person can be given the same name. Even at 1.0 a three-person call shows more than three labels.
+- **Speed:** the 78 minutes took 6 min 20 s: transcription at 13–18× real time, as with synthetic audio, and telling the voices apart 16–30 s per meeting (about 1.3 minutes per hour of audio).
+- Not measured this way: echo on speakers (AMI used headsets), Bluetooth audio, more than three others, other languages. The scores are on four meetings, which were also the ones used to pick the threshold.
+
 ## Live transcript
 The same model follows a recording while it runs (macOS). Measured with the ignored `follows_a_recording` test, which replays real recordings (two tracks) through the live pass three seconds at a time, as the recorder feeds it:
 
@@ -77,6 +102,7 @@ Pyannote segmentation 3.0 and 3D-Speaker ERes2Net (VoxCeleb) through sherpa-onnx
 
 - **Speed:** a 56 s four-voice call in 1.9 s with a half-window step (about 2 minutes per hour of audio); a 0.1 step took 8.6 s and grouped no better.
 - **Accuracy on synthetic voices** (four macOS voices, twelve turns): two male voices and the group of female voices were always told apart; two similar female voices (Samantha and Karen) were merged at every threshold tried, and lower thresholds split one person in two. WeSpeaker CAM++ did worse on the same call.
+- **On real meetings**, see [Accuracy on real meetings](#accuracy-on-real-meetings): the threshold is now 1.0 (it was 0.6), which put 77% of the others' speech under the right voice instead of 50%.
 - Not measured yet: real people on a real call, and more than four voices.
 
 ## Parakeet live transcript
@@ -100,6 +126,6 @@ The full Whisper pass after Stop still makes the kept transcript, so the draft's
   - While transcribing: about 750–900 MB more for the duration of the job. The model is loaded per job and freed afterwards.
 
 ## Caveats
-- The audio is synthetic and clean. Real rooms, accents, crosstalk and Bluetooth (HFP) quality will lower accuracy, and echo in a real room is messier than a delayed copy.
+- Apart from the AMI meetings, the audio is synthetic and clean. Real rooms, accents, crosstalk and Bluetooth (HFP) quality will lower accuracy, and echo in a real room is messier than a delayed copy.
 - Windows hasn't been measured. Whisper runs on the CPU there, and large-v3-turbo is expected to be much slower (roughly real time). See [WINDOWS.md](WINDOWS.md).
 - These are single runs, not averages.

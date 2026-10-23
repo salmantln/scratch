@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Icon } from './Icon';
+import { Hush } from './Hush';
 import { MeetingList } from './Library';
 import { actionItems, owns, people, shortDate, type Meeting, type MeetingTab, type Person } from './model';
 /** Who the user meets, from calendar invites: everyone, grouped by company (their email's domain), and a page for
@@ -17,7 +18,7 @@ export function People({ meetings, selected, calendar, onSelect, onOpen, onToggl
   const companies = [...new Set(shown.map(p => p.company))].sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a.localeCompare(b));
   return <div className="page people-page">
     <header className="page-header"><h1>People</h1></header>
-    {everyone.length === 0 ? <div className="empty-state"><Icon name="people" size={28} /><h2>No people yet.</h2>
+    {everyone.length === 0 ? <div className="empty-state"><Hush mood="resting" size={88} fallback={<Icon name="people" size={28} />} /><h2>No people yet.</h2>
       <p>{calendar ? 'People come from your meetings’ calendar invites. Meetings made from an event list who was invited.' : 'People come from calendar invites. Turn on your calendar in Settings and your meetings list who was invited.'}</p>
       {!calendar && <button className="secondary" onClick={onSettings}>Open Settings</button>}</div>
     : <>
@@ -58,7 +59,7 @@ function Detail({ everyone, meetings, selected, onSelect, onOpen, onToggle }: {
       <div className="action-list">{items.map(({ item, meeting, key }) => <label className={`action-row home-action ${item.done ? 'complete' : ''}`} key={key}>
         <input type="checkbox" checked={item.done} onChange={() => { setTicked(t => [...t, key]); void onToggle(meeting.id, item.index); }} />
         <span className="action-text">{item.text}</span>
-        <span className="action-from">{item.owner && <span className="action-owner">{item.owner}</span>}<button className="text-button action-source" title={`Open ${meeting.title}`} onClick={e => { e.preventDefault(); onOpen(meeting.id, 'Action items'); }}>{meeting.title}</button></span>
+        <span className="action-from">{item.owner && <span className="action-owner">{item.owner}</span>}<button className="text-button action-source" title={`Open ${meeting.title}`} onClick={e => { e.preventDefault(); onOpen(meeting.id, 'Enhanced'); }}>{meeting.title}</button></span>
       </label>)}</div>
     </section>}
     <section className="home-section" aria-labelledby="person-meetings">

@@ -1,26 +1,32 @@
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type SyntheticEvent } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { ThemeProvider } from '../context/ThemeContext';
 import { TooltipProvider, Toaster } from '../components/ui';
 import { SidebarResizeHandle } from '../components/layout/SidebarResizeHandle';
-import { Folder, Icon, Logo } from './Icon';
+import { Folder, Icon } from './Icon';
+import { Hush, HushYield, showHush } from './Hush';
 import { NewMeetingDialog, NewProjectDialog } from './Dialogs';
 import { ConnectionsDialog, SendDialog, type IssueLink } from './Connectors';
 import { Settings, type SettingsSection } from './Settings';
 import { MeetingDetail } from './MeetingDetail';
 import { People } from './People';
-import { Home, MeetingList } from './Library';
+import { ActionItems, Home, MeetingList } from './Library';
 import { Onboarding } from './Onboarding';
-import { clock, linkAction, recorded, makeMeeting, previousMeeting, projectFor, retitle, replaceSection, searchMeeting, searchTerms, section, shortDate, stopsIn, toggleAction, type CalendarEvent, type Meeting, type MeetingTab } from './model';
+import { actionItems, clock, linkAction, recorded, makeMeeting, openingTab, previousMeeting, projectFor, retitle, replaceSection, searchMeeting, searchTerms, section, shortDate, stopsIn, toggleAction, type CalendarEvent, type Meeting, type MeetingTab } from './model';
 import { demoMeetings, isExample } from './seeds';
 import * as storage from './storage';
 import './quietnote.css';
 
-type View = 'home' | 'all' | 'project' | 'meeting' | 'search' | 'settings' | 'people';
+type View = 'home' | 'all' | 'actions' | 'project' | 'meeting' | 'search' | 'settings' | 'people';
 type Place = { view: View; project: string; selected: string; tab: MeetingTab; section: SettingsSection; person: string };
 const placeKey = 'quietnote.place.v1';
 const lastProjectKey = 'quietnote.lastProject';
+const railKey = 'quietnote.rail';
+// Narrow windows always show the sidebar as icons only.
+const narrowWindow = window.matchMedia('(max-width: 720px)');
+const watchNarrow = (change: () => void) => { narrowWindow.addEventListener('change', change); return () => narrowWindow.removeEventListener('change', change); };
+const onDivider = (e: SyntheticEvent) => Boolean((e.target as HTMLElement).closest('.qn-sidebar > [role="separator"]'));
 function remembered<T>(key: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(key) ?? 'null') ?? fallback; } catch { return fallback; } }
 function remember(key: string, value: unknown) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Per-viewer convenience only. */ } }
 function Highlight({ text, terms }: { text: string; terms: string[] }) {
@@ -67,7 +73,8 @@ function Shell() {
   const [selected, setSelected] = useState(initial.selected ?? '');
   // On People: a person's key or `@domain`, or nobody (the list).
   const [person, setPerson] = useState(initial.person ?? '');
-  const [tab, setTab] = useState<MeetingTab>(initial.tab ?? 'Summary');
+  // Summary, Decisions and Action items were tabs in earlier builds; they're in the enhanced notes now.
+  const [tab, setTab] = useState<MeetingTab>(initial.tab === 'Notes' || initial.tab === 'Transcript' ? initial.tab : 'Enhanced');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(initial.section ?? 'Privacy');
   const [query, setQuery] = useState('');
   const [indexedIds, setIndexedIds] = useState<string[]>([]);
@@ -80,8 +87,13 @@ function Shell() {
   const [stopped, setStopped] = useState<{ id: string; title: string } | null>(null);
   const [recoverySeen, setRecoverySeen] = useState<string[]>([]);
   const [sidebarHidden, setSidebarHidden] = useState(false);
+  // The sidebar as icons only, or icons with labels: double-clicking its divider switches.
+  const [rail, setRail] = useState(() => remembered(railKey, false));
+  useEffect(() => { remember(railKey, rail); }, [rail]);
+  const narrow = useSyncExternalStore(watchNarrow, () => narrowWindow.matches);
   const [addingExamples, setAddingExamples] = useState(false);
   const [preferences, setPreferences] = useState<storage.PrivacyPreferences>({});
+  useEffect(() => showHush(preferences.showHush !== false), [preferences.showHush]);
   const [connections, setConnections] = useState<storage.Connections>({});
   const [summaryKey, setSummaryKey] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -231,7 +243,10 @@ function Shell() {
   }, [live.available, preferences.summaryProvider, preferences.ollamaModel, summaryKey]);
   const go = useCallback((next: View, nextProject = '') => { setView(next); setProject(nextProject); }, []);
   const [find, setFind] = useState('');
-  const openMeeting = useCallback((id: string, nextTab: MeetingTab = 'Summary', nextFind = '') => { setSelected(id); setTab(nextTab); setFind(nextFind); setView('meeting'); }, []);
+  const openMeeting = useCallback((id: string, nextTab?: MeetingTab, nextFind = '') => {
+    const meeting = records.current.find(m => m.metadata.id === id);
+    setSelected(id); setTab(nextTab ?? (meeting ? openingTab(meeting) : 'Notes')); setFind(nextFind); setView('meeting');
+  }, []);
   useEffect(() => { if (view === 'meeting' && stopped?.id === selected) setStopped(null); }, [view, selected, stopped]);
   // A start that's still waiting (first-run explanation, a permission problem) is dropped on leaving its meeting.
   useEffect(() => { setCapture(c => c && (view !== 'meeting' || selected !== c) ? null : c); }, [view, selected]);
@@ -265,7 +280,7 @@ function Shell() {
   const results = useMemo(() => {
     if (!query.trim()) return [];
     return sorted.flatMap(meeting => {
-      const hit = searchMeeting(meeting, query) ?? (indexedIds.includes(meeting.metadata.id) ? { tab: 'Summary' as MeetingTab, snippet: section(meeting.markdown, 'Summary').slice(0, 160) } : null);
+      const hit = searchMeeting(meeting, query) ?? (indexedIds.includes(meeting.metadata.id) ? { tab: openingTab(meeting), snippet: section(meeting.markdown, 'Summary').slice(0, 160) } : null);
       return hit ? [{ meeting, ...hit }] : [];
     });
   }, [sorted, query, indexedIds]);
@@ -354,7 +369,7 @@ function Shell() {
   async function createMeeting(title: string, meetingProject: string, record: boolean, event: CalendarEvent | null = null) {
     const meeting = makeMeeting(title, meetingProject, event);
     await storage.createMeeting(meeting);
-    upsert(meeting); remember(lastProjectKey, meetingProject); setDialog(''); openMeeting(meeting.metadata.id, record ? 'Notes' : 'Summary');
+    upsert(meeting); remember(lastProjectKey, meetingProject); setDialog(''); openMeeting(meeting.metadata.id, 'Notes');
     if (record) setCapture(meeting.metadata.id);
   }
   async function addExamples() {
@@ -406,26 +421,35 @@ function Shell() {
     <details className="advanced"><summary>View details</summary><p className="path">{loadError}</p></details>
     {problem && <p className="field-error">{problem}</p>}
   </div></div>;
+  // The "Recording saved" / "Transcript ready" banner has the screen's Hush, outside Home (where the card has it).
+  const saved = stopped ? meetings.find(m => m.metadata.id === stopped.id) : undefined;
+  const bannerHush = Boolean(saved && saved.metadata.status !== 'error' && view !== 'home');
   if (!allProjects.length && !meetings.length) return <div className="quietnote-shell centered"><Onboarding live={live} preferences={preferences} busy={addingExamples} onPreference={changePreference} onCreate={createProject} onExamples={() => void addExamples()} />{problem && <p className="field-error floating" role="alert">{problem}</p>}{dialogs}</div>;
   // A transcript hit opens the transcript filtered to the search, so the passage is on screen.
   const openResult = (id: string, hitTab: MeetingTab) => openMeeting(id, hitTab, hitTab === 'Transcript' ? query.trim() : '');
   const libraryMeetings = view === 'project' ? sorted.filter(m => m.metadata.project === project) : sorted;
   const toggleItem = (id: string, index: number) => { const latest = records.current.find(m => m.metadata.id === id); return latest ? persist(id, toggleAction(latest.markdown, index)) : Promise.resolve(); };
   const count = (n: number) => `${n} ${n === 1 ? 'meeting' : 'meetings'}`;
+  const openItems = meetings.reduce((n, m) => n + actionItems(m.markdown).filter(a => !a.done).length, 0);
   const saveText = saveState === 'saving' ? 'Saving…' : saveState === 'unsaved' ? 'Not saved' : storage.desktop ? 'Saved' : 'Saved in this browser';
   const navItem = (active: boolean, icon: Parameters<typeof Icon>[0]['name'], label: string, onClick: () => void, extra?: ReactNode, className = '') =>
     <button className={`sidebar-item ${className} ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined} title={label} onClick={onClick}><Icon name={icon} size={16} /><span className="label">{label}</span>{extra}</button>;
-  return <div className={`quietnote-shell ${sidebarHidden ? 'sidebar-hidden' : ''} ${compact ? 'compact' : ''} ${storage.desktop && storage.device === 'Mac' ? 'mac-titlebar' : ''} ${showKeys ? 'show-keys' : ''}`}>
-    <aside className="qn-sidebar" aria-label="Main navigation" inert={sidebarHidden || compact}>
+  return <div className={`quietnote-shell ${sidebarHidden ? 'sidebar-hidden' : ''} ${rail || narrow ? 'rail' : ''} ${narrow ? 'narrow' : ''} ${compact ? 'compact' : ''} ${storage.desktop && storage.device === 'Mac' ? 'mac-titlebar' : ''} ${showKeys ? 'show-keys' : ''}`}>
+    {/* Double-clicking the divider (or Enter on it) switches between icons with labels and icons only, in place of
+        Scratch's width reset; as icons only, it doesn't drag. */}
+    <aside className="qn-sidebar" aria-label="Main navigation" inert={sidebarHidden || compact}
+      onDoubleClickCapture={e => { if (onDivider(e)) { e.stopPropagation(); setRail(r => !r); } }}
+      onKeyDownCapture={e => { if (e.key === 'Enter' && onDivider(e)) { e.preventDefault(); e.stopPropagation(); setRail(r => !r); } }}
+      onPointerDownCapture={e => { if (rail && onDivider(e)) e.stopPropagation(); }}>
       <div className="sidebar-drag" data-tauri-drag-region />
       <div className="sidebar-top">
-        <button className="brand" aria-label="QuietNote" onClick={() => go('home')}><Logo /><span className="label">QuietNote</span></button>
         <button className="primary new-meeting" title="New meeting (⌘N)" onClick={() => newMeeting()}><Icon name="plus" size={16} /><span className="label">New meeting</span><kbd aria-hidden="true">⌘N</kbd></button>
       </div>
       <nav className="sidebar-scroll" aria-label="Meetings and projects">
         <h2 className="sidebar-label">Meetings</h2>
         {navItem(view === 'home', 'home', 'Home', () => go('home'))}
         {navItem(view === 'all', 'meeting', 'All meetings', () => go('all'))}
+        {navItem(view === 'actions', 'task', 'Action items', () => go('actions'), <span className="sidebar-count">{openItems || ''}</span>)}
         {navItem(view === 'people', 'people', 'People', () => { setPerson(''); go('people'); })}
         <div className="sidebar-label-row"><h2 className="sidebar-label">Projects</h2><button className="icon-button small" aria-label="New project" title="New project" onClick={() => setDialog('project')}><Icon name="plus" size={14} /></button></div>
         {allProjects.map((p, i) => <div key={p}>{navItem(view === 'project' && project === p, 'folder', p, () => go('project', p), <><span className="initial" aria-hidden="true">{p.slice(0, 1).toUpperCase()}</span>{i < 9 && <kbd aria-hidden="true">⌘{i + 1}</kbd>}<span className="sidebar-count">{meetings.filter(m => m.metadata.project === p).length || ''}</span></>, 'project-item')}</div>)}
@@ -455,15 +479,15 @@ function Shell() {
           <div className="banner-actions"><button className="secondary" onClick={() => { setRecoverySeen(seen => [...seen, first.id]); openMeeting(first.id); }}>Open meeting</button><button className="text-button" onClick={() => setRecoverySeen(seen => [...seen, ...recovered.map(m => m.metadata.id)])}>Dismiss</button></div></div>;
       })()}
       {(() => {
-        const meeting = stopped && meetings.find(m => m.metadata.id === stopped.id);
+        const meeting = saved;
         if (!meeting || meeting.metadata.status === 'error') return null;
         const done = meeting.metadata.status === 'ready';
-        return <div className="banner" role="status"><div><strong>{done ? 'Transcript ready' : 'Recording saved'}</strong><span>{done ? `“${meeting.metadata.title}” is ready to review.` : `Transcribing “${meeting.metadata.title}” on this ${storage.device}. You can keep working.`}</span></div>
-          <div className="banner-actions"><button className="secondary" onClick={() => openMeeting(meeting.metadata.id, done ? 'Transcript' : 'Summary')}>Open meeting</button><button className="text-button" onClick={() => setStopped(null)}>Dismiss</button></div></div>;
+        return <div className="banner" role="status">{bannerHush && <Hush mood={done ? 'done' : 'transcribing'} size={44} />}<div><strong>{done ? 'Transcript ready' : 'Recording saved'}</strong><span>{done ? `“${meeting.metadata.title}” is ready to review.` : `Transcribing “${meeting.metadata.title}” on this ${storage.device}. You can keep working.`}</span></div>
+          <div className="banner-actions"><button className="secondary" onClick={() => openMeeting(meeting.metadata.id, done ? 'Transcript' : undefined)}>Open meeting</button><button className="text-button" onClick={() => setStopped(null)}>Dismiss</button></div></div>;
       })()}
       {external && !unsaved && <div className="banner" role="status"><div><strong>Files changed outside QuietNote.</strong><span>Refresh to load the latest version from disk.</span></div><div className="banner-actions"><button className="secondary" onClick={() => void reload()}>Refresh</button></div></div>}
       {problem && <div className="banner warning" role="alert"><div><strong>{problem}</strong></div><div className="banner-actions"><button className="text-button" onClick={() => setProblem('')}>Dismiss</button></div></div>}
-      <main className="qn-main" ref={main}>
+      <main className="qn-main" ref={main}><HushYield.Provider value={bannerHush}>
         {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} connections={connections} summaryKey={summaryKey} onSummaryKey={setSummaryKey} section={settingsSection} onSection={setSettingsSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
         : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={markdown => persist(previous!.metadata.id, markdown)} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture === current.metadata.id} onUpdated={upsert} onStartCapture={() => { setCapture(current.metadata.id); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onMarkEnded={() => void markEnded(current)} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
           const latest = records.current.find(m => m.metadata.id === current.metadata.id)!;
@@ -471,22 +495,23 @@ function Shell() {
         }} />
         : view === 'search' ? <div className="page search-page">
           <label className="search-field"><Icon name="search" size={18} /><input ref={searchInput} type="search" aria-label="Search meetings" placeholder="Search meetings…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && results[0]) openResult(results[0].meeting.metadata.id, results[0].tab); }} /></label>
-          {!query.trim() ? <p className="subtle">Search titles, summaries, decisions, action items, notes and transcripts.</p>
+          {!query.trim() ? <p className="subtle">Search titles, notes, action items and transcripts.</p>
           : results.length ? <><p className="result-count" role="status">{results.length === 1 ? '1 meeting' : `${results.length} meetings`}</p><ul className="results">{results.map(({ meeting, tab: hitTab, snippet }) => <li key={meeting.metadata.id}><button className="result" onClick={() => openResult(meeting.metadata.id, hitTab)}>
             <strong><Highlight text={meeting.metadata.title} terms={searchTerms(query)} /></strong>
-            <span className="result-meta">{shortDate(meeting.metadata.date)} · {meeting.metadata.project}{hitTab !== 'Summary' && ` · in ${hitTab}`}</span>
+            <span className="result-meta">{shortDate(meeting.metadata.date)} · {meeting.metadata.project}{hitTab !== 'Enhanced' && ` · in ${hitTab === 'Notes' ? 'your notes' : 'the transcript'}`}</span>
             {snippet && <span className="snippet"><Highlight text={snippet} terms={searchTerms(query)} /></span>}
           </button></li>)}</ul></>
-          : <div className="empty-inline" role="status"><h2>No meetings found for ‘{query.trim()}’.</h2><p>Try another term.</p></div>}
+          : <div className="empty-inline" role="status"><Hush mood="resting" size={72} /><h2>No meetings found for ‘{query.trim()}’.</h2><p>Try another term.</p></div>}
         </div>
         : view === 'people' ? <People meetings={meetings} selected={person} calendar={calendarOn} onSelect={setPerson} onOpen={openMeeting} onToggle={toggleItem} onSettings={() => go('settings')} />
-        : view === 'home' ? <Home meetings={sorted} live={live} events={events} onPrepare={event => void (allProjects.length ? createMeeting(event.title, projectOf(event), false, event) : Promise.resolve(newMeeting(event))).catch(e => setProblem(`Couldn’t create the meeting. ${String(e)}`))} onOpen={openMeeting} onNewMeeting={() => newMeeting()} onSearch={text => { setQuery(text); setView('search'); }} onToggle={toggleItem} onAll={() => go('all')} />
+        : view === 'actions' ? <ActionItems meetings={sorted} onOpen={openMeeting} onToggle={toggleItem} />
+        : view === 'home' ? <Home meetings={sorted} live={live} events={events} onPrepare={event => void (allProjects.length ? createMeeting(event.title, projectOf(event), false, event) : Promise.resolve(newMeeting(event))).catch(e => setProblem(`Couldn’t create the meeting. ${String(e)}`))} onOpen={openMeeting} onNewMeeting={() => newMeeting()} onSearch={text => { setQuery(text); setView('search'); }} onToggle={toggleItem} onAll={() => go('all')} onAllActions={() => go('actions')} />
         : <div className="page library-page">
           <header className="page-header"><div><h1>{view === 'project' ? project : 'All meetings'}</h1>{libraryMeetings.length > 0 && <p className="subtle">{count(libraryMeetings.length)}</p>}</div></header>
           {libraryMeetings.length ? <MeetingList meetings={libraryMeetings} showProject={view !== 'project'} onOpen={openMeeting} />
-          : <div className="empty-state"><Folder /><h2>{view === 'project' ? `No meetings in ${project} yet.` : 'No meetings yet.'}</h2><p>{live.available ? 'Record a meeting, or create one to take notes.' : 'Create a meeting to take notes.'}</p><button className="secondary" onClick={() => view === 'project' ? setDialog('meeting') : newMeeting()}><Icon name="plus" size={15} />New meeting</button></div>}
+          : <div className="empty-state"><Hush mood="resting" size={88} fallback={<Folder />} /><h2>{view === 'project' ? `No meetings in ${project} yet.` : 'No meetings yet.'}</h2><p>{live.available ? 'Record a meeting, or create one to take notes.' : 'Create a meeting to take notes.'}</p><button className="secondary" onClick={() => view === 'project' ? setDialog('meeting') : newMeeting()}><Icon name="plus" size={15} />New meeting</button></div>}
         </div>}
-      </main>
+      </HushYield.Provider></main>
     </div>
     {dialogs}
   </div>;

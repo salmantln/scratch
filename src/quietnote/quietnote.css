@@ -37,7 +37,8 @@
 .button-row { display: flex; flex-wrap: wrap; gap: var(--qn-space-2); margin-top: var(--qn-space-5); }
 
 /* Sidebar: fixed orientation layer; only the project list scrolls. */
-.qn-sidebar { --qn-sidebar-pad: var(--qn-space-3); position: relative; width: min(var(--sidebar-width, 232px), 40vw); flex-shrink: 0; background: var(--qn-side); border-right: 1px solid var(--qn-line); display: flex; flex-direction: column; padding: 0 var(--qn-sidebar-pad); overflow: hidden; transition: margin-left 260ms var(--qn-ease-out), opacity 200ms var(--qn-ease-out), visibility 0s; }
+.qn-sidebar { --qn-sidebar-pad: var(--qn-space-3); position: relative; width: min(var(--sidebar-width, 232px), 40vw); flex-shrink: 0; background: var(--qn-side); border-right: 1px solid var(--qn-line); display: flex; flex-direction: column; padding: 0 var(--qn-sidebar-pad); overflow: hidden; transition: margin-left 260ms var(--qn-ease-out), opacity 200ms var(--qn-ease-out), visibility 0s, width 200ms var(--qn-ease-out); }
+.sidebar-no-transition .qn-sidebar { transition: none; }
 /* Hiding slides the sidebar out past the window edge; visibility flips once it's gone so it can't take focus. */
 .sidebar-hidden .qn-sidebar { margin-left: calc(-1 * min(var(--sidebar-width, 232px), 40vw)); opacity: 0; visibility: hidden; transition: margin-left 260ms var(--qn-ease-out), opacity 200ms var(--qn-ease-out), visibility 0s 260ms; }
 .sidebar-drag { height: 40px; flex-shrink: 0; }
@@ -46,7 +47,6 @@
 .qn-sidebar [role="separator"]:focus-visible { outline: none; }
 .qn-sidebar [role="separator"] > div:first-child { background: #c5cad4; }
 .qn-sidebar [role="separator"]:focus-visible > div:first-child { background: #878d98; }
-.brand { display: flex; align-items: center; gap: var(--qn-space-2); width: max-content; padding: var(--qn-space-1) var(--qn-space-2); font-size: 18px; font-weight: 600; letter-spacing: -.5px; margin-bottom: var(--qn-space-5); border-radius: 6px; }
 .brand-logo { flex-shrink: 0; width: auto; height: 1.2em; }
 .new-meeting { width: 100%; justify-content: flex-start; padding: 0 var(--qn-space-3); margin-bottom: var(--qn-space-3); }
 .new-meeting kbd { color: #ffffffb3; }
@@ -66,6 +66,19 @@
 .initial { display: none; }
 .sidebar-count { margin-left: auto; color: var(--qn-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .sidebar-bottom { padding: var(--qn-space-2) 0 var(--qn-space-3); border-top: 1px solid var(--qn-line); }
+/* Icons only: chosen by double-clicking the divider, and always in narrow windows (`narrow`), which have no divider. */
+.rail .qn-sidebar { width: 56px; --qn-sidebar-pad: var(--qn-space-2); }
+.rail.sidebar-hidden .qn-sidebar { margin-left: -56px; }
+.rail .qn-sidebar :is(.label, kbd, .sidebar-count, .sidebar-label), .narrow .qn-sidebar > [role="separator"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.quietnote-shell.rail .qn-sidebar > [role="separator"] { cursor: default; }
+.rail .qn-sidebar .sidebar-label-row { justify-content: center; padding: var(--qn-space-3) 0 0; border-top: 1px solid var(--qn-line); margin-top: var(--qn-space-3); }
+.rail .qn-sidebar .sidebar-label-row .icon-button { margin: 0; }
+.rail .qn-sidebar :is(.new-meeting, .sidebar-item) { justify-content: center; padding: 0; }
+.rail .qn-sidebar .project-item svg { display: none; }
+.rail .qn-sidebar .initial { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 5px; background: #e6e3db; font-size: 12px; font-weight: 600; color: var(--qn-text); }
+.rail .qn-sidebar .project-item.active .initial { background: var(--qn-blue-soft); color: #1f3470; }
+/* The traffic lights (about 84px wide) reach past the 56px rail, so the bar starts after them. */
+.mac-titlebar.rail:not(.sidebar-hidden, .compact) .window-bar { padding-left: calc(84px - 56px + var(--qn-space-2)); }
 
 /* Workspace: fixed header, one scrolling content region. */
 .qn-workspace { min-width: 0; flex: 1; display: flex; flex-direction: column; }
@@ -92,7 +105,7 @@
 
 /* Banners: explicit, calm, with the next action beside the message. */
 .banner { display: flex; align-items: center; justify-content: space-between; gap: var(--qn-space-4); padding: var(--qn-space-3) var(--qn-space-6); border-bottom: 1px solid var(--qn-line); background: #f3f1eb; font-size: 13px; }
-.banner > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.banner > div:first-of-type { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .banner strong { font-weight: 600; }
 .banner span, .banner details { color: var(--qn-muted); }
 .banner summary { cursor: pointer; }
@@ -152,18 +165,16 @@
 
 /* Home: can I record now, what's still open, what happened lately. */
 .capture-card { display: flex; align-items: flex-start; gap: var(--qn-space-3); margin-bottom: var(--qn-space-4); padding: var(--qn-space-4) var(--qn-space-5); border: 1px solid var(--qn-line); border-radius: 10px; background: #fffdfa; font-size: 13px; }
-.capture-card > i { flex-shrink: 0; margin-top: 6px; }
 .capture-card > div:first-of-type { flex: 1; min-width: 0; }
 .capture-card strong { font-size: 14px; font-weight: 600; color: var(--qn-ink); }
 .capture-card p { color: var(--qn-muted); margin-top: 2px; }
 .capture-card .capture-card-problem { color: #7c3522; }
 .capture-card-job { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--qn-space-2); }
 .capture-card-job .text-button { min-height: 24px; }
+.capture-card-progress { height: 4px; margin: var(--qn-space-2) 0 2px; border-radius: 2px; background: var(--qn-line); overflow: hidden; }
+.capture-card-progress i { display: block; height: 100%; border-radius: inherit; background: var(--qn-blue); transition: width .6s var(--qn-ease-in-out); }
 .capture-card .notice-actions { align-self: center; }
 .capture-card.attention { background: var(--qn-red-soft); border-color: #efd3c8; }
-.ready-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--qn-mint); }
-.capture-card.attention .ready-dot { background: var(--qn-red); }
-.capture-card.unavailable .ready-dot { background: var(--qn-faint); }
 .home-search { margin-bottom: var(--qn-space-7); }
 .home-search kbd { flex-shrink: 0; }
 .home-section + .home-section { margin-top: var(--qn-space-7); }
@@ -198,7 +209,6 @@
 .quietnote-shell .meeting-tabs button:hover { color: var(--qn-ink); }
 .quietnote-shell .meeting-tabs button[aria-selected="true"] { color: var(--qn-ink); border-bottom-color: var(--qn-blue); }
 .quietnote-shell .meeting-tabs button:active:not(:disabled) { transform: none; }
-.count { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--qn-muted); background: #edebe5; border-radius: 9px; padding: 0 6px; line-height: 17px; }
 .meeting-content { padding-top: var(--qn-space-6); }
 .summary-text { display: flex; flex-direction: column; gap: var(--qn-space-3); max-width: 68ch; }
 .summary-text p { color: var(--qn-text); font-size: 15px; line-height: 1.7; text-wrap: pretty; }
@@ -207,12 +217,17 @@
 /* Added from the transcript, as opposed to the user's own notes. */
 .summary-text li.added { color: var(--qn-muted); }
 .summary-text li .citation { display: inline-flex; margin: 0; }
-.summary-preview { margin-top: var(--qn-space-7); padding-top: var(--qn-space-5); border-top: 1px solid var(--qn-line); }
-.summary-preview h2 { margin-bottom: var(--qn-space-2); }
-.summary-preview .text-button { margin-top: var(--qn-space-1); padding: 0; }
-.decision-list { list-style: none; padding: 0; }
-.decision-list li { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; color: var(--qn-text); font-size: 14px; line-height: 1.5; }
-.decision-list svg { color: var(--qn-mint); margin-top: 2px; }
+/* Notes: the enhanced notes, led by their action items, or your own notes. */
+.notes-view { margin-bottom: var(--qn-space-5); }
+.note-actions { max-width: 68ch; margin-bottom: var(--qn-space-6); }
+.summary-text + .note-actions { margin: var(--qn-space-6) 0 0; }
+.note-actions-head { display: flex; align-items: center; justify-content: space-between; gap: var(--qn-space-3); margin-bottom: var(--qn-space-2); }
+.note-actions-head h3 { color: var(--qn-ink); font-size: 15px; font-weight: 600; }
+.action-group + .action-group { margin-top: var(--qn-space-6); }
+.quietnote-shell .action-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--qn-space-3); font-weight: 400; }
+.quietnote-shell .action-group-head .text-button { min-height: 0; padding: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--qn-ink); font-size: 13px; font-weight: 600; }
+.action-group-head span { flex-shrink: 0; }
+.action-group .action-list { border-top: 0; }
 .action-list { border-top: 1px solid var(--qn-line); }
 .action-row { display: flex; align-items: flex-start; gap: var(--qn-space-3); padding: var(--qn-space-3) var(--qn-space-1); border-bottom: 1px solid var(--qn-line); cursor: pointer; }
 .action-row input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--qn-blue); cursor: pointer; flex-shrink: 0; }
@@ -567,21 +582,7 @@
 @media (max-width: 720px) {
   .recording-label { display: none; }
   .quietnote-shell .recording-title { max-width: 12ch; }
-  .qn-sidebar { width: 56px !important; --qn-sidebar-pad: var(--qn-space-2); }
-  .sidebar-hidden .qn-sidebar { margin-left: -56px; }
-  .qn-sidebar .label, .qn-sidebar kbd, .qn-sidebar .sidebar-count, .qn-sidebar .sidebar-label, .qn-sidebar [role="separator"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .sidebar-label-row { justify-content: center; padding: var(--qn-space-3) 0 0; border-top: 1px solid var(--qn-line); margin-top: var(--qn-space-3); }
-  .sidebar-label-row .icon-button { margin: 0; }
-  .brand, .new-meeting, .sidebar-item { justify-content: center; padding: 0; }
-  .brand { margin: 0 auto var(--qn-space-4); }
-  .project-item svg { display: none; }
-  .initial { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 5px; background: #e6e3db; font-size: 12px; font-weight: 600; color: var(--qn-text); }
-  .project-item.active .initial { background: var(--qn-blue-soft); color: #1f3470; }
   .window-bar, .banner { padding-left: var(--qn-space-4); padding-right: var(--qn-space-4); }
-  /* The traffic lights (about 84px wide) reach past the 56px rail, so the bar starts after them. */
-  .mac-titlebar .window-bar { padding-left: calc(84px - 56px + var(--qn-space-2)); }
-  /* …and the logo keeps the wide sidebar's distance below them. */
-  .mac-titlebar .qn-sidebar .brand { margin-top: var(--qn-space-2); }
   .banner { flex-wrap: wrap; }
   .page, .settings-page { padding: var(--qn-space-5) var(--qn-space-4) var(--qn-space-7); }
   .meeting-detail { padding: 0 var(--qn-space-4) var(--qn-space-7); }
@@ -613,3 +614,128 @@
 .call-actions .secondary { margin-right: var(--qn-space-1); }
 .call-dismiss { position: absolute; top: 3px; left: 3px; }
 @media (max-width: 560px) { .ob-kinds { grid-template-columns: minmax(0, 1fr); } .ob-step { min-height: 0; } }
+
+/* Hush (Hush.tsx). Every mood rests on its pose from the Paper file and animations only add to it; Reduce motion
+   turns them off. Pivots are in the drawing's own units: the feet, the eyes, the record dot, the bubble's tail.
+   The springs are Apple's two: no overshoot (damping 1), and about 4% (damping 0.72). The cut around the leaf
+   takes the colour of what's behind Hush (--hush-ground). */
+.hush { --hush-spring: linear(0, 0.028, 0.094, 0.179, 0.272, 0.365, 0.453, 0.534, 0.606, 0.669, 0.724, 0.771, 0.811, 0.844, 0.872, 0.895, 0.915, 0.931, 0.944, 0.954, 0.963, 0.97, 0.976, 0.981, 0.985, 0.988, 0.99, 0.992, 0.994, 0.995, 0.996, 0.997, 0.997, 0.998, 0.998, 0.999, 1); --hush-soft: linear(0, 0.031, 0.109, 0.214, 0.332, 0.451, 0.565, 0.668, 0.757, 0.832, 0.893, 0.941, 0.977, 1.003, 1.021, 1.031, 1.037, 1.038, 1.037, 1.034, 1.03, 1.026, 1.021, 1.017, 1.013, 1.009, 1.006, 1.004, 1.002, 1.001, 1, 0.999, 0.999, 0.999, 0.999, 0.999, 1); --hush-wave: cubic-bezier(.45, 0, .55, 1); flex-shrink: 0; overflow: visible; }
+.hush .h-ink { fill: #060c28; stroke: #060c28; stroke-width: 8; stroke-linejoin: round; }
+.hush :is(.h-leaf-cut, .h-bubble-cut) { fill: var(--hush-ground, var(--qn-paper)); stroke: var(--hush-ground, var(--qn-paper)); stroke-width: 18; stroke-linejoin: round; }
+.hush .h-bubble-cut { stroke-width: 10; }
+.hush :is(.h-leaf-fill, .h-bubble-fill) { fill: #4076fc; stroke: #4076fc; stroke-width: 0; }
+.hush .h-bubble-fill { stroke-width: 3; stroke-linejoin: round; }
+.hush :is(.h-eyes, .h-mid-eyes, .h-dot) { fill: #fcf9f3; }
+.hush .h-st { fill: none; stroke: #fcf9f3; stroke-width: 6.5; stroke-linecap: round; }
+.hush .h-brow { fill: #060c28; }
+.hush .h-check { fill: none; stroke: #fcf9f3; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; }
+.hush .h-rec-ring { fill: var(--hush-ground, var(--qn-paper)); }
+.hush .h-rec-dot { fill: #d9482b; }
+.hush .h-z path { fill: none; stroke: #060c28; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+.hush :is(.h-rig, .h-breath, .h-sway) { transform-origin: 104px 184px; }
+.hush .h-blink { transform-origin: 116px 92px; }
+.hush :is(.h-morph, .h-mid) { transform-origin: 100px 112px; }
+.hush .h-leaf-tilt { transform-origin: 61px 35px; }
+.hush .h-rec { transform-origin: 178px 36px; }
+.hush .h-bubble { transform-origin: 156px 36px; }
+.hush .h-left { transform-origin: 20px 133px; }
+.hush .h-mid-eyes { transform-origin: 106px 106px; }
+.hush .h-z1 { transform-origin: 164px 19px; }
+.hush .h-z2 { transform-origin: 179px 4px; }
+.hush .h-z3 { transform-origin: 196px -13px; }
+/* Poses: a mood's last face shows; the rest only appear on the way to it. */
+.hush .h-eyes { opacity: 0; }
+.hush .h-eyes:last-child { opacity: 1; }
+.hush .h-z { opacity: 0; }
+.hush-suggesting .h-glance { transform: translate(6px, -5px); }
+.hush-attention .h-sway { transform: rotate(-3.5deg); }
+.hush-transcribing :is(.h-body, .h-face) { opacity: 0; }
+.hush-transcribing .h-morph { transform: scale(.5); }
+.hush-transcribing .h-leaf { transform: translateX(119px); }
+.hush-transcribing .h-leaf-y { transform: translateY(57px); }
+.hush-listening .h-glance { transition: transform .5s var(--hush-spring); }
+.hush.look-you .h-glance { transform: translate(6px, 1px); }
+.hush.look-others .h-glance { transform: translate(-6px, 1px); }
+/* Life: a sway from the feet, breathing and uneven blinks, except while paused (still), asleep or winding down. */
+.hush .h-sway { animation: hush-sway 3.4s ease-in-out infinite; }
+.hush .h-breath { animation: hush-breathe 2.6s ease-in-out infinite; }
+.hush .h-blink { animation: hush-blink 4.6s linear infinite; }
+.hush:is(.hush-paused, .hush-resting, .hush-winding) .h-sway, .hush:is(.hush-paused, .hush-resting, .hush-winding) .h-blink, .hush-paused .h-breath { animation: none; }
+.hush:is(.hush-resting, .hush-winding) .h-breath { animation-duration: 3.6s; }
+.hush-ready .h-glance { animation: hush-glance 6s infinite; }
+.hush-listening .h-rec { animation: hush-pulse 1.4s ease-in-out infinite; }
+.hush-resting .h-z { animation: hush-z 3.6s ease-out infinite; }
+.hush-resting .h-z2 { animation-delay: 1.2s; }
+.hush-resting .h-z3 { animation-delay: 2.4s; }
+/* Once, on arriving in the mood: the bubble pops up and the eyes look at it; the hop and the check; the lean in. */
+.hush-suggesting .h-bubble { animation: hush-pop .7s var(--hush-soft) .1s both; }
+.hush-suggesting .h-glance { animation: hush-look-up .6s var(--hush-spring) .15s both; }
+.hush-suggesting .h-dot { animation: hush-type 1s ease-in-out infinite; }
+.hush-suggesting .h-dot:nth-of-type(2) { animation-delay: .15s; }
+.hush-suggesting .h-dot:nth-of-type(3) { animation-delay: .3s; }
+.hush-done .h-rig { animation: hush-hop 1.1s both; }
+.hush:is(.hush-done, .hush-attention) .h-e-dots { animation: hush-hide .08s .3s both; }
+.hush:is(.hush-done, .hush-attention) .h-eyes:last-child { animation: hush-show .08s .3s both; }
+.hush-done .h-check { animation: hush-draw .45s var(--hush-wave) .55s both; }
+.hush-attention .h-sway { animation: hush-lean .8s var(--hush-spring) .1s both; }
+/* Transcribing: comes apart once, then the pieces float until the transcript is saved. */
+.hush-transcribing .h-rig { animation: hush-squash .4s var(--hush-wave) both, hush-unsquash .8s var(--hush-spring) .4s forwards; }
+.hush-transcribing .h-morph { animation: hush-shrink .9s var(--hush-spring) .55s both; }
+.hush-transcribing .h-body { animation: hush-hide .15s ease-in 1.17s both; }
+.hush-transcribing .h-face { animation: hush-hide .12s ease-in 1.14s both; }
+.hush-transcribing .h-left { animation: hush-emerge .86s var(--hush-soft) .4s both, hush-float 1.8s var(--hush-wave) 2.4s infinite alternate; }
+.hush-transcribing .h-mid { animation: hush-grow .86s var(--hush-spring) .53s both, hush-float-low 2.1s var(--hush-wave) 2.4s infinite alternate; }
+.hush-transcribing .h-mid-eyes { animation: hush-close .3s var(--hush-wave) 1.5s both, hush-hide .2s ease-out 1.8s both; }
+.hush-transcribing .h-leaf { animation: hush-leaf-x 1s var(--hush-spring) .7s both; }
+.hush-transcribing .h-leaf-y { animation: hush-leaf-y 1s cubic-bezier(.6, 0, .4, 1) .7s both, hush-leaf-float 1.6s var(--hush-wave) 2.4s infinite alternate; }
+svg.hush-transcribing { overflow: visible; }
+/* The pieces start apart and close up as the percentage climbs (--hush-progress, 0–1; together without one). */
+.hush-transcribing .h-apart-l { transform: translateX(calc(-30px * (1 - var(--hush-progress, 1)))); transition: transform .8s var(--hush-spring); }
+.hush-transcribing .h-apart-r { transform: translateX(calc(12px * (1 - var(--hush-progress, 1)))); transition: transform .8s var(--hush-spring); }
+.hush-transcribing .h-leaf-tilt { animation: hush-tilt .44s var(--hush-wave) .7s both, hush-untilt .56s var(--hush-spring) 1.14s forwards; }
+@keyframes hush-sway { 0%, 100% { transform: rotate(-1.6deg) } 50% { transform: rotate(1.6deg) } }
+@keyframes hush-breathe { 0%, 100% { transform: none } 50% { transform: scale(1.018, .982) } }
+@keyframes hush-blink { 0%, 27%, 31.5%, 83%, 87.5%, 100% { transform: none } 29%, 85% { transform: scaleY(.1) } }
+@keyframes hush-glance { 0%, 30%, 53%, 74%, 93%, 100% { transform: none } 33%, 50% { transform: translate(-6px, 1px) } 77%, 90% { transform: translate(6px, -1px) } }
+@keyframes hush-pulse { 50% { transform: scale(.8) } }
+@keyframes hush-z { 0% { opacity: 0; transform: translate(-4px, 6px) scale(.3) } 10% { opacity: 1; transform: none } 30% { opacity: 1; transform: translate(3px, -6px) scale(1.05) } 40%, 100% { opacity: 0; transform: translate(5px, -10px) scale(1.1) } }
+@keyframes hush-pop { from { transform: scale(0) } }
+@keyframes hush-look-up { from { transform: none } }
+@keyframes hush-type { 0%, 60%, 100% { transform: none; opacity: .5 } 30% { transform: translateY(-3px); opacity: 1 } }
+@keyframes hush-hop { 0%, 22% { transform: none } 30% { transform: scale(1.08, .9) } 50% { transform: translateY(-16px) scale(.94, 1.08) } 72% { transform: translateY(0) scale(1.07, .93) } 85%, 100% { transform: none } }
+@keyframes hush-hide { from { opacity: 1 } to { opacity: 0 } }
+@keyframes hush-show { from { opacity: 0 } to { opacity: 1 } }
+@keyframes hush-draw { from { stroke-dashoffset: 1 } to { stroke-dashoffset: 0 } }
+@keyframes hush-lean { from { transform: none } }
+@keyframes hush-squash { from { transform: none } to { transform: scale(1.06, .95) } }
+@keyframes hush-unsquash { from { transform: scale(1.06, .95) } to { transform: none } }
+@keyframes hush-shrink { from { transform: none } }
+@keyframes hush-emerge { from { transform: translate(40px, -10px) scale(.8) } }
+@keyframes hush-grow { from { transform: scale(1.25) } }
+@keyframes hush-close { to { transform: scaleY(.12) } }
+@keyframes hush-float { to { transform: translateY(-3px) } }
+@keyframes hush-float-low { to { transform: translateY(2px) } }
+@keyframes hush-leaf-x { from { transform: none } }
+@keyframes hush-leaf-y { from { transform: none } }
+@keyframes hush-leaf-float { from { transform: translateY(57px) } to { transform: translateY(54px) } }
+@keyframes hush-tilt { to { transform: rotate(16deg) } }
+@keyframes hush-untilt { from { transform: rotate(16deg) } to { transform: none } }
+@media (prefers-reduced-motion: reduce) { .hush, .hush * { animation: none !important; transition: none !important; } }
+/* Where Hush sits: in place of the Home card's status dot and the call panel's logo, before the banner and
+   drafting notice text, and above an empty state. The drawing has room around it for the bubble and the z's. */
+.capture-card > .hush { --hush-ground: #fffdfa; margin: -12px -6px -12px -12px; }
+/* With Show Hush off, the status dot he replaced. */
+.ready-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--qn-mint); }
+.capture-card.attention .ready-dot { background: var(--qn-red); }
+.capture-card.unavailable .ready-dot { background: var(--qn-faint); }
+.capture-card > :is(.ready-dot, .live-dot, .paused-dot) { flex-shrink: 0; margin-top: 6px; }
+.capture-card.attention > .hush { --hush-ground: var(--qn-red-soft); }
+.call-panel > .hush { margin: -8px -4px -8px -12px; }
+:is(.notice, .banner) > .hush { --hush-ground: #f3f1eb; margin: -10px -4px -10px -10px; }
+.empty-inline > .hush { margin: 0 0 var(--qn-space-1) -14px; }
+.hush-setting > .hush { flex-shrink: 0; margin: -8px calc(-1 * var(--qn-space-5) + 10px) -8px -10px; }
+.hush-setting > div { flex: 1; }
+.ob-hush { display: flex; align-items: center; justify-content: center; gap: var(--qn-space-2); color: var(--qn-muted); font-size: 13px; }
+.ob-hush .hush { margin: -8px -2px -8px -8px; }
+.notice.attention > .hush { --hush-ground: var(--qn-red-soft); }
+.empty-state > .hush { margin: -12px 0 calc(var(--qn-space-1) - 12px); }

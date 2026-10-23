@@ -47,7 +47,7 @@ function Meter({ name, peak, level, waiting, source }: { name: string; peak: num
     {level === 'heard' ? <><span className="sr-only">✓</span>{source && <span className="meter-source">{source}</span>}</> : <span>{level === 'silent' ? 'silent' : waiting}</span>}</span>;
 }
 /** Live levels from Rust (`quietnote://levels`, ten a second), so it's clear at once that both tracks are recording. */
-function useLevels(running: boolean): [number, number] {
+export function useLevels(running: boolean): [number, number] {
   const [levels, setLevels] = useState<[number, number]>([0, 0]);
   useEffect(() => {
     setLevels([0, 0]);

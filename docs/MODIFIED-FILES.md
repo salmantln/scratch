@@ -48,7 +48,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/main.tsx`
 - `vite.config.ts`
 
-## Added files (85)
+## Added files (90)
 
 - `docs/MODIFIED-FILES.md`
 - `docs/PERFORMANCE.md`
@@ -74,14 +74,20 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `NOTICE`
 - `playwright.config.ts`
 - `public/quietnote.svg`
+- `scripts/fetch-ami.mjs`
 - `scripts/fetch-models.mjs`
 - `src-tauri/.cargo/config.toml`
 - `src-tauri/capabilities/call.json`
 - `src-tauri/Entitlements.plist`
+- `src-tauri/icons/tray-logo-recording-template.png`
+- `src-tauri/icons/tray-logo-template.png`
+- `src-tauri/icons/tray-paused-template.png`
 - `src-tauri/icons/tray-recording-template.png`
 - `src-tauri/icons/tray-recording.png`
 - `src-tauri/icons/tray-template.png`
 - `src-tauri/Info.plist`
+- `src-tauri/src/accuracy.rs`
+- `src-tauri/src/agents.rs`
 - `src-tauri/src/app_state.rs`
 - `src-tauri/src/ax.rs`
 - `src-tauri/src/calendar.rs`

@@ -67,9 +67,10 @@ impl Follower {
                 track.pieces.extend(timed(pieces, track.start_ms));
             }
             let keep = (keep as usize * MS).min(track.audio.len());
-            // Speech after what's finished is still being said: Parakeet shows it as it grows.
+            // Speech after what's finished is still being said: Parakeet shows it as it grows. The
+            // detector can place its end a frame past the buffer, which isn't audio yet.
             let speaking = match (&self.words, speech.last()) {
-                (Words::Parakeet(parakeet), Some(&(_, end))) if !all && end > keep as u64 / MS as u64 => {
+                (Words::Parakeet(parakeet), Some(&(_, end))) if !all && end.min(buffered) > keep as u64 / MS as u64 => {
                     timed(parakeet.pieces(&track.audio, ((keep / MS) as u64, (end + 200).min(buffered)), &speech), track.start_ms)
                 }
                 _ => Vec::new(),

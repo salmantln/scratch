@@ -16,6 +16,9 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+#[cfg(test)]
+mod accuracy;
+mod agents;
 mod app_state;
 mod calendar;
 #[cfg(target_os = "macos")]
@@ -3922,6 +3925,8 @@ pub fn run() {
             capture::transcript_rename_speaker,
             cli::cli_setup_command,
             cli::mcp_config,
+            agents::mcp_agents,
+            agents::mcp_agent_set,
             calendar::calendar_access,
             calendar::calendar_events,
             calendar::calendar_now,

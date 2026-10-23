@@ -17,6 +17,9 @@ const FILES: [(&str, u64, &str); 4] = [
 ];
 /// It shares the computer with the call.
 const THREADS: i32 = 2;
+/// Shorter audio holds no word, and audio too short for one feature frame makes onnxruntime throw a
+/// C++ exception, which Rust can't catch: the app aborts. 100 ms (1,600 samples) is well clear of it.
+const SHORTEST: usize = 1_600;
 
 pub struct Parakeet(OfflineRecognizer);
 impl Parakeet {
@@ -42,6 +45,7 @@ impl Parakeet {
     }
     /// One stretch of audio as tokens with when each starts and how long it lasts (seconds).
     fn recognize(&self, audio: &[f32]) -> Option<Vec<(String, f32, f32)>> {
+        if audio.len() < SHORTEST { return None; }
         let stream = self.0.create_stream();
         stream.accept_waveform(16_000, audio);
         self.0.decode(&stream);

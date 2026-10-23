@@ -18,11 +18,13 @@ const MODELS: [(&str, u64, &str); 2] = [
     (EMBEDDING, 26_485_263, "c59158379255ad66e161679cca6af8d52d51e389e3224ab7d7a7baae295c2db5"),
 ];
 /// How different two stretches' voices must be to count as two people (distance between their
-/// embeddings). On a four-voice test call, lower split one person in two and higher merged people.
-const THRESHOLD: f32 = 0.6;
+/// embeddings). Chosen on four real meetings (`accuracy::measures_accuracy`, AMI corpus): at 0.6 three
+/// people became 21–44 voices and half their speech had the right one; at 1.0, 6–12 voices and 77%.
+/// 1.1 scored the same with fewer voices, and 1.2 merged people, which naming can't undo.
+pub(crate) const THRESHOLD: f32 = 1.0;
 /// How far the segmentation's 10-second window moves each step, as a share of it. Half a window
 /// grouped voices as well as smaller steps on the test call, about 2 minutes per hour of audio (an M-series Mac).
-const SHIFT: f32 = 0.5;
+pub(crate) const SHIFT: f32 = 0.5;
 /// A sentence that overlaps no voice (Whisper's timing can fall just outside one) takes the nearest
 /// within this many ms; further away, it stays with "Others".
 const NEAR_MS: u64 = 1000;
@@ -41,7 +43,7 @@ pub fn voices(app: &AppHandle, audio: &[f32]) -> Result<Voices, String> {
     split(&segmentation, &embedding, audio)
 }
 pub(crate) fn split(segmentation: &Path, embedding: &Path, audio: &[f32]) -> Result<Voices, String> { tuned(segmentation, embedding, audio, THRESHOLD, SHIFT) }
-fn tuned(segmentation: &Path, embedding: &Path, audio: &[f32], threshold: f32, shift: f32) -> Result<Voices, String> {
+pub(crate) fn tuned(segmentation: &Path, embedding: &Path, audio: &[f32], threshold: f32, shift: f32) -> Result<Voices, String> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8) as i32;
     let path = |p: &Path| Some(p.to_string_lossy().into_owned());
     let config = OfflineSpeakerDiarizationConfig {
