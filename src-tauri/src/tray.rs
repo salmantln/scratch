@@ -26,6 +26,21 @@ pub fn show_main(app: &AppHandle) {
     }
 }
 
+/// In the Dock and ⌘-Tab only while one of QuietNote's windows is open (macOS); otherwise it's a
+/// menu bar app, still running, so call detection and recording carry on. `closing` is a window
+/// on its way out, which may still report itself visible. The call panel never counts.
+pub fn sync_dock(app: &AppHandle, closing: Option<&str>) {
+    #[cfg(target_os = "macos")]
+    {
+        let open = app.webview_windows().iter().any(|(label, window)| {
+            Some(label.as_str()) != closing && label != crate::calls::PANEL && window.is_visible().unwrap_or(false)
+        });
+        let _ = app.set_activation_policy(if open { tauri::ActivationPolicy::Regular } else { tauri::ActivationPolicy::Accessory });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, closing);
+}
+
 /// Asks the main window to finish saving, then exits. Exits anyway after a short grace period
 /// so a busy or navigated-away webview can't block Quit; recovery drafts cover anything unsaved.
 pub fn request_quit(app: &AppHandle) {

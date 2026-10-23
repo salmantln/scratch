@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
-const PANEL: &str = "call";
+pub(crate) const PANEL: &str = "call";
 /// How long an app must hold the microphone before QuietNote offers to record, so a blip isn't a call.
 const HOLD: Duration = Duration::from_secs(3);
 
@@ -180,16 +180,17 @@ pub fn ending_panel(app: &AppHandle, show_it: bool) {
 /// Shows the panel, offering to record `call` (or, without one, for a countdown).
 #[cfg(target_os = "macos")]
 fn show(app: &AppHandle, call: Option<&'static str>) {
-    use tauri::{PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
-    // Wide enough for the countdown's two buttons too.
-    const SIZE: (f64, f64) = (440.0, 72.0);
+    use tauri::{LogicalSize, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
+    // One line for the offer; the countdown's reason may take two.
+    const SIZE: (f64, f64) = (360.0, 56.0);
+    let height = if call.is_some() { SIZE.1 } else { 72.0 };
     let window = match app.get_webview_window(PANEL) {
         Some(window) => { if let Some(name) = call { let _ = window.emit_to(PANEL, "quietnote://call", name); } window }
         None => {
             let url = format!("index.html?panel=call&app={}", urlencoding::encode(call.unwrap_or_default()));
             let built = WebviewWindowBuilder::new(app, PANEL, WebviewUrl::App(url.into()))
                 .title("Meeting detected")
-                .inner_size(SIZE.0, SIZE.1)
+                .inner_size(SIZE.0, height)
                 .decorations(false)
                 .resizable(false)
                 .always_on_top(true)
@@ -203,6 +204,7 @@ fn show(app: &AppHandle, call: Option<&'static str>) {
             match built { Ok(window) => { mac::round(&window); window } Err(_) => return }
         }
     };
+    let _ = window.set_size(LogicalSize::new(SIZE.0, height));
     // The top right of the screen the pointer is on, just under the menu bar.
     let monitor = app.cursor_position().ok().and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten()).or_else(|| app.primary_monitor().ok().flatten());
     if let Some(monitor) = monitor {
@@ -311,19 +313,25 @@ mod mac {
         }).collect()
     }
 
-    /// Rounded corners for the undecorated panel, and a place over full-screen apps (a call in full screen).
+    /// Rounded corners for the undecorated panel, a place over full-screen apps (a call in full screen), and clicks
+    /// that don't bring QuietNote forward: without that, dismissing the panel left QuietNote active and macOS raised
+    /// its main window in the call's place.
     pub fn round(window: &tauri::WebviewWindow) {
         let Ok(ns_window) = window.ns_window() else { return };
         let ns_window = ns_window.cast::<AnyObject>();
         unsafe {
             // NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary
             let _: () = msg_send![ns_window, setCollectionBehavior: (1usize << 0) | (1usize << 8)];
+            // What NSPanel's non-activating style sets; Tauri's window can't become an NSPanel.
+            let prevents = objc2::sel!(_setPreventsActivation:);
+            let responds: bool = msg_send![ns_window, respondsToSelector: prevents];
+            if responds { let _: () = msg_send![ns_window, _setPreventsActivation: true]; }
             let view: *mut AnyObject = msg_send![ns_window, contentView];
             if view.is_null() { return; }
             let _: () = msg_send![view, setWantsLayer: true];
             let layer: *mut AnyObject = msg_send![view, layer];
             if layer.is_null() { return; }
-            let _: () = msg_send![layer, setCornerRadius: 14.0f64];
+            let _: () = msg_send![layer, setCornerRadius: 12.0f64];
             let _: () = msg_send![layer, setMasksToBounds: true];
             let _: () = msg_send![ns_window, setOpaque: false];
             let clear: *mut AnyObject = msg_send![objc2::class!(NSColor), clearColor];

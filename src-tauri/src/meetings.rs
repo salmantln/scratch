@@ -224,8 +224,9 @@ pub async fn quietnote_preferences(app: AppHandle, value: Option<serde_json::Val
     let path = root(&app)?.join(".privacy.json");
     if let Some(value) = value {
         atomic_write(&path, &serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?)?;
-        // Show Hush also changes the menu bar and the call panel.
+        // Show Hush also changes the menu bar and the call panel; Open at login, the login item.
         crate::tray::restyle(&app);
+        crate::login::sync(&app);
         let _ = app.emit_to("call", "quietnote://preferences-changed", ());
         return Ok(value);
     }

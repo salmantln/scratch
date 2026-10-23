@@ -51,11 +51,15 @@ Use a signed build (`npm run tauri build`) for anything involving permissions. D
 | Joining a Zoom call shows "Meeting detected · Zoom" top right within ~5 s, without taking focus from Zoom | ☐ |
 | A Google Meet call in Chrome shows "Meeting detected · Chrome" (also Safari, Arc) | ☐ |
 | The panel shows over a full-screen call | ☐ |
-| Start recording on the panel opens QuietNote on a new "Zoom call" meeting, recording, on Notes | ☐ |
+| Record on the panel opens QuietNote on a new "Zoom call" meeting, recording, on Notes | ☐ |
 | …as a narrow column at the right of the call's screen (just the meeting, recorder and live transcript), not the whole app | ✓ auto (layout) ☐ (real window) |
 | Open full window (↗) puts the window back where and how big it was; so does ⌘, / ⌘K or a tray action | ✓ auto (layout) ☐ (real window) |
 | The compact column on a second screen, and when the window was full screen before | ☐ |
 | Leaving the call hides the panel; dismissing it keeps it away until the next call | ☐ |
+| QuietNote opened once (release build in /Applications) adds `~/Library/LaunchAgents/app.quietnote.desktop.plist`; after logging out and in it's in the menu bar with no window, and joining a call shows the panel | ☐ |
+| Settings → Privacy → Open at login off removes the plist; nothing opens QuietNote at the next login | ☐ |
+| Closing the window (red button, ⌘W) removes QuietNote from the Dock and ⌘-Tab while the menu bar icon stays and a call still shows the panel; Open QuietNote, a relaunch or the panel's Record brings back the window and the Dock icon. A login launch has no Dock icon, and a preview window keeps it while open | ☐ |
+| A second meeting in the same browser while the browser still holds the microphone is not offered (as in Granola); leaving, then joining a new one is | ✓ live 2026-10-23 (Chrome, Meet) |
 | Don't notify for Chrome stops Chrome prompts; Settings → Privacy → Notify again brings them back | ☐ |
 | Nothing is offered while QuietNote is recording, or after stopping mid-call | ☐ |
 | Dictation or Voice Memos using the mic never show the panel | ☐ |

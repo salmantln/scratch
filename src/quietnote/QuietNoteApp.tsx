@@ -1,7 +1,7 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type SyntheticEvent } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
-import { ThemeProvider } from '../context/ThemeContext';
+import { ThemeProvider, useTheme } from '../context/ThemeContext';
 import { TooltipProvider, Toaster } from '../components/ui';
 import { SidebarResizeHandle } from '../components/layout/SidebarResizeHandle';
 import { Folder, Icon } from './Icon';
@@ -94,6 +94,12 @@ function Shell() {
   const [addingExamples, setAddingExamples] = useState(false);
   const [preferences, setPreferences] = useState<storage.PrivacyPreferences>({});
   useEffect(() => showHush(preferences.showHush !== false), [preferences.showHush]);
+  // The theme is Scratch's own light and dark (the `.dark` class, which its editor follows too), set once the
+  // preferences are read; on macOS the native window, its menus and the call panel follow the same choice.
+  const { theme, setTheme } = useTheme();
+  const appearance = storage.appearance(preferences);
+  useEffect(() => { if (!loading && theme !== appearance) setTheme(appearance); }, [loading, appearance, theme, setTheme]);
+  useEffect(() => { if (storage.desktop && !loading) getCurrentWindow().setTheme(appearance === 'system' ? null : appearance).catch(() => { /* The page still follows it. */ }); }, [loading, appearance]);
   const [connections, setConnections] = useState<storage.Connections>({});
   const [summaryKey, setSummaryKey] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);

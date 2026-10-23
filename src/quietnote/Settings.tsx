@@ -3,7 +3,7 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Icon } from './Icon';
 import { Hush } from './Hush';
 import { serviceName } from './catalog';
-import { calendarAccess, callAccessibility, cliSetupCommand, desktop, mcpAgents, mcpConfig, ollamaModels, openPrivacySettings, removeSummaryKey, saveSummaryKey, setMcpAgent, type Agent, type Connections, type PrivacyPreferences, type Service } from './storage';
+import { appearance, calendarAccess, callAccessibility, cliSetupCommand, desktop, mcpAgents, mcpConfig, ollamaModels, openPrivacySettings, removeSummaryKey, saveSummaryKey, setMcpAgent, type Agent, type Connections, type PrivacyPreferences, type Service } from './storage';
 export type SettingsSection = 'Privacy' | 'Appearance' | 'Local archive' | 'About';
 const mac = /Mac/.test(navigator.userAgent);
 const sections: [SettingsSection, 'privacy' | 'appearance' | 'archive' | 'info'][] = [['Privacy', 'privacy'], ['Appearance', 'appearance'], ['Local archive', 'archive'], ['About', 'info']];
@@ -117,6 +117,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
   }, [confirming]);
   const connected = (Object.keys(connections) as Service[]).map(s => `${serviceName(s)} (as ${connections[s]!.account})`);
   const flag = (key: string, fallback: boolean) => typeof values[key] === 'boolean' ? values[key] as boolean : fallback;
+  const theme = appearance(values);
   function toggle(key: string, title: string, description: string, fallback: boolean, disabled = false) {
     const checked = flag(key, fallback);
     return <div className="setting-row" key={key}><div><div className="setting-title">{title}</div><p>{description}</p></div><button type="button" className={`toggle ${checked ? 'on' : ''}`} role="switch" aria-checked={checked} aria-label={title} disabled={disabled} onClick={() => onChange(key, !checked)}><span /></button></div>;
@@ -158,6 +159,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
               if (!confirming) void callAccessibility(true).then(setAllowed).catch(() => setAllowed(false));
             }}><span /></button></div>}
           {detectsCalls && flag('detectCalls', true) && muted.map(app => <div className="setting-row" key={`muted-${app}`}><div><div className="setting-title">Not offered for {app}</div><p>You chose not to be notified when {app} uses the microphone.</p></div><button className="text-button" onClick={() => onChange('mutedCallApps', muted.filter(a => a !== app))}>Notify again</button></div>)}
+          {detectsCalls && toggle('openAtLogin', 'Open at login', 'QuietNote starts in the menu bar when you log in, so it can offer to record your calls. It never records by itself.', true)}
           {recording && liveTranscript && toggle('liveTranscript', 'Show the transcript while recording', 'Words appear a few seconds after they’re spoken, transcribed on this Mac; in English meetings, a faster model takes over and shows them about a second after. It’s a rough draft, and the full transcript is made again when you stop. While recording, it uses up to 1 GB more memory.', true)}
           {recording && mac && toggle('separateSpeakers', 'Tell the others apart', 'After you stop, the call audio is split by voice on this Mac, so the transcript shows Speaker 1, Speaker 2… instead of one “Others”. It groups voices by how they sound; it doesn’t identify anyone. It adds about two minutes per hour of audio.', true)}
           {recording && toggle('echoCancellation', 'Remove call audio from your microphone', 'On speakers, your microphone also hears the others. While recording, what this computer played is subtracted from your microphone track, so their words aren’t transcribed as yours and yours stay clearer when you talk at the same time. Turn it off if your own voice sounds cut off. Applies when you next start or resume recording.', true)}
@@ -177,8 +179,10 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
       </>}
       {section === 'Appearance' && <>
         <h1>Appearance</h1>
-        <p className="lede">How QuietNote shows what it’s doing.</p>
-        <section><div className="setting-row hush-setting"><Hush mood="ready" size={56} /><div><div className="setting-title">Show Hush</div><p>His face shows what QuietNote is doing, on the Home card{detectsCalls ? ', the call panel' : ''}{desktop && mac ? ' and in the menu bar' : ''}. He never joins a call. Turned off, the status dot and the logo come back.</p></div>
+        <p className="lede">How QuietNote looks, and how it shows what it’s doing.</p>
+        <section><div className="setting-row"><div><div className="setting-title">Theme</div><p>{theme === 'system' ? `Light or dark, as this ${mac ? 'Mac' : 'computer'} is set.` : theme === 'dark' ? 'Dark, with a white Hush.' : 'Light.'}{desktop ? ' The Markdown workspace follows it too.' : ''}</p></div>
+          <div className="segmented" role="group" aria-label="Theme">{(['system', 'light', 'dark'] as const).map(mode => <button key={mode} type="button" aria-pressed={theme === mode} onClick={() => onChange('theme', mode)}>{mode === 'system' ? 'System' : mode === 'light' ? 'Light' : 'Dark'}</button>)}</div></div>
+          <div className="setting-row hush-setting"><Hush mood="ready" size={56} /><div><div className="setting-title">Show Hush</div><p>His face shows what QuietNote is doing, on the Home card{detectsCalls ? ', the call panel' : ''}{desktop && mac ? ' and in the menu bar' : ''}. He never joins a call. Turned off, the status dot and the logo come back.</p></div>
           <button type="button" className={`toggle ${flag('showHush', true) ? 'on' : ''}`} role="switch" aria-checked={flag('showHush', true)} aria-label="Show Hush" onClick={() => onChange('showHush', !flag('showHush', true))}><span /></button></div></section>
       </>}
       {section === 'Local archive' && <>

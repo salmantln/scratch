@@ -1009,6 +1009,34 @@ test('R3: Show Hush turns him off everywhere in the window, brings the status do
   await expect(card.locator('.ready-dot')).toHaveCount(0);
 });
 
+test('R3b: the theme is light, dark or the computer’s own, saved with the preferences, and Hush turns white in the dark', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await mockDesktop(page, { meetings: [meetingWith('Acme onboarding', { status: 'ready' })] });
+  await page.goto('/');
+  const html = page.locator('html');
+  await expect(html).not.toHaveClass(/dark/);
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Appearance' }).click();
+  const theme = page.getByRole('group', { name: 'Theme' });
+  await expect(theme.getByRole('button', { name: 'System' })).toHaveAttribute('aria-pressed', 'true');
+  await theme.getByRole('button', { name: 'Dark' }).click();
+  await expect(html).toHaveClass(/dark/);
+  await expect.poll(() => qn(page, q => q.state.preferences.theme)).toBe('dark');
+  // The native window follows too, so its menus match.
+  await expect.poll(() => qn(page, q => q.state.calls.includes('plugin:window|set_theme'))).toBe(true);
+  const body = page.locator('.hush-setting .h-body');
+  await expect.poll(() => body.evaluate(el => getComputedStyle(el).fill)).toBe('rgb(246, 244, 239)');
+  await expect.poll(() => page.locator('.quietnote-shell').evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(22, 20, 19)');
+  await theme.getByRole('button', { name: 'Light' }).click();
+  await expect(html).not.toHaveClass(/dark/);
+  await expect.poll(() => body.evaluate(el => getComputedStyle(el).fill)).toBe('rgb(6, 12, 40)');
+  // System follows the computer's appearance as it changes.
+  await theme.getByRole('button', { name: 'System' }).click();
+  await expect.poll(() => qn(page, q => q.state.preferences.theme)).toBe('system');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(html).toHaveClass(/dark/);
+});
+
 test('R4: Hush shows a meeting’s transcription and problems, rests in empty places, and is one per screen', async ({ page }) => {
   const processing = meetingWith('Weekly product sync', { status: 'processing' });
   const failed = meetingWith('Design review', { status: 'error', audioPath: 'Acme/design-review/audio', error: 'Whisper stopped.' });
@@ -1104,6 +1132,11 @@ test('T: a detected call records from the panel in a meeting named after the app
   await qn(page, q => { q.state.accessibility = true; window.dispatchEvent(new Event('focus')); });
   await expect(notAllowed).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Remove call audio from your microphone' })).toHaveAttribute('aria-checked', 'true');
+  // Open at login is on unless turned off, so calls are noticed without opening QuietNote first.
+  const login = page.getByRole('switch', { name: 'Open at login' });
+  await expect(login).toHaveAttribute('aria-checked', 'true');
+  await login.click();
+  await expect.poll(() => qn(page, q => q.state.preferences.openAtLogin)).toBe(false);
   await page.getByRole('switch', { name: 'Offer to record calls' }).click();
   await expect.poll(() => qn(page, q => q.state.preferences.detectCalls)).toBe(false);
 });

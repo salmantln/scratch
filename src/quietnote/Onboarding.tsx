@@ -132,6 +132,7 @@ export function Onboarding({ live, preferences, busy, onPreference, onCreate, on
       <label className="field">Project name<input value={name} maxLength={60} aria-invalid={Boolean(error)} onChange={e => { setName(e.target.value); setError(''); }} /></label>
       {error && <p className="field-error" role="alert">{error}</p>}
       {live.detectsCalls && preferences.detectCalls !== false && <p className="ob-fact"><Icon name="info" size={14} />When Zoom, Teams, FaceTime, Slack or a browser starts using the microphone, QuietNote offers to record. It never starts by itself.</p>}
+      {live.detectsCalls && <p className="ob-fact"><Icon name="info" size={14} />QuietNote opens at login, in the menu bar, so it’s there for your calls. You can turn this off in Settings.</p>}
     </form>;
     action = <button className="primary large" type="submit" form={fieldId} disabled={working}>{working ? 'Creating…' : 'Create project'}</button>;
   }

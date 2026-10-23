@@ -11,6 +11,9 @@ const key = 'quietnote.preview.archive.v1';
 const projectsKey = 'quietnote.preview.projects.v1';
 let archiveRoot = '';
 export type PrivacyPreferences = Record<string, boolean | string | string[]>;
+/** Settings → Appearance → Theme: light, dark, or the computer's own (the default). */
+export type Appearance = 'system' | 'light' | 'dark';
+export const appearance = (p: PrivacyPreferences): Appearance => p.theme === 'light' || p.theme === 'dark' ? p.theme : 'system';
 function browserMeetings(): Meeting[] {
   const saved = localStorage.getItem(key);
   return saved ? JSON.parse(saved) : [];

@@ -33,6 +33,7 @@ mod oauth;
 mod git;
 #[cfg(target_os = "macos")]
 mod live;
+mod login;
 mod mcp;
 mod meetings;
 #[cfg(target_os = "macos")]
@@ -3855,6 +3856,10 @@ pub fn run() {
                     // Existing user: notes folder is configured and a standalone preview
                     // was opened. Close the hidden main window so only the preview is visible.
                     let _ = main_window.hide();
+                } else if login::background(&args) {
+                    // Opened at login: QuietNote waits in the menu bar until it's needed.
+                    let _ = main_window.hide();
+                    tray::sync_dock(app.handle(), Some("main"));
                 } else {
                     // Show the main window when:
                     // - No standalone preview was opened (normal launch), OR
@@ -3870,6 +3875,8 @@ pub fn run() {
             }
             // Offers to record when a call app starts using the microphone (macOS).
             calls::spawn(app.handle());
+            // Opens QuietNote at login so it's there for calls, unless turned off in Settings (macOS).
+            login::sync(app.handle());
             // The tray's next meeting, while the calendar is on (macOS).
             calendar::spawn(app.handle());
 
@@ -3884,7 +3891,15 @@ pub fn run() {
                 {
                     api.prevent_close();
                     let _ = window.hide();
+                    tray::sync_dock(window.app_handle(), Some("main"));
                 }
+            }
+            // The Dock icon comes back with a window (tray, Dock click, relaunch, a call's Record)
+            // and goes with the last one, as in a menu bar app.
+            match event {
+                tauri::WindowEvent::Focused(true) => tray::sync_dock(window.app_handle(), None),
+                tauri::WindowEvent::Destroyed => tray::sync_dock(window.app_handle(), Some(window.label())),
+                _ => {}
             }
             // Handle drag-and-drop of .md files onto any window
             if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {

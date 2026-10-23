@@ -2,7 +2,7 @@
 
 Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generated dependencies, build outputs, and test scratch output are ignored and excluded.
 
-## Modified files (43)
+## Modified files (44)
 
 - `.github/workflows/ci.yml`
 - `.github/workflows/release.yml`
@@ -15,6 +15,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `package.json`
 - `src-tauri/Cargo.lock`
 - `src-tauri/Cargo.toml`
+- `src-tauri/capabilities/default.json`
 - `src-tauri/icons/128x128.png`
 - `src-tauri/icons/128x128@2x.png`
 - `src-tauri/icons/32x32.png`
@@ -48,7 +49,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/main.tsx`
 - `vite.config.ts`
 
-## Added files (90)
+## Added files (91)
 
 - `docs/MODIFIED-FILES.md`
 - `docs/PERFORMANCE.md`
@@ -98,6 +99,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src-tauri/src/compact.rs`
 - `src-tauri/src/connectors.rs`
 - `src-tauri/src/live.rs`
+- `src-tauri/src/login.rs`
 - `src-tauri/src/mcp.rs`
 - `src-tauri/src/meetings.rs`
 - `src-tauri/src/oauth.rs`
