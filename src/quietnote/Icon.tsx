@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 const paths = {
   home: 'M3 11l9-7 9 7 M5 9.5V20h14V9.5 M10 20v-6h4v6',
+  people: 'M16 20v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M22 20v-1a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
   meeting: 'M3 5h18v16H3z M3 10h18 M8 3v4 M16 3v4',
   recent: 'M12 8v5l3 2 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',
   search: 'M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
@@ -12,7 +13,12 @@ const paths = {
   check: 'M5 12l4 4L19 6',
   decision: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0 M8 12l3 3 5-6',
   close: 'M6 6l12 12 M6 18L18 6',
+  chevron: 'M6 9l6 6 6-6',
   stop: 'M6 6h12v12H6z',
+  pause: 'M8 5v14 M16 5v14',
+  play: 'M7 5l12 7-12 7z',
+  expand: 'M14 4h6v6 M10 20H4v-6 M20 4l-7 7 M4 20l7-7',
+  mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z M5 11a7 7 0 0 0 14 0 M12 18v3',
   archive: 'M3 13h18v7H3z M3 13l3-8h12l3 8 M7 16.5h.01',
   privacy: 'M3 3l18 18 M10.6 5.1A10 10 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3 3.6 M6.6 6.6C3.9 8.4 2 12 2 12s4 7 10 7c1.9 0 3.6-.6 5-1.5 M9.9 9.9a3 3 0 0 0 4.2 4.2',
   info: 'M12 11v6 M12 7.5h.01 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',

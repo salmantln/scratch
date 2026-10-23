@@ -25,7 +25,31 @@ pub struct Metadata {
     /// Why the last transcription failed; the audio is kept for a retry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
+    /// Recording resumed on a meeting that already had a transcript: where the new audio begins in the
+    /// meeting (ms) and in the audio files (samples). Only that part is transcribed and added.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) resume: Option<Resume>,
+    /// The calendar event occurrence this meeting was made from, and its series (`calendar`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) calendar_event: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) calendar_series: Option<String>,
+    /// Who was invited, from the calendar; `participants` keeps the others' names for display.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) attendees: Vec<Attendee>,
 }
+/// Someone invited to a meeting, as the calendar says; `me` is the user.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Attendee {
+    pub name: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub me: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Resume { pub(crate) at_ms: u64, pub(crate) sample: u64 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Meeting {
     metadata: Metadata,
@@ -112,12 +136,33 @@ pub(crate) fn find(root: &Path, id: &str) -> Result<(Metadata, PathBuf), String>
 pub(crate) fn write_metadata(dir: &Path, metadata: &Metadata) -> Result<(), String> {
     atomic_write(&dir.join("metadata.json"), &serde_json::to_vec_pretty(metadata).map_err(|e| e.to_string())?)
 }
-/// A boolean privacy preference from `.privacy.json`, or `fallback` when unset.
-pub(crate) fn preference(root: &Path, key: &str, fallback: bool) -> bool {
+fn privacy(root: &Path, key: &str) -> Option<serde_json::Value> {
     std::fs::read(root.join(".privacy.json")).ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|value| value.get(key).and_then(|v| v.as_bool()))
-        .unwrap_or(fallback)
+        .and_then(|mut value| value.get_mut(key).map(serde_json::Value::take))
+}
+/// A boolean privacy preference from `.privacy.json`, or `fallback` when unset.
+pub(crate) fn preference(root: &Path, key: &str, fallback: bool) -> bool {
+    privacy(root, key).and_then(|v| v.as_bool()).unwrap_or(fallback)
+}
+/// A list of strings from `.privacy.json`, such as the apps muted for call detection.
+pub(crate) fn preference_list(root: &Path, key: &str) -> Vec<String> {
+    privacy(root, key).and_then(|v| v.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())).unwrap_or_default()
+}
+/// A string preference from `.privacy.json`, such as the chosen microphone.
+pub(crate) fn preference_str(root: &Path, key: &str) -> Option<String> {
+    privacy(root, key).and_then(|v| v.as_str().map(String::from))
+}
+/// Sets one preference in `.privacy.json` and keeps the others; `null` removes it.
+pub(crate) fn set_preference(root: &Path, key: &str, value: serde_json::Value) -> Result<(), String> {
+    let path = root.join(".privacy.json");
+    let mut all: serde_json::Value = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string())?,
+        Err(_) => serde_json::json!({}),
+    };
+    let object = all.as_object_mut().ok_or("The privacy preferences are unreadable")?;
+    if value.is_null() { object.remove(key); } else { object.insert(key.into(), value); }
+    atomic_write(&path, &serde_json::to_vec_pretty(&all).map_err(|e| e.to_string())?)
 }
 fn read_archive(root: &Path) -> Result<Archive, String> {
     let mut meetings = Vec::new();

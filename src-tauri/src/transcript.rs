@@ -8,6 +8,8 @@ pub const YOU: &str = "You";
 pub const OTHERS: &str = "Others";
 /// Consecutive pieces from one speaker closer than this are one turn.
 const TURN_GAP_MS: u64 = 2000;
+/// Someone talking for a long time is split into paragraphs of about this length, each with its own time.
+const PARAGRAPH_MS: u64 = 15_000;
 
 /// A piece of recognized speech on one track.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -19,6 +21,9 @@ pub struct Piece {
     /// The voice activity detector heard a clear pause (at least half a second) just before it.
     #[serde(skip)]
     pub pause_before: bool,
+    /// Who of the others said it, when their voices were told apart (`speakers`); otherwise "Others".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -70,7 +75,7 @@ fn sentences(piece: &Piece) -> Vec<Piece> {
             let sentence = text[start..end].trim();
             if !sentence.is_empty() {
                 let at = |offset: usize| piece.start_ms + span * offset as u64 / len;
-                out.push(Piece { start_ms: at(start), end_ms: at(end), text: sentence.into(), pause_before: start == 0 && piece.pause_before });
+                out.push(Piece { start_ms: at(start), end_ms: at(end), text: sentence.into(), pause_before: start == 0 && piece.pause_before, speaker: piece.speaker.clone() });
             }
             start = end;
         }
@@ -99,7 +104,7 @@ fn split_echo(mic: Piece, system: &[Piece]) -> (Option<Piece>, Vec<Piece>) {
     if echo.is_empty() { return (Some(mic), echo); }
     let piece = kept.first().map(|first| Piece {
         start_ms: first.start_ms, end_ms: kept.last().map_or(first.end_ms, |l| l.end_ms),
-        text: kept.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" "), pause_before: first.pause_before,
+        text: kept.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" "), pause_before: first.pause_before, speaker: None,
     });
     (piece, echo)
 }
@@ -114,14 +119,14 @@ pub fn merge(mic: Vec<Piece>, system: Vec<Piece>) -> (Vec<Turn>, Vec<Piece>) {
         echo.extend(dropped);
     }
     let mic = kept;
-    let mut pieces: Vec<(&str, Piece)> = mic.into_iter().map(|p| (YOU, p)).collect();
-    pieces.extend(system.into_iter().map(|p| (OTHERS, p)));
+    let mut pieces: Vec<(String, Piece)> = mic.into_iter().map(|p| (YOU.to_string(), p)).collect();
+    pieces.extend(system.into_iter().map(|p| (p.speaker.clone().unwrap_or_else(|| OTHERS.into()), p)));
     pieces.retain(|(_, p)| !p.text.trim().is_empty());
     pieces.sort_by_key(|(_, p)| p.start_ms);
     let mut turns: Vec<Turn> = Vec::new();
     for (speaker, piece) in pieces {
         match turns.last_mut() {
-            Some(turn) if turn.speaker == speaker && piece.start_ms <= turn.end_ms + TURN_GAP_MS => {
+            Some(turn) if turn.speaker == speaker && piece.start_ms <= turn.end_ms + TURN_GAP_MS && piece.start_ms < turn.start_ms + PARAGRAPH_MS => {
                 // Whisper sometimes drops the full stop between segments. It takes two signals to add one:
                 // a pause the voice detector heard, and Whisper starting the next piece with a capital.
                 let capital = piece.text.trim().chars().find(|c| c.is_alphabetic()).is_some_and(char::is_uppercase);
@@ -129,7 +134,7 @@ pub fn merge(mic: Vec<Piece>, system: Vec<Piece>) -> (Vec<Turn>, Vec<Piece>) {
                 turn.text = format!("{} {}", turn.text, piece.text.trim());
                 turn.end_ms = turn.end_ms.max(piece.end_ms);
             }
-            _ => turns.push(Turn { start_ms: piece.start_ms, end_ms: piece.end_ms, speaker: speaker.into(), text: piece.text.trim().into(), removed: vec![], breaks: vec![] }),
+            _ => turns.push(Turn { start_ms: piece.start_ms, end_ms: piece.end_ms, speaker, text: piece.text.trim().into(), removed: vec![], breaks: vec![] }),
         }
     }
     for turn in &mut turns {
@@ -142,6 +147,15 @@ pub fn merge(mic: Vec<Piece>, system: Vec<Piece>) -> (Vec<Turn>, Vec<Piece>) {
     (turns, echo)
 }
 
+/// A resumed recording's turns after the earlier ones. Anything earlier from `at_ms` on is replaced,
+/// so transcribing the resumed part again (a retry) doesn't repeat it.
+pub fn append(mut earlier: Transcript, later: Transcript, at_ms: u64) -> Transcript {
+    earlier.turns.retain(|t| t.start_ms < at_ms);
+    earlier.echo.retain(|p| p.start_ms < at_ms);
+    earlier.turns.extend(later.turns);
+    earlier.echo.extend(later.echo);
+    Transcript { model: later.model, ..earlier }
+}
 pub fn clock(ms: u64) -> String {
     let s = ms / 1000;
     if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{:02}:{:02}", s / 60, s % 60) }
@@ -160,7 +174,7 @@ pub fn markdown(transcript: &Transcript, clean: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn piece(start: u64, end: u64, text: &str) -> Piece { Piece { start_ms: start, end_ms: end, text: text.into(), pause_before: false } }
+    fn piece(start: u64, end: u64, text: &str) -> Piece { Piece { start_ms: start, end_ms: end, text: text.into(), ..Default::default() } }
     fn transcript(turns: Vec<Turn>) -> Transcript { Transcript { version: 1, model: "test".into(), turns, echo: vec![] } }
     #[test]
     fn merges_tracks_into_turns_and_drops_echo() {
@@ -226,6 +240,24 @@ mod tests {
         assert_eq!(markdown(&transcript_, true), "# Transcript\n\n### 00:05 You\nYes.\n");
         assert_eq!(markdown(&transcript_, false), "# Transcript\n\n### 00:00 You\nUm.\n\n### 00:05 You\nUh, yes.\n");
         assert_eq!(markdown(&transcript(vec![]), true), "# Transcript\n\nNo speech was recognized in this recording.\n");
+    }
+    #[test]
+    fn a_long_stretch_of_talking_is_split_into_timed_paragraphs() {
+        let sentences: Vec<Piece> = (0..10).map(|i| piece(i * 5000, i * 5000 + 4500, "One more sentence.")).collect();
+        let (turns, _) = merge(sentences, vec![]);
+        assert_eq!(turns.iter().map(|t| t.start_ms).collect::<Vec<_>>(), [0, 15_000, 30_000, 45_000]);
+        assert!(turns.iter().all(|t| t.speaker == YOU));
+    }
+    #[test]
+    fn a_resumed_recording_continues_the_transcript_once() {
+        let turn = |start: u64, text: &str| merge(vec![piece(start, start + 1000, text)], vec![]).0.remove(0);
+        let earlier = transcript(vec![turn(0, "Let's start."), turn(60_000, "See you later.")]);
+        let resumed = transcript(vec![turn(95_000, "We're back.")]);
+        let once = append(earlier, resumed.clone(), 90_000);
+        assert_eq!(once.turns.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), ["Let's start.", "See you later.", "We're back."]);
+        // Transcribing the resumed part again replaces it rather than adding it twice.
+        let again = append(once, resumed, 90_000);
+        assert_eq!(again.turns.len(), 3);
     }
     #[test]
     fn clock_switches_to_hours() {

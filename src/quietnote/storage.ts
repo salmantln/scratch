@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { appDataDir, join } from '@tauri-apps/api/path';
 import { saveFileDirect } from '../services/files';
 import { getNotesFolder, setNotesFolder, searchNotes, startFileWatcher } from '../services/notes';
-import type { Meeting, MeetingMetadata } from './model';
+import type { CalendarEvent, Meeting, MeetingMetadata } from './model';
 import { demoMeetings } from './seeds';
 export const desktop = isTauri();
 /** What the recording copy calls this computer. */
@@ -10,7 +10,7 @@ export const device = /Mac/.test(navigator.userAgent) ? 'Mac' : 'PC';
 const key = 'quietnote.preview.archive.v1';
 const projectsKey = 'quietnote.preview.projects.v1';
 let archiveRoot = '';
-export type PrivacyPreferences = Record<string, boolean | string>;
+export type PrivacyPreferences = Record<string, boolean | string | string[]>;
 function browserMeetings(): Meeting[] {
   const saved = localStorage.getItem(key);
   return saved ? JSON.parse(saved) : [];
@@ -97,27 +97,66 @@ export type CaptureState = {
   model: 'ready' | 'missing' | 'damaged';
   recording: {
     meetingId: string; title: string; startedAt: string; mic: Level; system: Level;
+    /** Recorded time before `resumedAt`; `resumedAt` is null while paused. See `model.recorded`. */
+    recordedMs: number; resumedAt: string | null;
     micDevice: string | null; systemDevice: string | null; problem: string | null; note: string | null;
+    /** The live transcript: loading the model, following the recording, off, or failed (the full transcript still comes after Stop). */
+    liveText: LiveText;
+    /** About to stop by itself (the call ended, or a long silence), unless kept. */
+    ending?: { reason: string; stopsAt: string } | null;
   } | null;
   transcribing: { meetingId: string; title: string; percent: number } | null;
   queued: string[];
+  /** QuietNote offers to record when a call app uses the microphone (macOS). */
+  detectsCalls?: boolean;
+  /** Recordings can show a live transcript on this platform (macOS). */
+  liveTranscript?: boolean;
 };
+export type LiveText = 'off' | 'loading' | 'on' | 'failed';
+/** The live transcript so far: a draft made on this device, replaced by the full transcript after Stop. */
+export type Draft = { meetingId: string; turns: TranscriptTurn[] };
+export async function liveTranscript(): Promise<Draft | null> { return desktop ? invoke('capture_live_transcript') : null; }
+/** The compact window beside a call, or back to the full window where it was. */
+export async function windowCompact(compact: boolean): Promise<void> { if (desktop) await invoke('window_compact', { compact }); }
 export type MeetingChanged = { metadata: MeetingMetadata; transcript: string | null; problem: string | null };
 export type TranscriptTurn = { startMs: number; speaker: string; text: string; clean: string };
 /** Why Start recording failed: `mic-denied` offers System Settings, `disk` means free space first. */
 export type CaptureFailure = { code: 'mic-denied' | 'disk' | 'failed'; message: string };
 export const noCapture: CaptureState = { available: false, microphone: 'unknown', model: 'missing', recording: null, transcribing: null, queued: [] };
 export async function captureStatus(): Promise<CaptureState> { return desktop ? invoke('capture_status') : noCapture; }
+/** Asks for the microphone before any recording, so the first-run screens can explain it first. Records nothing. */
+export async function allowMicrophone(): Promise<CaptureState> { return desktop ? invoke('capture_allow_microphone') : noCapture; }
+const failure = (e: unknown) => (typeof e === 'object' && e && 'code' in e ? e : { code: 'failed', message: String(e) }) as CaptureFailure;
 export async function captureStart(meetingId: string): Promise<MeetingMetadata> {
-  try { return await invoke('capture_start', { meetingId }); }
-  catch (e) { throw (typeof e === 'object' && e && 'code' in e ? e : { code: 'failed', message: String(e) }) as CaptureFailure; }
+  try { return await invoke('capture_start', { meetingId }); } catch (e) { throw failure(e); }
 }
 export async function captureStop(): Promise<MeetingMetadata> { return invoke('capture_stop'); }
+/** Pausing closes the streams, so the microphone is released until Resume. */
+export async function capturePause(): Promise<void> { await invoke('capture_pause'); }
+/** Keeps recording when it's about to stop by itself. */
+export async function captureKeep(): Promise<void> { await invoke('capture_keep'); }
+export async function captureResume(): Promise<void> { try { await invoke('capture_resume'); } catch (e) { throw failure(e); } }
+/** The microphones to record from; `selected` null means the system default. */
+export type Devices = { devices: string[]; selected: string | null };
+export async function captureDevices(): Promise<Devices> { return desktop ? invoke('capture_devices') : { devices: [], selected: null }; }
+export async function setCaptureDevice(name: string | null): Promise<void> { if (desktop) await invoke('capture_set_device', { name }); }
 export async function transcribe(meetingId: string): Promise<MeetingMetadata> { return invoke('transcribe_meeting', { meetingId }); }
 /** Both views of a recorded transcript; reading them changes nothing. */
 export async function transcriptData(meetingId: string): Promise<TranscriptTurn[] | null> { return desktop ? invoke('transcript_data', { meetingId }) : null; }
 export async function renderTranscripts(clean: boolean): Promise<void> { if (desktop) await invoke('render_transcripts', { clean }); }
-export async function openPrivacySettings(kind: 'microphone' | 'systemAudio'): Promise<void> { if (desktop) await invoke('open_privacy_settings', { kind }); }
+/** The Terminal command that installs the read-only `quietnote` command (desktop, macOS). */
+export async function cliSetupCommand(): Promise<string> { return desktop ? invoke('cli_setup_command') : desktopOnly(); }
+/** The Calendar permission ("granted", "denied", "restricted", "undetermined", "unavailable"); `ask` shows macOS's prompt first. */
+export async function calendarAccess(ask: boolean): Promise<string> { return desktop ? invoke('calendar_access', { ask }) : 'unavailable'; }
+/** Today's and the coming `days`' events, soonest first, while Calendar is on. */
+export async function calendarEvents(days = 1): Promise<CalendarEvent[]> { return desktop ? invoke('calendar_events', { days }) : []; }
+/** The event the user is in or about to join. */
+export async function calendarNow(): Promise<CalendarEvent | null> { return desktop ? invoke('calendar_now') : null; }
+/** The configuration that lets an AI app (Claude Desktop, Claude Code) read the archive through `quietnote mcp`. */
+export async function mcpConfig(): Promise<string> { return desktop ? invoke('mcp_config') : desktopOnly(); }
+export async function openPrivacySettings(kind: 'microphone' | 'systemAudio' | 'accessibility' | 'calendars'): Promise<void> { if (desktop) await invoke('open_privacy_settings', { kind }); }
+/** Whether QuietNote may read browser window and tab titles (macOS Accessibility); `ask` shows macOS's prompt first. */
+export async function callAccessibility(ask: boolean): Promise<boolean> { return desktop ? invoke('call_accessibility', { ask }) : false; }
 export async function revealAudio(metadata: MeetingMetadata): Promise<void> {
   if (!desktop || !metadata.audioPath) return;
   // Explorer needs Windows separators; the archive's relative paths always use '/'.
@@ -132,6 +171,12 @@ export type Sent = { label: string | null; url: string | null; error: string | n
 const desktopOnly = () => Promise.reject(new Error('Available in the desktop app.'));
 export async function connections(): Promise<Connections> { return desktop ? invoke('connector_status') : {}; }
 export async function connect(service: Service, token: string): Promise<{ account: string }> { return desktop ? invoke('connector_connect', { service, token }) : desktopOnly(); }
+/** The services this build signs in to through the browser; the others take a pasted key. */
+export async function signInServices(): Promise<Service[]> { return desktop ? invoke('connector_sign_in_services') : []; }
+/** Sent while signing in: the page to open, and for GitHub the code to type there. */
+export type SigningIn = { service: Service; url: string; code: string | null; opened: boolean };
+export async function signIn(service: Service): Promise<{ account: string }> { return desktop ? invoke('connector_sign_in', { service }) : desktopOnly(); }
+export async function cancelSignIn(service: Service): Promise<void> { if (desktop) await invoke('connector_sign_in_cancel', { service }); }
 export async function disconnect(service: Service): Promise<void> { return desktop ? invoke('connector_disconnect', { service }) : desktopOnly(); }
 export async function connectorTargets(service: Service): Promise<Target[]> { return desktop ? invoke('connector_targets', { service }) : desktopOnly(); }
 export async function sendIssues(service: Service, target: string, items: { title: string; body: string }[]): Promise<Sent[]> { return desktop ? invoke('connector_send', { service, target, items }) : desktopOnly(); }
@@ -140,3 +185,27 @@ export function appIcons(): Promise<Record<string, string>> { return desktop ? (
 export async function openLink(url: string): Promise<void> {
   if (desktop) await invoke('open_url_safe', { url }); else window.open(url, '_blank', 'noopener');
 }
+// Summary suggestions (desktop): drafted from the transcript by Claude with the user's own key, or by a model in
+// Ollama on this computer. The key stays in the Keychain; nothing is written until the user accepts an item.
+export type SummaryProvider = 'anthropic' | 'ollama';
+/** A suggested decision or action item and the transcript line it cites. */
+export type Cited = { text: string; owner: string; atMs: number; quote: string };
+/** `dropped` counts the items left out because they couldn't be traced to the transcript. */
+export type Suggestions = { summary: string; decisions: Cited[]; actions: Cited[]; dropped: number };
+export async function summaryKeySaved(): Promise<boolean> { return desktop ? invoke('summary_key_status') : false; }
+export async function saveSummaryKey(key: string): Promise<void> { return desktop ? invoke('summary_set_key', { key }) : desktopOnly(); }
+export async function removeSummaryKey(): Promise<void> { return desktop ? invoke('summary_remove_key') : desktopOnly(); }
+export async function ollamaModels(): Promise<string[]> { return desktop ? invoke('summary_ollama_models') : desktopOnly(); }
+export async function suggestSummary(meetingId: string): Promise<Suggestions> { return desktop ? invoke('summary_suggest', { meetingId }) : desktopOnly(); }
+/** A template's sections, each with what belongs in it. The user's own live in the archive's `.templates` folder. */
+export type NoteTemplate = { name: string; sections: { heading: string; description: string }[]; builtIn: boolean };
+/** Enhanced notes: lines quoting the transcript (`atMs`) or the user's own notes (`atMs` null). */
+export type Enhanced = { sections: { heading: string; lines: { text: string; atMs: number | null; quote: string }[] }[]; dropped: number };
+export async function noteTemplates(): Promise<NoteTemplate[]> { return desktop ? invoke('note_templates') : []; }
+export async function openTemplates(): Promise<void> { return desktop ? invoke('open_templates') : desktopOnly(); }
+/** A suggested title and names for a recorded meeting's voices, each name with the line that shows it. */
+export type Names = { title: string; speakers: { speaker: string; name: string; atMs: number; quote: string }[]; dropped: number };
+export async function meetingNames(meetingId: string): Promise<Names> { return desktop ? invoke('meeting_names', { meetingId }) : desktopOnly(); }
+/** Names a voice in a recorded transcript (or merges it into another); returns the transcript as written. */
+export async function renameSpeaker(meetingId: string, from: string, to: string): Promise<string> { return desktop ? invoke('transcript_rename_speaker', { meetingId, from, to }) : desktopOnly(); }
+export async function enhanceNotes(meetingId: string, template: string): Promise<Enhanced> { return desktop ? invoke('notes_enhance', { meetingId, template }) : desktopOnly(); }

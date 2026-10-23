@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { demoMeetings } from '../src/quietnote/seeds';
-import { section, replaceSection, toggleAction, matchesMeeting, searchMeeting, makeMeeting, transcriptTurns, validProjectName, appendItem, actionItems, linkAction, issueFor } from '../src/quietnote/model';
+import { section, replaceSection, toggleAction, matchesMeeting, searchMeeting, makeMeeting, transcriptTurns, validProjectName, appendItem, actionItems, linkAction, issueFor, previousMeeting, notesMarkdown, summaryBlocks, templateFor, people, owns, projectFor, type Meeting } from '../src/quietnote/model';
 
 async function examples(page: Page) {
   await page.goto('/');
@@ -9,7 +9,8 @@ async function examples(page: Page) {
 }
 async function firstProject(page: Page, name: string) {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Create your first project' }).click();
+  await page.getByRole('button', { name: 'Get started' }).click();
+  await page.getByRole('button', { name: 'Skip' }).click();
   await page.getByLabel('Project name').fill(name);
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
@@ -55,6 +56,81 @@ test('model keeps Markdown sections separate and never invents content', () => {
   expect(validProjectName('  ')).not.toBe('');
 });
 
+test('the meeting before carries over what it left open: the same series first, else the project', () => {
+  const at = (title: string, project: string, date: string, open = true) => {
+    const m = makeMeeting(title, project);
+    m.metadata.date = date;
+    if (open) m.markdown = appendItem(m.markdown, 'Action items', `Maya — follow up on ${title}`);
+    return m;
+  };
+  const none = () => false;
+  const weekly1 = at('Weekly sync', 'Acme', '2026-10-01T09:00:00.000Z');
+  const review = at('Design review', 'Acme', '2026-10-06T09:00:00.000Z');
+  const call = at('Zoom call', 'Acme', '2026-10-07T09:00:00.000Z');
+  const other = at('Weekly sync', 'Beta', '2026-10-07T10:00:00.000Z');
+  const weekly2 = at('Weekly sync', 'Acme', '2026-10-08T09:00:00.000Z');
+  const all: Meeting[] = [weekly1, review, call, other, weekly2];
+  // A series follows its own last meeting, not whatever happened in between or in another project.
+  expect(previousMeeting(weekly2, all, none)?.metadata.id).toBe(weekly1.metadata.id);
+  // Titles QuietNote made up ("Zoom call") aren't a series: the project's latest earlier meeting.
+  const call2 = at('Zoom call', 'Acme', '2026-10-09T09:00:00.000Z');
+  expect(previousMeeting(call2, [...all, call2], none)?.metadata.id).toBe(weekly2.metadata.id);
+  expect(previousMeeting(weekly1, all, none)).toBeNull();
+  // Nothing left open: nothing to show.
+  const done = at('Retro', 'Gamma', '2026-10-01T09:00:00.000Z', false);
+  expect(previousMeeting(at('Retro', 'Gamma', '2026-10-08T09:00:00.000Z'), [done], none)).toBeNull();
+  done.markdown = toggleAction(appendItem(done.markdown, 'Action items', 'All done'), 0);
+  expect(previousMeeting(at('Retro', 'Gamma', '2026-10-08T09:00:00.000Z'), [done], none)).toBeNull();
+  done.markdown = appendItem(done.markdown, 'Decisions', 'Ship on Fridays');
+  expect(previousMeeting(at('Retro', 'Gamma', '2026-10-08T09:00:00.000Z'), [done], none)?.metadata.id).toBe(done.metadata.id);
+});
+
+test('enhanced notes are Markdown sections whose transcript lines keep their time, and a template fits the title', () => {
+  const markdown = notesMarkdown([{ heading: 'Overview', lines: [{ text: 'Annual plan it is.', atMs: 65_000 }, { text: 'Pricing was the open question.', atMs: null }] }, { heading: 'Next steps', lines: [{ text: 'Maya sends the draft.', atMs: 3_725_000 }] }]);
+  expect(markdown).toBe('### Overview\n- Annual plan it is. [01:05]\n- Pricing was the open question.\n\n### Next steps\n- Maya sends the draft. [1:02:05]');
+  expect(summaryBlocks(`A paragraph\nthat wraps.\n\n${markdown}`)).toEqual([
+    { kind: 'paragraph', text: 'A paragraph that wraps.' },
+    { kind: 'heading', text: 'Overview' },
+    { kind: 'list', items: [{ text: 'Annual plan it is.', at: '01:05' }, { text: 'Pricing was the open question.', at: null }] },
+    { kind: 'heading', text: 'Next steps' },
+    { kind: 'list', items: [{ text: 'Maya sends the draft.', at: '1:02:05' }] },
+  ]);
+  const names = ['General', '1:1', 'Standup', 'Sales call', 'User interview', 'Project kickoff'];
+  expect(templateFor('Weekly 1:1 with Sam', names)).toBe('1:1');
+  expect(templateFor('Daily stand-up', names)).toBe('Standup');
+  expect(templateFor('Acme demo', names)).toBe('Sales call');
+  expect(templateFor('Zoom call', names)).toBe('General');
+  expect(templateFor('Kickoff', ['Retro'])).toBe('Retro');
+  // The kind chosen when setting up leads unless the title says otherwise.
+  expect(templateFor('Zoom call', names, 'User interview')).toBe('User interview');
+  expect(templateFor('Daily stand-up', names, 'User interview')).toBe('Standup');
+  expect(templateFor('Zoom call', names, 'Removed')).toBe('General');
+});
+
+test('people come from invites, grouped by their company but not by personal or the user’s own addresses', () => {
+  const invite = (title: string, date: string, project: string, attendees: { name: string; email: string; me?: boolean }[], series?: string) => {
+    const m = makeMeeting(title, project);
+    Object.assign(m.metadata, { date, attendees, participants: attendees.filter(a => !a.me).map(a => a.name), ...(series && { calendarSeries: series }) });
+    return m;
+  };
+  const me = { name: 'Me', email: 'me@acme.com', me: true };
+  const a = invite('Pricing', '2026-10-01T09:00:00.000Z', 'Sales', [me, { name: 'Maria Lopez', email: 'maria@globex.com' }, { name: 'Sam', email: 'sam@globex.com' }], 's1');
+  const b = invite('Pricing', '2026-10-08T09:00:00.000Z', 'Sales', [me, { name: 'Maria Lopez', email: 'maria@globex.com' }, { name: 'Tom', email: 'tom@acme.com' }, { name: 'Ana', email: 'ana@gmail.com' }]);
+  const typed = makeMeeting('Coffee', 'Personal');
+  typed.metadata.participants = ['Lea'];
+  const found = people([a, b, typed]);
+  // Most recently met first (the typed meeting is today's); colleagues at the user's domain and personal addresses have no company.
+  expect(found.map(p => p.name)).toEqual(['Lea', 'Maria Lopez', 'Tom', 'Ana', 'Sam']);
+  expect(Object.fromEntries(found.map(p => [p.name, [p.company, p.meetingIds.length]]))).toEqual({ Lea: ['', 1], 'Maria Lopez': ['globex.com', 2], Tom: ['', 1], Ana: ['', 1], Sam: ['globex.com', 1] });
+  const maria = found.find(p => p.name === 'Maria Lopez')!;
+  expect([owns(maria, 'Maria'), owns(maria, 'maria lopez'), owns(maria, 'Mario'), owns(maria, '')]).toEqual([true, true, false, false]);
+  // A meeting from an event goes where the series went, else where those people's meetings are.
+  const event = { id: 'e@1', series: 's1', title: 'Pricing', startMs: 0, endMs: 1, attendees: [me, { name: 'Maria Lopez', email: 'maria@globex.com' }], link: null };
+  expect(projectFor(event, [a, b, typed], 'Inbox')).toBe('Sales');
+  expect(projectFor({ ...event, series: 'other' }, [a, b, typed], 'Inbox')).toBe('Sales');
+  expect(projectFor({ ...event, series: null, attendees: [me, { name: 'Zed', email: 'zed@initech.com' }] }, [a, b, typed], 'Inbox')).toBe('Inbox');
+});
+
 test('sent action items keep their issue link in Markdown, and only the item leaves the device', () => {
   const blank = makeMeeting('Kickoff', 'Acme');
   const markdown = appendItem(appendItem(blank.markdown, 'Action items', 'Maya — send the plan'), 'Action items', 'Book the room');
@@ -72,10 +148,17 @@ test('sent action items keep their issue link in Markdown, and only the item lea
 test('A: first launch creates a project, then a meeting', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Keep the useful part of every meeting.' })).toBeVisible();
-  // The preview can't record, so the welcome doesn't promise it.
-  await expect(page.locator('.welcome')).not.toContainText('Records');
-  await page.screenshot({ path: 'docs/screenshots/00-welcome.png' });
-  await page.getByRole('button', { name: 'Create your first project' }).click();
+  // The preview can't record, so the first screen doesn't promise it, and there's no permission to ask for.
+  await expect(page.locator('.onboarding')).not.toContainText('records');
+  await page.screenshot({ path: 'docs/screenshots/00-welcome.png', animations: 'disabled' });
+  await page.getByRole('button', { name: 'Get started' }).click();
+  await expect(page.getByRole('heading', { name: 'What meetings do you have most?' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page.getByRole('heading', { name: 'Keep the useful part of every meeting.' })).toBeFocused();
+  await page.getByRole('button', { name: 'Get started' }).click();
+  // The one question can be skipped; skipped, the project is just “Work”.
+  await page.getByRole('button', { name: 'Skip' }).click();
+  await expect(page.getByLabel('Project name')).toHaveValue('Work');
   await page.getByLabel('Project name').fill('../Acme');
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByRole('alert')).toContainText('Use letters, numbers');
@@ -356,11 +439,35 @@ async function mockDesktop(page: Page, fixture: Fixture) {
     const listeners: Record<string, number[]> = {};
     let next = 1;
     const find = (id: string) => meetings.find(m => m.metadata.id === id)!;
-    const live = (id: string, startedAt: string) => ({ meetingId: id, title: find(id).metadata.title, startedAt, mic: 'heard', system: 'waiting', micDevice: 'MacBook Pro Microphone', systemDevice: 'this Mac’s sound output', problem: null, note: null });
+    const live = (id: string, startedAt: string) => ({ meetingId: id, title: find(id).metadata.title, startedAt, recordedMs: 0, resumedAt: startedAt as string | null, mic: 'heard', system: 'waiting', micDevice: 'MacBook Pro Microphone', systemDevice: 'this Mac’s sound output', problem: null, note: null, liveText: 'on' });
     const state = {
       calls: [] as string[],
-      capture: { available: true, microphone, model, recording: recording ? live(recording, new Date(Date.now() - startedAgo * 1000).toISOString()) : null as unknown, transcribing: null as unknown, queued: [] as string[] },
+      preferences: {} as Record<string, unknown>,
+      capture: { available: true, detectsCalls: true, liveTranscript: true, microphone, model, recording: recording ? live(recording, new Date(Date.now() - startedAgo * 1000).toISOString()) : null as unknown, transcribing: null as unknown, queued: [] as string[] },
       transcriptData: null as unknown,
+      devices: { devices: ['MacBook Pro Microphone', 'AirPods Pro'], selected: null as string | null },
+      draft: null as unknown,
+      compact: false,
+      summaryKey: false,
+      suggestions: null as unknown,
+      saved: '',
+      clipboard: '',
+      templates: [{ name: 'General', sections: [{ heading: 'Overview', description: '' }, { heading: 'Next steps', description: '' }], builtIn: true }, { name: '1:1', sections: [{ heading: 'Updates', description: '' }], builtIn: true }],
+      enhanced: null as unknown,
+      enhancedWith: '',
+      calendarAccess: 'undetermined',
+      // What the macOS microphone prompt answers when the first-run screens ask.
+      micAnswer: 'granted',
+      // Browser sign-in: the services this build signs in to, the last sign-in still waiting, and links opened.
+      signInServices: [] as string[],
+      pendingSignIn: null as null | { service: string; resolve: (account: unknown) => void; reject: (error: string) => void },
+      opened: [] as string[],
+      names: null as unknown,
+      renamed: [] as string[][],
+      events: [] as unknown[],
+      now: null as unknown,
+      // Whether macOS lets QuietNote use Accessibility; the prompt (`ask`) doesn't change it by itself.
+      accessibility: false,
     };
     const emit = (event: string, payload: unknown) => (listeners[event] ?? []).forEach(id => callbacks.get(id)?.({ event, id: 0, payload }));
     const update = (id: string, change: Partial<Meta>) => { const m = find(id); m.metadata = { ...m.metadata, ...change }; return m.metadata; };
@@ -376,18 +483,26 @@ async function mockDesktop(page: Page, fixture: Fixture) {
         state.calls.push(cmd);
         switch (cmd) {
           case 'plugin:event|listen': (listeners[args.event] ??= []).push(args.handler); return args.handler;
+          case 'plugin:event|unlisten': listeners[args.event] = (listeners[args.event] ?? []).filter(id => id !== args.eventId); return null;
           case 'load_meeting_archive': return { root: '/archive', projects: [...new Set(meetings.map(m => m.metadata.project))], meetings };
           case 'get_notes_folder': return '/archive';
-          case 'quietnote_preferences': return args.value ?? {};
+          case 'quietnote_preferences': if (args.value) state.preferences = args.value; return state.preferences;
           case 'connector_status': return {};
+          case 'connector_sign_in_services': return state.signInServices;
+          case 'connector_app_icons': return {};
+          case 'connector_sign_in': return new Promise((resolve, reject) => { state.pendingSignIn = { service: args.service, resolve, reject }; });
+          case 'connector_sign_in_cancel': state.pendingSignIn?.reject(`${args.service === 'linear' ? 'Linear' : 'GitHub'} sign-in was cancelled.`); state.pendingSignIn = null; return null;
+          case 'open_url_safe': state.opened.push(args.url); return null;
           case 'capture_status': return state.capture;
+          case 'capture_allow_microphone': if (state.capture.microphone === 'undetermined') state.capture = { ...state.capture, microphone: state.micAnswer }; emit('quietnote://capture-state', state.capture); return state.capture;
           case 'create_meeting_bundle': meetings.push(args.meeting); return null;
           case 'save_meeting_metadata': { const m = find((args.metadata as Meta).id); m.metadata = args.metadata; return null; }
           case 'capture_start': {
             if (startFailure) throw startFailure;
             const m = find(args.meetingId);
             const startedAt = new Date().toISOString();
-            state.capture = { ...state.capture, microphone: 'granted', recording: live(m.metadata.id, startedAt) };
+            // Recording more of a finished meeting: the clock carries on from it.
+            state.capture = { ...state.capture, microphone: 'granted', recording: { ...live(m.metadata.id, startedAt), recordedMs: m.metadata.status === 'ready' ? m.metadata.duration * 1000 : 0 } };
             emit('quietnote://capture-state', state.capture);
             return update(m.metadata.id, { status: 'recording', captureStartedAt: startedAt, audioPath: `${m.metadata.project}/${m.metadata.id}/audio` });
           }
@@ -397,15 +512,46 @@ async function mockDesktop(page: Page, fixture: Fixture) {
             emit('quietnote://capture-state', state.capture);
             return update(id, { status: 'processing', duration: 95, captureEndedAt: new Date().toISOString() });
           }
+          case 'capture_pause': case 'capture_resume': {
+            const r = state.capture.recording as ReturnType<typeof live>;
+            const recording = cmd === 'capture_pause' ? { ...r, recordedMs: r.recordedMs + Date.now() - Date.parse(r.resumedAt!), resumedAt: null } : { ...r, resumedAt: new Date().toISOString() };
+            state.capture = { ...state.capture, recording };
+            emit('quietnote://capture-state', state.capture);
+            return null;
+          }
+          case 'capture_devices': return state.devices;
+          case 'capture_live_transcript': return state.draft;
+          case 'window_compact': state.compact = args.compact; return null;
+          case 'capture_set_device': state.devices = { ...state.devices, selected: args.name }; return null;
           case 'transcribe_meeting': return update(args.meetingId, { status: 'processing', error: null });
           case 'transcript_data': return state.transcriptData;
+          case 'save_file_direct': state.saved = args.content; return { path: args.path, content: args.content, title: '', modified: 0 };
+          case 'summary_key_status': return state.summaryKey;
+          case 'summary_set_key': state.summaryKey = true; return null;
+          case 'summary_suggest': return state.suggestions;
+          case 'plugin:clipboard-manager|write_text': state.clipboard = args.text; return null;
+          case 'call_accessibility': return state.accessibility;
+          case 'note_templates': return state.templates;
+          case 'meeting_names': return state.names;
+          case 'transcript_rename_speaker': {
+            state.renamed.push([args.from, args.to]);
+            const m = find(args.meetingId);
+            m.transcript = m.transcript.split(`### `).map((chunk: string) => chunk.replace(new RegExp(`^(\\d+:\\d+) ${args.from}\\n`), `$1 ${args.to}\n`)).join('### ');
+            state.transcriptData = (state.transcriptData as { speaker: string }[]).map(t => t.speaker === args.from ? { ...t, speaker: args.to } : t);
+            return m.transcript;
+          }
+          case 'calendar_access': if (args.ask && state.calendarAccess === 'undetermined') state.calendarAccess = 'granted'; return state.calendarAccess;
+          case 'calendar_events': return state.preferences.calendar ? state.events : [];
+          case 'calendar_now': return state.preferences.calendar ? state.now : null;
+          case 'notes_enhance': state.enhancedWith = args.template; return state.enhanced;
+          case 'capture_keep': { const r = state.capture.recording as Record<string, unknown>; state.capture = { ...state.capture, recording: { ...r, ending: null } }; emit('quietnote://capture-state', state.capture); return null; }
           default: return null;
         }
       },
     };
   }, fixture);
 }
-type Mock = { state: { calls: string[]; capture: Record<string, unknown>; transcriptData: unknown }; emit: (event: string, payload: unknown) => void; meetings: ReturnType<typeof makeMeeting>[] };
+type Mock = { state: { calls: string[]; preferences: Record<string, unknown>; capture: Record<string, unknown>; transcriptData: unknown; devices: { devices: string[]; selected: string | null }; draft: unknown; compact: boolean; summaryKey: boolean; suggestions: unknown; saved: string }; emit: (event: string, payload: unknown) => void; meetings: ReturnType<typeof makeMeeting>[] };
 /** Runs `fn` in the page with the mock. It's serialized, so it can't use variables from the test. */
 const qn = <T,>(page: Page, fn: (qn: Mock) => T) => page.evaluate(`(${fn.toString()})(window.__qn)`) as Promise<T>;
 const writes = ['save_meeting_metadata', 'render_transcripts', 'create_meeting_bundle', 'capture_start', 'capture_stop', 'transcribe_meeting'];
@@ -429,7 +575,17 @@ test('J: desktop recording runs in the background, then shows a clean transcript
   await expect(recorder.getByRole('status')).toContainText('Recording');
   expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
   await expect(recorder).not.toContainText('Prototype');
-  await expect(recorder).toContainText('Mic ✓ · Call audio: no sound yet');
+  // Live meters show at once that both tracks record; call audio waits for the others, it isn't failing.
+  const mic = recorder.locator('.meter', { hasText: 'Mic' });
+  const others = recorder.locator('.meter', { hasText: 'Call audio' });
+  await expect(others).toContainText('waiting for others');
+  await expect(mic.locator('i.on')).toHaveCount(0);
+  await qn(page, q => q.emit('quietnote://levels', [0.3, 0]));
+  await expect(mic.locator('i.on')).toHaveCount(5);
+  await expect(others.locator('i.on')).toHaveCount(0);
+  await qn(page, q => q.emit('quietnote://levels', [0.01, 0.05]));
+  await expect(mic.locator('i.on')).toHaveCount(2);
+  await expect(others.locator('i.on')).toHaveCount(3);
   await expect(recorder.locator('.recorder-time')).toHaveText(/^00:0\d$/);
   // Recording opens Notes and nothing covers it. Here the strip is the recorder, so the window bar steps aside.
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -609,7 +765,7 @@ test('N: one recording at a time, and device problems show everywhere', async ({
 test('O: a first recording from the tray carries through project creation, and a tray stop says where it went', async ({ page }) => {
   await mockDesktop(page, { meetings: [] });
   await page.goto('/');
-  await expect(page.locator('.welcome')).toContainText('No bot joins the call, and nothing records until you press Start.');
+  await expect(page.locator('.onboarding')).toContainText('No bot joins the call, and nothing records until you press Start.');
   await qn(page, q => q.emit('quietnote://new-meeting', { record: true }));
   await page.getByLabel('Project name').fill('Acme');
   await page.getByRole('button', { name: 'Create project' }).click();
@@ -692,7 +848,7 @@ test('R: Home says whether recording is ready, and a recording never gets a seco
   const card = page.getByRole('region', { name: 'Recording' });
   await expect(card).toContainText('Recording “Acme onboarding”');
   await expect(card).toContainText(/Started \d\d:\d\d by you · No bot joined/);
-  await expect(card).toContainText('Mic ✓ · Call audio: no sound yet');
+  await expect(card).toContainText('Mic ✓ · Call audio: waiting for others');
   await expect(card.getByRole('button', { name: 'Start recording' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Stop recording' })).toHaveCount(1);
   await card.getByRole('button', { name: 'Open meeting' }).click();
@@ -732,4 +888,586 @@ test('S: if the notes editor fails to load, the window stays usable and Reload r
   await failure.getByRole('button', { name: 'Reload' }).click();
   await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.tiptap')).toBeVisible();
+});
+
+test('T: a detected call records from the panel in a meeting named after the app, and muted apps can be allowed again', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Design review', 'Acme')] });
+  await page.goto('/');
+  await expect(row(page, 'Design review')).toBeVisible();
+  // With a dialog open, the panel's Start recording doesn't replace it.
+  await page.getByRole('button', { name: 'New meeting' }).first().click();
+  await qn(page, q => q.emit('quietnote://record-call', 'Zoom'));
+  await expect(page.getByRole('dialog', { name: 'New meeting' })).toBeVisible();
+  expect(await qn(page, q => q.state.calls.includes('create_meeting_bundle'))).toBe(false);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  // Otherwise it creates "Zoom call" in the project and starts recording it on Notes.
+  await qn(page, q => q.emit('quietnote://record-call', 'Zoom'));
+  await expect(page.getByRole('heading', { level: 1, name: 'Zoom call' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Recorder' }).getByRole('status')).toContainText('Recording');
+  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  expect(await qn(page, q => q.meetings.map(m => [m.metadata.title, m.metadata.project]).filter(([title]) => title === 'Zoom call'))).toEqual([['Zoom call', 'Acme']]);
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
+  // Like a notepad beside the call: the window becomes a narrow column with only the meeting in it.
+  const navigation = page.getByRole('navigation', { name: 'Meetings and projects' });
+  await expect.poll(() => qn(page, q => q.state.compact)).toBe(true);
+  await expect(navigation).toBeHidden();
+  await expect(page.locator('[data-format-bar]')).toBeHidden();
+  await expect(page.locator('.tiptap')).toBeVisible();
+  await expect(page.locator('.recording-bar')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open full window' }).click();
+  await expect.poll(() => qn(page, q => q.state.compact)).toBe(false);
+  await expect(navigation).toBeVisible();
+  // A second press while recording opens the recording meeting rather than starting another.
+  await home(page).click();
+  await qn(page, q => q.emit('quietnote://record-call', 'Chrome'));
+  await expect(page.getByRole('heading', { level: 1, name: 'Zoom call' })).toBeVisible();
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
+  await expect.poll(() => qn(page, q => q.state.compact)).toBe(true);
+  // Going anywhere else (here ⌘, for Settings) brings the full window back.
+  await page.keyboard.press('ControlOrMeta+,');
+  await expect.poll(() => qn(page, q => q.state.compact)).toBe(false);
+  await expect(navigation).toBeVisible();
+  // "Don't notify for Chrome" is written by Rust; Settings picks it up and can undo it.
+  await expect(page.getByRole('switch', { name: 'Offer to record calls' })).toHaveAttribute('aria-checked', 'true');
+  await qn(page, q => { q.state.preferences = { ...q.state.preferences, mutedCallApps: ['Chrome'] }; q.emit('quietnote://preferences-changed', null); });
+  const muted = page.locator('.setting-row').filter({ hasText: 'Not offered for Chrome' });
+  await muted.getByRole('button', { name: 'Notify again' }).click();
+  await expect(muted).toHaveCount(0);
+  await expect.poll(() => qn(page, q => q.state.preferences.mutedCallApps)).toEqual([]);
+  // Recognizing meetings in browsers is opt-in and needs macOS's Accessibility permission, which it asks for.
+  const recognize = page.getByRole('switch', { name: 'Recognize meetings in browsers' });
+  await expect(recognize).toHaveAttribute('aria-checked', 'false');
+  await recognize.click();
+  await expect.poll(() => qn(page, q => q.state.preferences.confirmMeetings)).toBe(true);
+  const notAllowed = page.getByRole('alert').filter({ hasText: 'macOS hasn’t allowed this yet' });
+  await expect(notAllowed).toBeVisible();
+  await expect(notAllowed.getByRole('button', { name: 'Open System Settings' })).toBeVisible();
+  // Allowed in System Settings: coming back to QuietNote clears the message.
+  await qn(page, q => { q.state.accessibility = true; window.dispatchEvent(new Event('focus')); });
+  await expect(notAllowed).toHaveCount(0);
+  await expect(page.getByRole('switch', { name: 'Remove call audio from your microphone' })).toHaveAttribute('aria-checked', 'true');
+  await page.getByRole('switch', { name: 'Offer to record calls' }).click();
+  await expect.poll(() => qn(page, q => q.state.preferences.detectCalls)).toBe(false);
+});
+
+test('U: the recorder stays at the bottom while notes grow, pauses and resumes, and the microphone can be chosen', async ({ page }) => {
+  const recording = meetingWith('Acme onboarding', { status: 'recording' });
+  await mockDesktop(page, { meetings: [recording], recording: recording.metadata.id, startedAgo: 65 });
+  await page.setViewportSize({ width: 1100, height: 640 });
+  await page.goto('/');
+  await page.locator('.recording-bar').getByRole('button', { name: 'Acme onboarding' }).click();
+  const recorder = page.getByRole('region', { name: 'Recorder' });
+  await expect(recorder).toContainText('Let everyone know you’re recording.');
+  // A message to paste into the call's chat; QuietNote never types into the call app.
+  await recorder.getByRole('button', { name: 'Copy message' }).click();
+  await expect(recorder.getByRole('button', { name: 'Copied' })).toBeVisible();
+  expect(await qn(page, q => q.state.clipboard)).toBe('Heads up: I’m recording this call for my notes. It’s transcribed on my computer, and no bot joins the call.');
+  // Pinned to the bottom of the window, also once the notes are longer than the window.
+  await page.locator('.tiptap').click();
+  for (let i = 0; i < 30; i++) await page.keyboard.press('Enter');
+  expect(await page.locator('.qn-main').evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+  const box = (await recorder.boundingBox())!;
+  expect(box.y + box.height).toBeGreaterThan(640 - 40);
+  expect(box.y + box.height).toBeLessThanOrEqual(640);
+  // Details fold away, and come back.
+  const details = recorder.getByRole('button', { name: 'Recording details' });
+  await details.click();
+  await expect(details).toHaveAttribute('aria-expanded', 'false');
+  await expect(recorder.locator('.meter')).toHaveCount(0);
+  await details.click();
+  await expect(recorder.locator('.meter')).toHaveCount(2);
+  // Pause: the clock stops, Resume is the one primary action, and Stop still ends the recording.
+  await recorder.getByRole('button', { name: 'Pause' }).click();
+  await expect(recorder.getByRole('status')).toHaveText('Paused');
+  await expect(recorder).toContainText('The microphone and call audio aren’t being recorded until you resume.');
+  await expect(recorder.getByRole('button', { name: 'Resume' })).toHaveClass(/primary/);
+  await expect(recorder.getByRole('button', { name: 'Stop recording' })).not.toHaveClass(/primary/);
+  const time = recorder.locator('.recorder-time');
+  const paused = await time.textContent();
+  await page.waitForTimeout(1200);
+  await expect(time).toHaveText(paused!);
+  // Everywhere else the window bar says it's paused, and resumes from there.
+  await home(page).click();
+  const bar = page.locator('.recording-bar');
+  await expect(bar).toContainText('Paused');
+  await expect(page.getByRole('region', { name: 'Recording' })).toContainText('Paused “Acme onboarding”');
+  await bar.getByRole('button', { name: 'Resume' }).click();
+  await expect(bar.locator('.recording-label')).toHaveText('Recording');
+  await expect(bar.getByRole('button', { name: 'Resume' })).toHaveCount(0);
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_pause' || c === 'capture_resume'))).toEqual(['capture_pause', 'capture_resume']);
+  // The microphone can be switched during the recording, and the choice is kept.
+  await bar.getByRole('button', { name: 'Acme onboarding' }).click();
+  const mic = recorder.getByLabel('Microphone');
+  await expect(mic).toHaveValue('');
+  await expect(mic.locator('option').first()).toHaveText('System default (MacBook Pro Microphone)');
+  await mic.selectOption('AirPods Pro');
+  await expect.poll(() => qn(page, q => q.state.devices.selected)).toBe('AirPods Pro');
+});
+
+test('V: the live transcript follows the recording as a labelled draft, and the full transcript replaces it', async ({ page }) => {
+  const recording = meetingWith('Acme onboarding', { status: 'recording' });
+  await mockDesktop(page, { meetings: [recording], recording: recording.metadata.id, startedAgo: 30 });
+  await page.goto('/');
+  await page.locator('.recording-bar').getByRole('button', { name: 'Acme onboarding' }).click();
+  const recorder = page.getByRole('region', { name: 'Recorder' });
+  const log = recorder.getByRole('log', { name: 'Live transcript' });
+  await expect(log).toContainText('Words appear here a few seconds after they’re spoken.');
+  // Someone talking before their words arrive shows as dots, never as made-up words.
+  await qn(page, q => q.emit('quietnote://levels', [0.3, 0]));
+  await expect(log.locator('.listening.you')).toBeVisible();
+  await expect(log.locator('.listening.others')).toHaveCount(0);
+  // Rust keeps the latest draft (for a view opened later) and sends it.
+  await qn(page, q => {
+    q.state.draft = { meetingId: q.meetings[0].metadata.id, turns: [
+      { startMs: 0, speaker: 'You', text: 'Um, so shall we start?', clean: 'So shall we start?' },
+      { startMs: 3000, speaker: 'Others', text: 'Yes, let’s start.', clean: 'Yes, let’s start.' },
+    ] };
+    q.emit('quietnote://live-transcript', q.state.draft);
+  });
+  await expect(log.locator('.live-turn.you').first()).toHaveText('YouSo shall we start?');
+  await expect(log.locator('.live-turn.others')).toHaveText('OthersYes, let’s start.');
+  await expect(recorder).toContainText('Live draft · the full transcript is made when you stop');
+  // The Transcript tab shows the same draft (once: the recorder leaves it to the tab), and only this meeting's.
+  await tab(page, 'Transcript').click();
+  const panel = page.getByRole('tabpanel');
+  await expect(panel).toContainText('So shall we start?');
+  await expect(page.getByRole('log', { name: 'Live transcript' })).toHaveCount(1);
+  await expect(recorder.getByRole('log')).toHaveCount(0);
+  await qn(page, q => q.emit('quietnote://live-transcript', { meetingId: 'another-meeting', turns: [{ startMs: 0, speaker: 'You', text: 'Wrong meeting', clean: 'Wrong meeting' }] }));
+  await expect(panel).not.toContainText('Wrong meeting');
+  // After Stop the draft stays, labelled, until the full transcript is ready; then that replaces it.
+  await recorder.getByRole('button', { name: 'Stop recording' }).click();
+  await expect(panel).toContainText('Live draft. The full transcript replaces it when it’s ready.');
+  await expect(panel).toContainText('So shall we start?');
+  await qn(page, q => {
+    const [m] = q.meetings;
+    q.state.transcriptData = [{ startMs: 0, speaker: 'You', text: 'Um, so, shall we start?', clean: 'So, shall we start?' }];
+    q.emit('quietnote://meeting-changed', { metadata: { ...m.metadata, status: 'ready' }, transcript: '# Transcript\n\n### 00:00 You\nSo, shall we start?\n', problem: null });
+  });
+  await expect(panel.locator('.transcript-turn')).toContainText('So, shall we start?');
+  await expect(panel).not.toContainText('Live draft');
+  await expect(panel.locator('.live-turn')).toHaveCount(0);
+});
+
+test('W: a finished meeting records more, and its transcript keeps the earlier part', async ({ page }) => {
+  const done = meetingWith('Acme onboarding', { status: 'ready', duration: 754, captureStartedAt: new Date(Date.now() - 3_600_000).toISOString(), captureEndedAt: new Date(Date.now() - 2_800_000).toISOString() });
+  done.metadata.audioPath = `Acme/${done.metadata.id}/audio`;
+  done.transcript = '# Transcript\n\n### 00:00 You\nLet’s start with the pilot.\n';
+  await mockDesktop(page, { meetings: [done] });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Acme onboarding/ }).click();
+  // Recording more is offered, but it isn't the page's main action.
+  const header = page.locator('.meeting-header');
+  await expect(header.getByRole('button', { name: 'Start recording' })).toHaveCount(0);
+  await expect(header.getByRole('button', { name: 'Resume recording' })).not.toHaveClass(/primary/);
+  await header.getByRole('button', { name: 'Resume recording' }).click();
+  const recorder = page.getByRole('region', { name: 'Recorder' });
+  await expect(recorder.getByRole('status')).toHaveText('Recording');
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
+  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(header.getByRole('button', { name: 'Resume recording' })).toHaveCount(0);
+  // The clock carries on from the earlier recording.
+  await expect(recorder.locator('.recorder-time')).toHaveText(/^12:3[4-6]$/);
+  // The earlier transcript stays, and the new part follows it as a live draft.
+  await tab(page, 'Transcript').click();
+  const panel = page.getByRole('tabpanel');
+  await expect(panel.locator('.transcript-turn')).toContainText('Let’s start with the pilot.');
+  // Only one side has spoken, so a label would say nothing: just the time.
+  await expect(panel.locator('.transcript-turn h3')).toHaveText('00:00');
+  await qn(page, q => {
+    q.state.draft = { meetingId: q.meetings[0].metadata.id, turns: [{ startMs: 760_000, speaker: 'Others', text: 'We’re back.', clean: 'We’re back.' }] };
+    q.emit('quietnote://live-transcript', q.state.draft);
+  });
+  await expect(panel.locator('.live-turn.others')).toContainText('We’re back.');
+  expect(await panel.evaluate(el => el.querySelector('.transcript-turn')!.compareDocumentPosition(el.querySelector('.live-turn')!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
+});
+
+test('X: summary suggestions ask before sending, cite the transcript, and write only what you add', async ({ page }) => {
+  const done = meetingWith('Pricing sync', { status: 'ready', duration: 600, captureStartedAt: new Date().toISOString(), captureEndedAt: new Date().toISOString() });
+  done.metadata.audioPath = `Acme/${done.metadata.id}/audio`;
+  done.transcript = '# Transcript\n\n### 00:00 Others\nMaya will send the pricing draft by Friday.\n\n### 01:05 You\nThen we go with the annual plan.\n';
+  await mockDesktop(page, { meetings: [done] });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Pricing sync/ }).click();
+  // Off by default: nothing to ask, and the empty state says where to turn it on.
+  await expect(page.getByRole('button', { name: 'Suggest from transcript…' })).toHaveCount(0);
+  await expect(page.getByText('turn on summary suggestions in Settings → Privacy', { exact: false })).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+,');
+  await page.getByLabel('Drafted by').selectOption('anthropic');
+  await page.getByLabel('Anthropic API key').fill('sk-ant-test');
+  await page.getByRole('button', { name: 'Save key' }).click();
+  await expect(page.getByText('Anthropic key saved')).toBeVisible();
+  await expect(page.getByText('or ask Claude for summary suggestions', { exact: false })).toBeVisible();
+  await qn(page, q => {
+    q.state.transcriptData = [
+      { startMs: 0, speaker: 'Others', text: 'Maya will send the pricing draft by Friday.', clean: 'Maya will send the pricing draft by Friday.' },
+      { startMs: 65_000, speaker: 'You', text: 'Then we go with the annual plan.', clean: 'Then we go with the annual plan.' },
+    ];
+    q.state.suggestions = {
+      summary: 'The team settled on annual pricing.',
+      decisions: [{ text: 'Go with the annual plan', owner: '', atMs: 65_000, quote: 'we go with the annual plan' }],
+      actions: [{ text: 'Send the pricing draft by Friday', owner: 'Maya', atMs: 0, quote: 'Maya will send the pricing draft' }],
+      dropped: 1,
+    };
+  });
+  await page.getByRole('button', { name: 'All meetings' }).click();
+  await page.getByRole('button', { name: /Pricing sync/ }).click();
+  await page.getByRole('button', { name: 'Suggest from transcript…' }).click();
+  // Asking first says exactly what leaves the device; cancelling sends nothing.
+  const ask = page.getByRole('dialog', { name: 'Suggest from transcript' });
+  await expect(ask).toContainText('Send this transcript to Anthropic?');
+  await expect(ask).toContainText('The audio, your notes and the meeting’s title stay on this');
+  await ask.getByRole('button', { name: 'Cancel' }).click();
+  expect(await qn(page, q => q.state.calls.includes('summary_suggest'))).toBe(false);
+  await page.getByRole('button', { name: 'Suggest from transcript…' }).click();
+  await ask.getByRole('button', { name: 'Send transcript' }).click();
+  const panel = page.getByRole('region', { name: 'Suggestions' });
+  await expect(panel).toContainText('The team settled on annual pricing.');
+  await expect(panel).toContainText('One more was left out because it couldn’t be traced to your notes or the transcript.');
+  // Drafting writes nothing.
+  expect(await qn(page, q => q.state.saved)).toBe('');
+  await panel.getByRole('button', { name: 'Use as summary' }).click();
+  await expect(page.locator('.summary-text')).toHaveText('The team settled on annual pricing.');
+  await panel.getByRole('listitem').filter({ hasText: 'Send the pricing draft' }).getByRole('button', { name: 'Add' }).click();
+  expect(await qn(page, q => q.state.saved)).toContain('- [ ] Maya — Send the pricing draft by Friday');
+  await panel.getByRole('button', { name: 'Dismiss “Go with the annual plan”' }).click();
+  await expect(panel).toHaveCount(0);
+  expect(await qn(page, q => q.state.saved)).not.toContain('annual plan');
+  // A citation opens the transcript at the line it quotes.
+  await page.getByRole('button', { name: 'Suggest from transcript…' }).click();
+  await ask.getByRole('button', { name: 'Send transcript' }).click();
+  await panel.getByRole('button', { name: /01:05.*we go with the annual plan/ }).click();
+  await expect(tab(page, 'Transcript')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.transcript-turn[data-time="01:05"]')).toHaveClass(/cited/);
+});
+
+test('Y: a recording about to stop by itself counts down where you are, and Keep recording cancels it', async ({ page }) => {
+  const recording = meetingWith('Acme onboarding', { status: 'recording' });
+  await mockDesktop(page, { meetings: [recording], recording: recording.metadata.id, startedAgo: 600 });
+  await page.goto('/');
+  await page.locator('.recording-bar').getByRole('button', { name: 'Acme onboarding' }).click();
+  const recorder = page.getByRole('region', { name: 'Recorder' });
+  // Rust noticed the call app let go of the microphone and started the countdown.
+  await qn(page, q => {
+    const r = q.state.capture.recording as Record<string, unknown>;
+    q.state.capture = { ...q.state.capture, recording: { ...r, ending: { reason: 'The Zoom call ended.', stopsAt: new Date(Date.now() + 45_000).toISOString() } } };
+    q.emit('quietnote://capture-state', q.state.capture);
+  });
+  const alert = recorder.getByRole('alert').filter({ hasText: 'The Zoom call ended.' });
+  await expect(alert).toContainText(/Recording stops in 00:4\d\./);
+  // Elsewhere the recording bar says so too, and can keep it.
+  await home(page).click();
+  const bar = page.locator('.recording-bar');
+  await expect(bar).toContainText('The Zoom call ended.');
+  await bar.getByRole('button', { name: 'Keep recording' }).click();
+  await expect(bar).not.toContainText('The Zoom call ended.');
+  expect(await qn(page, q => q.state.calls.includes('capture_keep'))).toBe(true);
+  // Past its time, it waits for quiet rather than cutting someone off.
+  await qn(page, q => {
+    const r = q.state.capture.recording as Record<string, unknown>;
+    q.state.capture = { ...q.state.capture, recording: { ...r, ending: { reason: 'Nothing has been heard for 15 minutes.', stopsAt: new Date(Date.now() - 1000).toISOString() } } };
+    q.emit('quietnote://capture-state', q.state.capture);
+  });
+  await expect(bar).toContainText('Recording stops once it’s quiet.');
+});
+
+test('Z: the next meeting of a series shows what the last one left open, and ticking it updates that meeting', async ({ page }) => {
+  const last = meetingWith('Weekly sync', { date: new Date(Date.now() - 7 * 86_400_000).toISOString(), status: 'ready', duration: 1800 });
+  last.markdown = appendItem(appendItem(appendItem(last.markdown, 'Action items', 'Maya — send the pricing draft'), 'Action items', 'Book the venue'), 'Decisions', 'Launch on the 14th');
+  const next = meetingWith('Weekly sync', { status: 'idle' });
+  await mockDesktop(page, { meetings: [last, next] });
+  await page.goto('/');
+  await row(page, 'Weekly sync').first().click();
+  await tab(page, 'Notes').click();
+  const card = page.locator('.last-time');
+  await expect(card).toContainText('Last time');
+  await expect(card).toContainText('send the pricing draft');
+  await expect(card).toContainText('Launch on the 14th');
+  await card.getByRole('checkbox').first().click();
+  // Written to the earlier meeting's file.
+  await expect.poll(() => qn(page, q => q.state.saved)).toContain('- [x] Maya — send the pricing draft');
+  await expect(card.getByRole('checkbox').first()).toBeChecked();
+  // The earlier meeting itself doesn't carry the card; it opens from the card.
+  await card.getByRole('button', { name: 'Open Weekly sync' }).click();
+  await tab(page, 'Notes').click();
+  await expect(page.locator('.last-time')).toHaveCount(0);
+});
+
+test('X2: enhancing notes says what leaves the device, picks a template, and writes only when used', async ({ page }) => {
+  const done = meetingWith('Weekly 1:1 with Sam', { status: 'ready', duration: 600, captureStartedAt: new Date().toISOString(), captureEndedAt: new Date().toISOString() });
+  done.metadata.audioPath = `Acme/${done.metadata.id}/audio`;
+  done.transcript = '# Transcript\n\n### 01:05 You\nThen we go with the annual plan.\n';
+  done.markdown = replaceSection(done.markdown, 'Notes', '- pricing: annual plan?');
+  await mockDesktop(page, { meetings: [done] });
+  // Claude is set up, and these are what Rust would return.
+  await page.addInitScript(() => {
+    const { state } = (window as unknown as { __qn: { state: Record<string, unknown> } }).__qn;
+    Object.assign(state, {
+      preferences: { summaryProvider: 'anthropic' }, summaryKey: true,
+      transcriptData: [{ startMs: 65_000, speaker: 'You', text: 'Then we go with the annual plan.', clean: 'Then we go with the annual plan.' }],
+      enhanced: { sections: [{ heading: 'Updates', lines: [{ text: 'They went with the annual plan.', atMs: 65_000, quote: 'we go with the annual plan' }, { text: 'Pricing was the open question.', atMs: null, quote: 'pricing annual plan' }] }], dropped: 2 },
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Weekly 1:1 with Sam/ }).click();
+  await page.getByRole('button', { name: 'Enhance notes…' }).click();
+  const ask = page.getByRole('dialog', { name: 'Enhance notes' });
+  await expect(ask).toContainText('Send your notes and this transcript to Anthropic?');
+  await expect(ask).toContainText('Your notes (3 words) and about');
+  await expect(ask).toContainText('The audio and the meeting’s title stay on this');
+  // The title says it's a 1:1, so that template is chosen.
+  await expect(ask.getByLabel('Template')).toHaveValue('1:1');
+  await ask.getByRole('button', { name: 'Send notes and transcript' }).click();
+  const panel = page.getByRole('region', { name: 'Enhanced notes' });
+  await expect(panel).toContainText('They went with the annual plan.');
+  await expect(panel).toContainText('From your notes: “pricing annual plan”');
+  await expect(panel).toContainText('2 more were left out');
+  expect(await qn(page, q => q.state.enhancedWith)).toBe('1:1');
+  expect(await qn(page, q => q.state.saved)).toBe('');
+  await panel.getByRole('button', { name: 'Use as summary' }).click();
+  expect(await qn(page, q => q.state.saved)).toContain('### Updates\n- They went with the annual plan. [01:05]\n- Pricing was the open question.');
+  // The summary shows its sections, and a transcript line's time opens the transcript there.
+  const summary = page.locator('.summary-text');
+  await expect(summary.getByRole('heading', { name: 'Updates' })).toBeVisible();
+  await summary.getByRole('button', { name: '01:05' }).click();
+  await expect(tab(page, 'Transcript')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.transcript-turn[data-time="01:05"]')).toHaveClass(/cited/);
+});
+
+test('AA: the calendar names meetings and says who is invited, and never starts recording', async ({ page }) => {
+  const earlier = meetingWith('Weekly sync', { date: new Date(Date.now() - 7 * 86_400_000).toISOString(), status: 'ready', project: 'Beta', calendarSeries: 'series-1' });
+  await mockDesktop(page, { meetings: [earlier, makeMeeting('Design review', 'Acme')] });
+  await page.addInitScript(() => {
+    const { state } = (window as unknown as { __qn: { state: Record<string, unknown> } }).__qn;
+    const at = (minutes: number) => Date.now() + minutes * 60_000;
+    const people = [{ name: 'You Me', email: 'me@acme.com', me: true }, { name: 'Maria Lopez', email: 'maria@globex.com' }, { name: 'Sam Lee', email: 'sam@globex.com' }];
+    const sync = { id: 'ev-sync@1', series: 'series-1', title: 'Weekly sync', startMs: at(-5), endMs: at(25), attendees: people, link: 'https://meet.google.com/abc-defg-hij' };
+    const lunch = { id: 'ev-lunch@1', series: null, title: 'Lunch with Ana', startMs: at(40), endMs: at(90), attendees: [], link: null };
+    Object.assign(state, { events: [sync, lunch], now: sync });
+  });
+  await page.goto('/');
+  // Off until turned on: nothing about the calendar shows, and nothing is read.
+  await expect(page.getByRole('heading', { name: 'Up next' })).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+,');
+  const use = page.getByRole('switch', { name: 'Use your calendar' });
+  await use.click();
+  await expect(use).toHaveAttribute('aria-checked', 'true');
+  expect(await qn(page, q => q.state.calendarAccess)).toBe('granted');
+  // Home lists what's next; Prepare notes makes the meeting from the event, in the series' project, without recording.
+  await home(page).click();
+  const next = page.getByRole('region', { name: 'Up next' });
+  await expect(next).toContainText('Weekly sync');
+  await expect(next).toContainText('2 others');
+  await next.getByRole('listitem').filter({ hasText: 'Weekly sync' }).getByRole('button', { name: 'Prepare notes' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Weekly sync' })).toBeVisible();
+  const made = await qn(page, q => q.meetings.find(m => m.metadata.calendarEvent === 'ev-sync@1')?.metadata);
+  expect(made).toMatchObject({ project: 'Beta', participants: ['Maria Lopez', 'Sam Lee'], calendarSeries: 'series-1', status: 'idle' });
+  expect(await qn(page, q => q.state.calls.includes('capture_start'))).toBe(false);
+  await expect(page.getByRole('img', { name: 'Participants: Maria Lopez, Sam Lee' })).toBeVisible();
+  // Its Notes start with what last week's meeting in the series left open.
+  await home(page).click();
+  await expect(next.getByRole('button', { name: 'Open notes' })).toBeVisible();
+  // New meeting fills in from the event happening now, and can drop it.
+  await page.keyboard.press('ControlOrMeta+n');
+  const dialog = page.getByRole('dialog', { name: 'New meeting' });
+  await expect(dialog.getByLabel('Meeting title')).toHaveValue('Weekly sync');
+  await expect(dialog).toContainText('From your calendar');
+  await dialog.getByRole('button', { name: 'Don’t use' }).click();
+  await expect(dialog.getByLabel('Meeting title')).toHaveValue('');
+  await page.keyboard.press('Escape');
+  // A call recorded from the panel is named after the event.
+  await qn(page, q => q.emit('quietnote://record-call', 'Chrome'));
+  await expect.poll(() => qn(page, q => q.meetings.filter(m => m.metadata.title === 'Weekly sync').length)).toBe(3);
+  expect(await qn(page, q => q.meetings.some(m => m.metadata.title === 'Chrome call'))).toBe(false);
+  // People: everyone invited, grouped by company, each with the meetings they were in.
+  await page.keyboard.press('ControlOrMeta+,');
+  await page.getByRole('button', { name: 'People' }).click();
+  const globex = page.getByRole('region', { name: 'globex.com' });
+  await expect(globex).toContainText('Maria Lopez');
+  await expect(globex).toContainText('Sam Lee');
+  await globex.getByRole('button', { name: /Maria Lopez/ }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Maria Lopez' })).toBeVisible();
+  // The two meetings made from the event; last week's had no invite.
+  await expect(page.locator('.meeting-row')).toHaveCount(2);
+  await page.getByRole('button', { name: 'globex.com' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'globex.com' })).toBeVisible();
+  await page.getByRole('button', { name: 'People' }).first().click();
+  await expect(page.getByRole('heading', { level: 1, name: 'People' })).toBeVisible();
+});
+
+test('AB: a meeting and its voices get names only from what shows them, or by hand', async ({ page }) => {
+  const call = meetingWith('Chrome call', { status: 'ready', duration: 600, captureStartedAt: new Date().toISOString(), captureEndedAt: new Date().toISOString(), attendees: [{ name: 'Me', email: 'me@acme.com', me: true }, { name: 'Maria Lopez', email: 'maria@globex.com' }, { name: 'Sam Lee', email: 'sam@globex.com' }], participants: ['Maria Lopez', 'Sam Lee'] });
+  call.metadata.audioPath = `Acme/${call.metadata.id}/audio`;
+  call.transcript = '# Transcript\n\n### 00:00 You\nMaria, do you want to start?\n\n### 00:04 Speaker 1\nSure, I\'m Maria from Globex.\n\n### 00:09 Speaker 2\nHi all.\n';
+  await mockDesktop(page, { meetings: [call] });
+  await page.addInitScript(() => {
+    const { state } = (window as unknown as { __qn: { state: Record<string, unknown> } }).__qn;
+    Object.assign(state, {
+      preferences: { summaryProvider: 'anthropic' }, summaryKey: true,
+      transcriptData: [
+        { startMs: 0, speaker: 'You', text: 'Maria, do you want to start?', clean: 'Maria, do you want to start?' },
+        { startMs: 4000, speaker: 'Speaker 1', text: 'Sure, I\'m Maria from Globex.', clean: 'Sure, I\'m Maria from Globex.' },
+        { startMs: 9000, speaker: 'Speaker 2', text: 'Hi all.', clean: 'Hi all.' },
+      ],
+      names: { title: 'Globex pricing kickoff', speakers: [{ speaker: 'Speaker 1', name: 'Maria Lopez', atMs: 4000, quote: 'I\'m Maria from Globex' }], dropped: 1 },
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Chrome call/ }).click();
+  await page.getByRole('button', { name: 'Name the meeting and speakers…' }).click();
+  const ask = page.getByRole('dialog', { name: 'Name the meeting and speakers' });
+  await expect(ask).toContainText('and the names of the 2 people invited go to Claude');
+  await ask.getByRole('button', { name: 'Send transcript' }).click();
+  const panel = page.getByRole('region', { name: 'Names' });
+  await expect(panel).toContainText('Speaker 1 is Maria Lopez');
+  await expect(panel).toContainText('One more was left out');
+  // Nothing changes until used.
+  expect(await qn(page, q => q.state.calls.includes('save_meeting_metadata') || q.state.renamed.length > 0)).toBe(false);
+  await panel.getByRole('listitem').filter({ hasText: 'Title:' }).getByRole('button', { name: 'Use' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Globex pricing kickoff' })).toBeVisible();
+  await expect.poll(() => qn(page, q => q.state.saved)).toContain('# Globex pricing kickoff');
+  await panel.getByRole('listitem').filter({ hasText: 'Maria Lopez' }).getByRole('button', { name: 'Use' }).click();
+  await expect(panel).toHaveCount(0);
+  expect(await qn(page, q => q.state.renamed)).toEqual([['Speaker 1', 'Maria Lopez']]);
+  // By hand: press a voice's label in the transcript, or the title.
+  await tab(page, 'Transcript').click();
+  await page.getByRole('button', { name: 'Speaker 2' }).click();
+  await page.getByLabel('Name for Speaker 2').fill('Sam Lee');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator('.transcript-turn').filter({ hasText: 'Hi all.' })).toContainText('Sam Lee');
+  expect(await qn(page, q => q.state.renamed.at(-1))).toEqual(['Speaker 2', 'Sam Lee']);
+  await page.getByRole('button', { name: 'Globex pricing kickoff' }).click();
+  await page.getByLabel('Meeting title').fill('Pricing kickoff');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { level: 1, name: 'Pricing kickoff' })).toBeVisible();
+});
+
+test('AC: with one other person invited, the other voice can be named from the invite without asking a model', async ({ page }) => {
+  const call = meetingWith('Zoom call', { status: 'ready', duration: 300, captureStartedAt: new Date().toISOString(), captureEndedAt: new Date().toISOString(), attendees: [{ name: 'Me', email: 'me@acme.com', me: true }, { name: 'Maria Lopez', email: 'maria@globex.com' }], participants: ['Maria Lopez'] });
+  call.metadata.audioPath = `Acme/${call.metadata.id}/audio`;
+  call.transcript = '# Transcript\n\n### 00:00 You\nHello.\n\n### 00:03 Others\nHi there.\n';
+  await mockDesktop(page, { meetings: [call] });
+  await page.addInitScript(() => {
+    const { state } = (window as unknown as { __qn: { state: Record<string, unknown> } }).__qn;
+    state.transcriptData = [{ startMs: 0, speaker: 'You', text: 'Hello.', clean: 'Hello.' }, { startMs: 3000, speaker: 'Others', text: 'Hi there.', clean: 'Hi there.' }];
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Zoom call/ }).click();
+  await tab(page, 'Transcript').click();
+  await expect(page.getByRole('status').filter({ hasText: 'Is “Others” Maria Lopez?' })).toContainText('Maria Lopez was the only other person invited.');
+  await page.getByRole('button', { name: 'Name them' }).click();
+  await expect.poll(() => qn(page, q => q.state.renamed)).toEqual([['Others', 'Maria Lopez']]);
+  await expect(page.getByText('Is “Others” Maria Lopez?')).toHaveCount(0);
+  expect(await qn(page, q => q.state.calls.includes('meeting_names'))).toBe(false);
+});
+
+test('AD: first launch on a Mac explains each permission before asking, asks one skippable question, and records nothing', async ({ page }) => {
+  await mockDesktop(page, { meetings: [], microphone: 'undetermined' });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Keep the useful part of every meeting.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Get started' }).click();
+  await expect(page.getByRole('heading', { name: 'No bot joins your call.' })).toBeFocused();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  // The reason comes first; macOS is asked only on Allow, and that never starts a recording.
+  await expect(page.getByRole('heading', { name: 'Allow the microphone.' })).toBeVisible();
+  await expect(page.locator('.onboarding')).toContainText('also asks for system audio recording');
+  expect(await qn(page, q => q.state.calls.includes('capture_allow_microphone'))).toBe(false);
+  await page.screenshot({ path: 'docs/screenshots/00-onboarding-microphone.png', animations: 'disabled' });
+  await page.getByRole('button', { name: 'Allow microphone' }).click();
+  // Granted, it moves on by itself.
+  await expect(page.getByRole('heading', { name: 'Name meetings after your calendar.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Use my calendar' }).click();
+  await expect(page.getByRole('heading', { name: 'What meetings do you have most?' })).toBeVisible();
+  await expect.poll(() => qn(page, q => q.state.preferences.calendar)).toBe(true);
+  // Each kind shows the headings its notes template uses.
+  await expect(page.getByRole('radio', { name: /User interviews/ })).toContainText('About them · What they said');
+  await page.getByRole('radio', { name: /User interviews/ }).click();
+  await page.screenshot({ path: 'docs/screenshots/00-onboarding-kind.png', animations: 'disabled' });
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect.poll(() => qn(page, q => q.state.preferences.noteTemplate)).toBe('User interview');
+  await expect(page.getByLabel('Project name')).toHaveValue('Research');
+  await expect(page.locator('.onboarding')).toContainText('It never starts by itself.');
+  await page.getByRole('button', { name: 'Create project' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Research' })).toBeVisible();
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(0);
+  // The microphone is allowed now, so the first recording starts without the explainer.
+  expect(await qn(page, q => q.state.capture.microphone)).toBe('granted');
+});
+
+test('AE: a refused microphone shows where to allow it, and skipping it keeps the explainer for the first recording', async ({ page }) => {
+  await mockDesktop(page, { meetings: [], microphone: 'undetermined' });
+  await page.addInitScript(() => { (window as unknown as { __qn: { state: { micAnswer: string } } }).__qn.state.micAnswer = 'denied'; });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Get started' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Allow microphone' }).click();
+  await expect(page.getByRole('alert')).toContainText('Microphone access is off.');
+  await expect(page.getByRole('button', { name: 'Open System Settings' })).toBeVisible();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('heading', { name: 'Name meetings after your calendar.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Skip' }).click();
+  expect(await qn(page, q => q.state.preferences.calendar)).toBeUndefined();
+  await page.getByRole('button', { name: 'Skip' }).click();
+  expect(await qn(page, q => q.state.preferences.noteTemplate)).toBeUndefined();
+  await page.getByRole('button', { name: 'Create project' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Work' })).toBeVisible();
+});
+
+test('AF: Linear and GitHub sign in through the browser, with a way out of every step', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')] });
+  await page.addInitScript(() => { (window as unknown as { __qn: { state: { signInServices: string[] } } }).__qn.state.signInServices = ['linear', 'github']; });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Connections' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Connections' });
+  await expect(dialog).toContainText('access is kept in your macOS Keychain, never on a QuietNote server');
+  const linear = dialog.locator('.connector', { hasText: 'Linear' }).first();
+  // Linear: the browser opens; the window says what's happening and can reopen it or give the link.
+  await linear.getByRole('button', { name: 'Connect' }).click();
+  await expect(linear.getByRole('status')).toContainText('Starting to sign in to Linear');
+  const url = 'https://linear.app/oauth/authorize?client_id=abc';
+  await qn(page, q => q.emit('quietnote://sign-in', { service: 'linear', url: 'https://linear.app/oauth/authorize?client_id=abc', code: null, opened: true }));
+  await expect(linear.getByRole('status')).toContainText('Finish signing in to Linear in your browser.');
+  await linear.getByRole('button', { name: 'Copy link' }).click();
+  await expect.poll(() => qn(page, q => q.state.clipboard)).toBe(url);
+  await linear.getByRole('button', { name: 'Reopen browser' }).click();
+  await expect.poll(() => qn(page, q => q.state.opened)).toEqual([url]);
+  // Cancelling ends it quietly, and Connect comes back.
+  await linear.getByRole('button', { name: 'Cancel' }).click();
+  await expect(linear.getByRole('status')).toHaveCount(0);
+  await expect(linear.getByRole('alert')).toHaveCount(0);
+  // A failed sign-in says why, and offers a pasted key instead.
+  await linear.getByRole('button', { name: 'Connect' }).click();
+  await qn(page, q => q.state.pendingSignIn!.reject('Linear didn’t finish signing in: invalid_scope'));
+  await expect(linear.getByRole('alert')).toContainText('Linear didn’t finish signing in');
+  await expect(linear.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await linear.getByRole('button', { name: 'Use a key instead' }).click();
+  await expect(linear.getByPlaceholder('Paste your key')).toBeFocused();
+  await linear.getByRole('button', { name: 'Cancel' }).click();
+  await linear.getByRole('button', { name: 'Connect' }).click();
+  await qn(page, q => q.state.pendingSignIn!.resolve({ account: 'Maya Chen' }));
+  await expect(dialog.locator('.connector', { hasText: 'Connected as Maya Chen' })).toBeVisible();
+  // GitHub: a code to type on GitHub's page, copied and opened in one click.
+  const github = dialog.locator('.connector', { hasText: 'GitHub' }).first();
+  await github.getByRole('button', { name: 'Connect' }).click();
+  await qn(page, q => q.emit('quietnote://sign-in', { service: 'github', url: 'https://github.com/login/device', code: 'WDJB-MJHT', opened: false }));
+  await expect(github.locator('.device-code')).toHaveText('WDJB-MJHT');
+  await github.getByRole('button', { name: 'Copy code and open GitHub' }).click();
+  await expect.poll(() => qn(page, q => q.state.clipboard)).toBe('WDJB-MJHT');
+  await expect.poll(() => qn(page, q => q.state.opened.at(-1))).toBe('https://github.com/login/device');
+  await qn(page, q => q.state.pendingSignIn!.resolve({ account: 'maya' }));
+  await expect(dialog.locator('.connector', { hasText: 'Connected as maya' })).toBeVisible();
+});
+
+test('AG: without sign-in built in, Linear and GitHub still connect with a pasted key', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')] });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Connections' }).click();
+  const linear = page.getByRole('dialog', { name: 'Connections' }).locator('.connector', { hasText: 'Linear' }).first();
+  await linear.getByRole('button', { name: 'Connect' }).click();
+  await expect(linear.getByPlaceholder('Paste your key')).toBeFocused();
+  expect(await qn(page, q => q.state.calls.includes('connector_sign_in'))).toBe(false);
 });

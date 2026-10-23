@@ -23,3 +23,13 @@ Whisper large-v3-turbo model (MIT, https://github.com/openai/whisper) in the
 ggml format published with whisper.cpp (MIT, https://github.com/ggml-org/whisper.cpp),
 and the Silero voice activity detector (MIT, https://github.com/snakers4/silero-vad)
 in the ggml format published by ggml-org. whisper.cpp is linked through whisper-rs.
+
+The macOS build also bundles, downloaded the same way: pyannote segmentation 3.0
+(MIT, https://huggingface.co/pyannote/segmentation-3.0) and the 3D-Speaker ERes2Net
+VoxCeleb speaker embedding model (Apache-2.0, https://github.com/modelscope/3D-Speaker),
+in the ONNX form published with sherpa-onnx, and NVIDIA's Parakeet TDT 110M speech
+model (CC BY 4.0, https://huggingface.co/nvidia/parakeet-tdt_ctc-110m) in sherpa-onnx's
+int8 conversion. They run on sherpa-onnx (Apache-2.0, https://github.com/k2-fsa/sherpa-onnx)
+with ONNX Runtime (MIT), linked statically from sherpa-onnx's pinned release archive.
+Echo cancellation is WebRTC's AEC3 (BSD-3-Clause) through Sonora, its Rust port
+(BSD-3-Clause, https://github.com/dignifiedquire/sonora).

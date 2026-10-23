@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "call",
+  "description": "The call detection panel: its own commands, events and a native menu",
+  "windows": ["call"],
+  "permissions": ["core:default", "core:menu:default"]
+}

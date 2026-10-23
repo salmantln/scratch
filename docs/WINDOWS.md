@@ -19,6 +19,12 @@ Recording and transcription compile for Windows, but **nothing has been run on W
 - **CPU only.** There's no GPU build on Windows. large-v3-turbo q5 on a typical 8-core laptop CPU is expected to run at roughly real time or slower, so a 1-hour meeting could take about an hour to transcribe. Progress is shown and the app stays usable. Measure this before promising timings.
 - **Build**: whisper-rs needs CMake and LLVM (`LIBCLANG_PATH`, set in `release.yml`).
 
+## macOS only, for now
+- **Telling the others apart, the Parakeet live transcript and recognizing meetings in browsers** use sherpa-onnx and macOS Accessibility, which are only built for macOS. Windows keeps "Others" and has no live transcript.
+- **Echo cancellation** is built for Windows too (pure Rust), but untested there: WASAPI loopback goes quiet when nothing plays, so the canceller gets silence as its reference until someone talks.
+- **Pausing for sleep** and **pausing music** are macOS only.
+- **The `quietnote` command** is the app's own binary; on Windows the release build has no console, so it prints nothing there.
+
 ## App shell
 - **Tray**: left click opens the window and right click opens the menu. While recording, the icon switches to `icons/tray-recording.png` (red dot) and the tooltip shows the elapsed time. Menu `&` characters are escaped.
 - **Paths**: the archive lives under `%APPDATA%\app.quietnote.desktop\meetings`. Relative paths inside metadata use `/`; "Show audio" converts them to `\` for Explorer.

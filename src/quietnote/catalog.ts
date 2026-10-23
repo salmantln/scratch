@@ -19,9 +19,10 @@ export type Category = typeof categories[number];
 /**
  * A directory entry. Only entries with `service` actually connect; the rest are planned and do nothing.
  * `logo` is a bundled brand mark. `app` entries show the icon of the app installed on this Mac (Apple doesn't
- * publish its icons for reuse), falling back to a `monogram` tile in `color`.
+ * publish its icons for reuse), falling back to a `monogram` tile in `color`. `detects` entries are covered by
+ * call detection where it's available.
  */
-export interface Connector { id: string; name: string; category: Category; blurb: string; logo?: string; app?: true; color?: string; monogram?: string; service?: Service; setup?: { url: string; hint: string } }
+export interface Connector { id: string; name: string; category: Category; blurb: string; logo?: string; app?: true; color?: string; monogram?: string; service?: Service; setup?: { url: string; hint: string }; detects?: true }
 const call = 'Notice a call on this Mac and offer to start capture. Never joins the call.';
 const events = 'Fill in a meeting’s title, time and attendees from an event. Never joins or starts capture.';
 export const connectors: Connector[] = [
@@ -32,9 +33,9 @@ export const connectors: Connector[] = [
   { id: 'todoist', name: 'Todoist', category: 'Tasks', blurb: 'Add action items to a Todoist project.', logo: todoist },
   { id: 'things', name: 'Things', category: 'Tasks', blurb: 'Add action items to Things on this Mac.', app: true, color: '2473E7', monogram: 'T' },
   { id: 'reminders', name: 'Apple Reminders', category: 'Tasks', blurb: 'Add action items to Reminders on this Mac.', app: true, color: 'F29B38', monogram: 'R' },
-  { id: 'zoom', name: 'Zoom', category: 'Meetings', blurb: call, logo: zoom },
-  { id: 'meet', name: 'Google Meet', category: 'Meetings', blurb: call, logo: googleMeet },
-  { id: 'teams', name: 'Microsoft Teams', category: 'Meetings', blurb: call, logo: teams },
+  { id: 'zoom', name: 'Zoom', category: 'Meetings', blurb: call, logo: zoom, detects: true },
+  { id: 'meet', name: 'Google Meet', category: 'Meetings', blurb: call, logo: googleMeet, detects: true },
+  { id: 'teams', name: 'Microsoft Teams', category: 'Meetings', blurb: call, logo: teams, detects: true },
   { id: 'gcal', name: 'Google Calendar', category: 'Calendars', blurb: events, logo: googleCalendar },
   { id: 'outlook', name: 'Outlook Calendar', category: 'Calendars', blurb: events, logo: outlook },
   { id: 'ical', name: 'Apple Calendar', category: 'Calendars', blurb: events, app: true, color: 'FF3B30', monogram: '31' },

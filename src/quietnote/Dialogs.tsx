@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { validProjectName } from './model';
+import { timeLabel, validProjectName, type CalendarEvent } from './model';
 export function Modal({ title, onEscape, children, className = '' }: { title: ReactNode; onEscape?: () => void; children: ReactNode; className?: string }) {
   const panel = useRef<HTMLDivElement>(null);
   const heading = useId();
@@ -48,22 +48,39 @@ export function NewProjectDialog({ existing, onCreate, onClose }: { existing: st
     </form>
   </Modal>;
 }
-/** With `canRecord`, the primary action creates the meeting and starts recording it: that press is the explicit start. */
-export function NewMeetingDialog({ projects, project: initial, canRecord = false, onCreate, onClose }: { projects: string[]; project: string; canRecord?: boolean; onCreate: (title: string, project: string, record: boolean) => Promise<void>; onClose: () => void }) {
+/** With `canRecord`, the primary action creates the meeting and starts recording it: that press is the explicit start.
+ * With a calendar `event` (the one happening now, or the tray's), the title, project and who's invited come from
+ * it until the user types over them or chooses not to use it. It may arrive after the dialog opens. */
+export function NewMeetingDialog({ projects, project: initial, canRecord = false, event = null, projectFor, onCreate, onClose }: {
+  projects: string[]; project: string; canRecord?: boolean; event?: CalendarEvent | null; projectFor?: (event: CalendarEvent) => string;
+  onCreate: (title: string, project: string, record: boolean, event: CalendarEvent | null) => Promise<void>; onClose: () => void;
+}) {
   const id = useId();
   const [title, setTitle] = useState('');
   const [project, setProject] = useState(projects.includes(initial) ? initial : projects[0]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<'' | 'create' | 'record'>('');
+  const [touched, setTouched] = useState({ title: false, project: false });
+  const [using, setUsing] = useState(true);
+  const from = using ? event : null;
+  useEffect(() => {
+    if (!event) return;
+    if (!touched.title) setTitle(event.title);
+    const suggested = projectFor?.(event);
+    if (!touched.project && suggested && projects.includes(suggested)) setProject(suggested);
+    // Only when the event itself arrives or changes; later edits are the user's.
+  }, [event?.id]);
   async function submit(record: boolean) {
     setBusy(record ? 'record' : 'create'); setError('');
-    try { await onCreate(title.trim() || 'Untitled meeting', project, record); }
+    try { await onCreate(title.trim() || 'Untitled meeting', project, record, from); }
     catch (e) { setError(`Couldn’t create the meeting. ${String(e).replace(/^Error: /, '')}`); setBusy(''); }
   }
+  const invited = from ? from.attendees.filter(a => !a.me).length : 0;
   return <Modal title="New meeting" onEscape={busy ? undefined : onClose}>
     <form onSubmit={e => { e.preventDefault(); void submit(canRecord); }}>
-      <div className="field"><label htmlFor={`${id}-title`}>Meeting title</label><input id={`${id}-title`} value={title} maxLength={160} placeholder="Untitled meeting" onChange={e => setTitle(e.target.value)} /></div>
-      <div className="field"><label htmlFor={`${id}-project`}>Project</label><select id={`${id}-project`} value={project} onChange={e => setProject(e.target.value)}>{projects.map(p => <option key={p}>{p}</option>)}</select></div>
+      <div className="field"><label htmlFor={`${id}-title`}>Meeting title</label><input id={`${id}-title`} value={title} maxLength={160} placeholder="Untitled meeting" onChange={e => { setTitle(e.target.value); setTouched(t => ({ ...t, title: true })); }} />
+        {from && <p className="subtle from-calendar">From your calendar · {timeLabel(new Date(from.startMs).toISOString())}–{timeLabel(new Date(from.endMs).toISOString())}{invited > 0 && ` · ${invited} ${invited === 1 ? 'other person' : 'others'}`} <button type="button" className="text-button" onClick={() => { setUsing(false); if (!touched.title) setTitle(''); }}>Don’t use</button></p>}</div>
+      <div className="field"><label htmlFor={`${id}-project`}>Project</label><select id={`${id}-project`} value={project} onChange={e => { setProject(e.target.value); setTouched(t => ({ ...t, project: true })); }}>{projects.map(p => <option key={p}>{p}</option>)}</select></div>
       {error && <p className="field-error" role="alert">{error}</p>}
       <div className="modal-actions"><button type="button" className="secondary" disabled={Boolean(busy)} onClick={onClose}>Cancel</button>
         {canRecord && <button type="button" className="secondary" disabled={Boolean(busy)} onClick={() => void submit(false)}>{busy === 'create' ? 'Creating…' : 'Create meeting'}</button>}

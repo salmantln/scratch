@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState, WhisperVadContext, WhisperVadContextParams, WhisperVadParams};
 
 pub const MODEL: &str = "ggml-large-v3-turbo-q5_0.bin";
-const VAD: &str = "ggml-silero-v6.2.0.bin";
+pub(crate) const VAD: &str = "ggml-silero-v6.2.0.bin";
 /// Name, size and SHA-256 of each bundled model; the same pins as `scripts/fetch-models.mjs`.
 const MODELS: [(&str, u64, &str); 2] = [
     (MODEL, 574_041_195, "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"),
@@ -25,7 +25,7 @@ static VERIFIED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 #[serde(rename_all = "camelCase")]
 pub enum ModelStatus { Ready, Missing, Damaged }
 
-fn locate(app: &AppHandle, name: &str) -> Option<PathBuf> {
+pub(crate) fn locate(app: &AppHandle, name: &str) -> Option<PathBuf> {
     let bundled = app.path().resolve(format!("models/{name}"), BaseDirectory::Resource).ok().filter(|p| p.exists());
     // `tauri dev` runs from the build directory; use the fetched copy directly.
     let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/models").join(name);
@@ -56,7 +56,7 @@ fn sha256(path: &Path) -> std::io::Result<String> {
 }
 /// The model's path after a full checksum (once per session), so a damaged file fails clearly
 /// instead of producing a wrong transcript.
-fn verified(path: Option<PathBuf>, name: &str, size: u64, hash: &str) -> Result<PathBuf, String> {
+pub(crate) fn verified(path: Option<PathBuf>, name: &str, size: u64, hash: &str) -> Result<PathBuf, String> {
     let path = path.ok_or_else(|| format!("The speech model {name} is missing from this installation of QuietNote. Reinstall QuietNote to transcribe."))?;
     if VERIFIED.lock().is_ok_and(|v| v.contains(&path)) { return Ok(path); }
     let damaged = || format!("The speech model {name} in this installation is damaged. Reinstall QuietNote to transcribe.");
@@ -65,7 +65,7 @@ fn verified(path: Option<PathBuf>, name: &str, size: u64, hash: &str) -> Result<
     if let Ok(mut v) = VERIFIED.lock() { v.push(path.clone()); }
     Ok(path)
 }
-fn samples(path: &Path) -> Result<Vec<f32>, String> {
+pub(crate) fn samples(path: &Path) -> Result<Vec<f32>, String> {
     let reader = hound::WavReader::open(path).map_err(|e| format!("Couldn’t read {}: {e}", path.display()))?;
     if reader.spec().sample_rate != RATE || reader.spec().channels != 1 { return Err(format!("{} isn’t 16 kHz mono audio", path.display())); }
     // A truncated final sample (from an abrupt exit) ends the track rather than failing it.
@@ -77,15 +77,86 @@ fn is_annotation(text: &str) -> bool {
     t.is_empty() || (t.starts_with('[') && t.ends_with(']')) || (t.starts_with('(') && t.ends_with(')')) || (t.starts_with('*') && t.ends_with('*'))
 }
 
-/// Transcribes the mic and system tracks in `audio`. `progress` gets 0–100.
+/// Transcribes the mic and system tracks in `audio` from sample `from` on, timed from `offset_ms` (where
+/// that sample is in the meeting). `progress` gets 0–100.
 ///
 /// No initial prompt is given: in testing, Whisper repeated prompt text (a meeting's name) as if
 /// someone had said it, which would put words in the transcript that nobody spoke.
-pub fn run(app: &AppHandle, audio: &Path, progress: Arc<dyn Fn(u8) + Send + Sync>) -> Result<[Vec<Piece>; 2], String> {
+pub fn run(app: &AppHandle, audio: &Path, from: u64, offset_ms: u64, progress: Arc<dyn Fn(u8) + Send + Sync>) -> Result<[Vec<Piece>; 2], String> {
+    let (model, vad) = models(app)?;
+    let mut tracks = recognize(&model, &vad, audio, from as usize, progress)?;
+    for piece in tracks.iter_mut().flatten() { piece.start_ms += offset_ms; piece.end_ms += offset_ms; }
+    Ok(tracks)
+}
+fn models(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
     let [(model, model_size, model_hash), (vad, vad_size, vad_hash)] = MODELS;
-    let model = verified(locate(app, model), model, model_size, model_hash)?;
-    let vad = verified(locate(app, vad), vad, vad_size, vad_hash)?;
-    recognize(&model, &vad, audio, progress)
+    Ok((verified(locate(app, model), model, model_size, model_hash)?, verified(locate(app, vad), vad, vad_size, vad_hash)?))
+}
+
+/// The speech detector, kept while a recording runs, for the live transcript.
+#[cfg(target_os = "macos")]
+pub struct Detector(WhisperVadContext);
+#[cfg(target_os = "macos")]
+impl Detector {
+    pub fn load(app: &AppHandle) -> Result<Detector, String> {
+        let (vad, size, hash) = MODELS[1];
+        Detector::open(&verified(locate(app, vad), vad, size, hash)?)
+    }
+    pub(crate) fn open(vad: &Path) -> Result<Detector, String> {
+        WhisperVadContext::new(&vad.to_string_lossy(), WhisperVadContextParams::default()).map(Detector).map_err(|e| e.to_string())
+    }
+    /// Where there's speech in `audio`, in ms.
+    pub fn speech(&mut self, audio: &[f32]) -> Result<Vec<(u64, u64)>, String> { speech(&mut self.0, audio) }
+}
+/// The Whisper model, loaded once and kept while a recording runs, for the live transcript. It
+/// transcribes the same way as the full pass, a chunk of speech at a time. Dropping it frees the
+/// model's memory.
+#[cfg(target_os = "macos")]
+pub struct Engine { _context: WhisperContext, state: WhisperState }
+/// The live transcript shares the computer with the call, so it uses fewer threads than the full pass.
+#[cfg(target_os = "macos")]
+const LIVE_THREADS: i32 = 4;
+#[cfg(target_os = "macos")]
+impl Engine {
+    pub fn load(app: &AppHandle) -> Result<Engine, String> {
+        let (model, size, hash) = MODELS[0];
+        Engine::open(&verified(locate(app, model), model, size, hash)?)
+    }
+    pub(crate) fn open(model: &Path) -> Result<Engine, String> {
+        whisper_rs::install_logging_hooks();
+        let context = load(model)?;
+        let state = context.create_state().map_err(|e| e.to_string())?;
+        Ok(Engine { _context: context, state })
+    }
+    pub fn language(&mut self, audio: &[f32], chunk: (u64, u64)) -> Option<&'static str> { language(&mut self.state, audio, chunk, LIVE_THREADS) }
+    /// One chunk of `audio` as pieces timed in ms from the start of `audio`.
+    pub fn pieces(&mut self, audio: &[f32], chunk: (u64, u64), speech: &[(u64, u64)], language: &str) -> Result<Vec<Piece>, String> {
+        let mut pieces = transcribe_span(&mut self.state, audio, chunk, language, LIVE_THREADS)?;
+        align(&mut pieces, speech);
+        mark_pauses(&mut pieces, speech);
+        Ok(pieces)
+    }
+}
+fn speech(detector: &mut WhisperVadContext, audio: &[f32]) -> Result<Vec<(u64, u64)>, String> {
+    Ok(detector.segments_from_samples(WhisperVadParams::new(), audio).map_err(|e| e.to_string())?
+        .map(|s| ((s.start.max(0.0) * 10.0) as u64, (s.end.max(0.0) * 10.0) as u64)).collect())
+}
+pub(crate) fn span(audio: &[f32], (start, end): (u64, u64)) -> &[f32] { &audio[(start as usize * 16).min(audio.len())..(end as usize * 16).min(audio.len())] }
+fn language(state: &mut WhisperState, audio: &[f32], chunk: (u64, u64), threads: i32) -> Option<&'static str> {
+    state.pcm_to_mel(span(audio, chunk), threads as usize).ok()?;
+    state.lang_detect(0, threads as usize).ok().and_then(|(id, _)| whisper_rs::get_lang_str(id))
+}
+/// One chunk of a track as pieces timed on the track. A decoder loop gets one more try with beam
+/// search; if it persists, only the repeats are removed.
+fn transcribe_span(state: &mut WhisperState, audio: &[f32], chunk: (u64, u64), language: &str, threads: i32) -> Result<Vec<Piece>, String> {
+    let looped = |sentences: &[(u64, u64, String)]| find_loop(&sentences.iter().flat_map(|(_, _, t)| t.split_whitespace()).collect::<Vec<_>>()).is_some();
+    let mut sentences = transcribe_chunk(state, span(audio, chunk), SamplingStrategy::Greedy { best_of: 1 }, language, threads)?;
+    if looped(&sentences) {
+        sentences = transcribe_chunk(state, span(audio, chunk), SamplingStrategy::BeamSearch { beam_size: 5, patience: -1.0 }, language, threads)?;
+    }
+    Ok(drop_repeats(sentences).into_iter().map(|(start, end, text)| Piece {
+        start_ms: chunk.0 + start, end_ms: (chunk.0 + end).min(chunk.1), text: collapse_loops(&text), pause_before: false, speaker: None,
+    }).collect())
 }
 fn load(model: &Path) -> Result<WhisperContext, String> {
     let failed = |e: String| format!("Couldn’t load the speech model: {e}");
@@ -102,7 +173,7 @@ fn load(model: &Path) -> Result<WhisperContext, String> {
 /// exact timestamps and keeps one misheard stretch from derailing the rest of the recording.
 /// A chunk only ends at a real pause, so a word is never cut in two ("the 14" | "th of October"),
 /// stretching up to Whisper's full 30-second window if it has to.
-fn chunks(speech: &[(u64, u64)], max_ms: u64) -> Vec<(u64, u64)> {
+pub fn chunks(speech: &[(u64, u64)], max_ms: u64) -> Vec<(u64, u64)> {
     let mut out: Vec<(u64, u64)> = Vec::new();
     for &(start, end) in speech {
         match out.last_mut() {
@@ -149,7 +220,7 @@ fn drop_repeats(sentences: Vec<(u64, u64, String)>) -> Vec<(u64, u64, String)> {
 }
 /// Whisper can time the first word after a silence at the end of that silence. Each piece starts at the
 /// first detected speech it overlaps by more than a moment, so it lands where the talking began.
-fn align(pieces: &mut [Piece], speech: &[(u64, u64)]) {
+pub(crate) fn align(pieces: &mut [Piece], speech: &[(u64, u64)]) {
     for piece in pieces {
         let overlap = |(start, end): &(u64, u64)| end.min(&piece.end_ms).saturating_sub(*start.max(&piece.start_ms));
         if let Some(&(start, _)) = speech.iter().find(|r| overlap(r) >= 300) {
@@ -158,7 +229,7 @@ fn align(pieces: &mut [Piece], speech: &[(u64, u64)]) {
     }
 }
 /// Marks pieces that begin a speech region following at least half a second of silence.
-fn mark_pauses(pieces: &mut [Piece], speech: &[(u64, u64)]) {
+pub(crate) fn mark_pauses(pieces: &mut [Piece], speech: &[(u64, u64)]) {
     for piece in pieces {
         piece.pause_before = speech.windows(2).any(|w| w[1].0 >= w[0].1 + 500 && piece.start_ms.abs_diff(w[1].0) <= 300);
     }
@@ -212,7 +283,7 @@ fn transcribe_chunk(state: &mut WhisperState, audio: &[f32], strategy: SamplingS
     }
     Ok(out)
 }
-fn recognize(model: &Path, vad: &Path, audio: &Path, progress: Arc<dyn Fn(u8) + Send + Sync>) -> Result<[Vec<Piece>; 2], String> {
+pub(crate) fn recognize(model: &Path, vad: &Path, audio: &Path, from: usize, progress: Arc<dyn Fn(u8) + Send + Sync>) -> Result<[Vec<Piece>; 2], String> {
     whisper_rs::install_logging_hooks();
     let context = load(model)?;
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8) as i32;
@@ -220,30 +291,19 @@ fn recognize(model: &Path, vad: &Path, audio: &Path, progress: Arc<dyn Fn(u8) + 
     for (index, name) in TRACKS.iter().enumerate() {
         let path = audio.join(name);
         if !path.exists() { continue; }
-        let audio = samples(&path)?;
+        let mut audio = samples(&path)?;
+        audio.drain(..from.min(audio.len()));
         // Nothing to hear: a denied permission or an empty call leaves only digital silence.
         if audio.len() < RATE as usize / 2 || audio.iter().all(|s| *s == 0.0) { progress(((index + 1) * 50) as u8); continue; }
         let mut detector = WhisperVadContext::new(&vad.to_string_lossy(), WhisperVadContextParams::default()).map_err(|e| e.to_string())?;
-        let speech: Vec<(u64, u64)> = detector.segments_from_samples(WhisperVadParams::new(), &audio).map_err(|e| e.to_string())?
-            .map(|s| ((s.start.max(0.0) * 10.0) as u64, (s.end.max(0.0) * 10.0) as u64)).collect();
-        let slice = |(start, end): (u64, u64)| &audio[(start as usize * 16).min(audio.len())..(end as usize * 16).min(audio.len())];
+        let speech = speech(&mut detector, &audio)?;
         let chunks = chunks(&speech, 25_000);
         let mut state = context.create_state().map_err(|e| e.to_string())?;
         // The language is detected once, from the longest stretch of speech: a short chunk ("Okay.")
         // could be mistaken for another language.
-        let language = chunks.iter().max_by_key(|(s, e)| e - s)
-            .and_then(|&chunk| { state.pcm_to_mel(slice(chunk), threads as usize).ok()?; state.lang_detect(0, threads as usize).ok() })
-            .and_then(|(id, _)| whisper_rs::get_lang_str(id)).unwrap_or("auto");
+        let language = chunks.iter().max_by_key(|(s, e)| e - s).and_then(|&chunk| language(&mut state, &audio, chunk, threads)).unwrap_or("auto");
         for (done, &chunk) in chunks.iter().enumerate() {
-            let looped = |sentences: &[(u64, u64, String)]| find_loop(&sentences.iter().flat_map(|(_, _, t)| t.split_whitespace()).collect::<Vec<_>>()).is_some();
-            let mut sentences = transcribe_chunk(&mut state, slice(chunk), SamplingStrategy::Greedy { best_of: 1 }, language, threads)?;
-            // A loop gets one more try with beam search; if it persists, only the repeats are removed.
-            if looped(&sentences) {
-                sentences = transcribe_chunk(&mut state, slice(chunk), SamplingStrategy::BeamSearch { beam_size: 5, patience: -1.0 }, language, threads)?;
-            }
-            tracks[index].extend(drop_repeats(sentences).into_iter().map(|(start, end, text)| Piece {
-                start_ms: chunk.0 + start, end_ms: (chunk.0 + end).min(chunk.1), text: collapse_loops(&text), pause_before: false,
-            }));
+            tracks[index].extend(transcribe_span(&mut state, &audio, chunk, language, threads)?);
             progress((index * 50 + (done + 1) * 50 / chunks.len()) as u8);
         }
         align(&mut tracks[index], &speech);
@@ -261,7 +321,7 @@ mod tests {
         assert_eq!(chunks(&[(1000, 3000), (4000, 6000), (30_000, 31_000), (31_500, 60_000)], 25_000), vec![(800, 6200), (29_800, 31_200), (31_300, 60_200)]);
         // No cut at a 100 ms dip inside a word; the chunk runs on toward 30 s instead.
         assert_eq!(chunks(&[(0, 24_000), (24_100, 27_000), (28_000, 29_000)], 25_000), vec![(0, 27_200), (27_800, 29_200)]);
-        let piece = |start, end| Piece { start_ms: start, end_ms: end, text: "Sounds good".into(), pause_before: false };
+        let piece = |start, end| Piece { start_ms: start, end_ms: end, text: "Sounds good".into(), ..Default::default() };
         let speech = [(12100, 12700), (12900, 14000), (14800, 17400)];
         let mut pieces = vec![piece(12100, 12700), piece(12950, 14000), piece(14700, 17400)];
         mark_pauses(&mut pieces, &speech);
@@ -301,7 +361,7 @@ mod tests {
         let audio = PathBuf::from(std::env::var("QUIETNOTE_TEST_AUDIO").expect("QUIETNOTE_TEST_AUDIO"));
         let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/models");
         let started = std::time::Instant::now();
-        let [mic, system] = recognize(&models.join(MODEL), &models.join(VAD), &audio, Arc::new(|_| {})).unwrap();
+        let [mic, system] = recognize(&models.join(MODEL), &models.join(VAD), &audio, 0, Arc::new(|_| {})).unwrap();
         if std::env::var("QUIETNOTE_TEST_PIECES").is_ok() {
             for (name, pieces) in [("mic", &mic), ("system", &system)] { for p in pieces { println!("{name} {:>6}-{:>6} {}", p.start_ms, p.end_ms, p.text); } }
         }

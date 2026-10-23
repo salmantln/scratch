@@ -38,6 +38,8 @@ Use a signed build (`npm run tauri build`) for anything involving permissions. D
 | Change the system output device mid-call: call audio keeps recording (the global tap follows all output) | ☐ |
 | Unplug the only external mic: notice shown, no silent dead track | ☐ |
 | Mac sleeps mid-recording, then wakes: a notice is shown and recording resumes or clearly says why not | ☐ |
+| Choose AirPods in the recorder's microphone menu mid-call: "Microphone changed to AirPods…", recording continues, and the next recording uses them too | ✓ auto (UI) ☐ (real) |
+| The chosen microphone is disconnected: "… isn't available, so the microphone is …" and the default is used; reconnecting it switches back | ☐ |
 
 ### Calls
 | Check | Status |
@@ -46,6 +48,20 @@ Use a signed build (`npm run tauri build`) for anything involving permissions. D
 | Google Meet (browser) | ☐ |
 | Microsoft Teams | ☐ |
 | No bot or attendee appears in any call | ☐ |
+| Joining a Zoom call shows "Meeting detected · Zoom" top right within ~5 s, without taking focus from Zoom | ☐ |
+| A Google Meet call in Chrome shows "Meeting detected · Chrome" (also Safari, Arc) | ☐ |
+| The panel shows over a full-screen call | ☐ |
+| Start recording on the panel opens QuietNote on a new "Zoom call" meeting, recording, on Notes | ☐ |
+| …as a narrow column at the right of the call's screen (just the meeting, recorder and live transcript), not the whole app | ✓ auto (layout) ☐ (real window) |
+| Open full window (↗) puts the window back where and how big it was; so does ⌘, / ⌘K or a tray action | ✓ auto (layout) ☐ (real window) |
+| The compact column on a second screen, and when the window was full screen before | ☐ |
+| Leaving the call hides the panel; dismissing it keeps it away until the next call | ☐ |
+| Don't notify for Chrome stops Chrome prompts; Settings → Privacy → Notify again brings them back | ☐ |
+| Nothing is offered while QuietNote is recording, or after stopping mid-call | ☐ |
+| Dictation or Voice Memos using the mic never show the panel | ☐ |
+| With "Recognize meetings in browsers" on: turning it on shows macOS's Accessibility prompt; until allowed, Settings says so and every browser is still offered | ✓ auto (UI) ☐ (real prompt) |
+| …once allowed: a Meet tab in Chrome (also in the background, and in Safari and Arc) shows "Meeting detected · Google Meet"; a browser using the mic with no meeting open (a dictation site) shows nothing | ✓ live 2026-10-23 (Chrome tabs read, no meeting open) ☐ (real Meet) |
+| Speaker names from the call app: not built. Run `call_window_live` with `QUIETNOTE_AX_DEPTH=12` during a test call (it prints every name on screen, so not in a real meeting) to see how Zoom, Teams and Meet show who's speaking | ☐ |
 
 ### Recording state and tray
 | Check | Status |
@@ -56,6 +72,17 @@ Use a signed build (`npm run tauri build`) for anything involving permissions. D
 | Stop from the tray with the window hidden; reopen and see Transcribing, then the transcript | ☐ |
 | A second meeting can't start while one records (the button is disabled with a reason) | ✓ auto |
 | Only one window, one tray icon | ☐ |
+| The recorder stays pinned to the bottom of the meeting while notes grow longer than the window | ✓ auto |
+| Pause: the clock stops in the window and the tray (❙❙), macOS's microphone indicator goes off, and nothing is recorded until Resume | ✓ auto (UI, clock) ☐ (mic indicator) |
+| Resume after a pause: both tracks continue from the same moment, and the transcript has no gap or overlap at the pause | ✓ auto (files) ☐ (real call) |
+| Pause and Resume from the tray, with the window hidden | ☐ |
+| Quit or crash while paused: the next launch recovers and transcribes everything recorded before the pause | ☐ |
+| Close the lid (no external display) mid-recording: it's paused before the Mac sleeps, with "Paused because the Mac went to sleep" in the recorder, and it waits for Resume after waking; with an external display it keeps recording | ☐ |
+| Music playing in Music, Spotify or a browser pauses when recording starts or resumes (Settings → "Pause music when recording starts"), and nothing starts playing afterwards | ✓ live 2026-10-23 (the pause command is accepted on macOS 26.6) ☐ (with music playing) |
+| Copy message (beside "Let everyone know you're recording") copies the consent message; pasted into Zoom, Meet and Teams chat it reads correctly | ✓ auto (copy) ☐ (pasted) |
+| Leave a Zoom or Meet call while recording: within about 6 s the call panel (also with QuietNote's window hidden), the recorder and the tray show "The Zoom call ended. Recording stops in 0:59" with Keep recording; it stops a minute later once nobody's talking, and Keep recording cancels it | ✓ auto (UI, countdown logic) ☐ (real call) |
+| Mute yourself in Zoom, Meet and Teams while recording: that alone never counts as the call ending | ☐ |
+| Leave a recording running in silence for 15 minutes: a 2-minute countdown starts, and speaking cancels it | ✓ auto (logic) ☐ (real) |
 
 ### Quit, crash, recovery
 | Check | Status |
@@ -70,9 +97,50 @@ Use a signed build (`npm run tauri build`) for anything involving permissions. D
 |---|---|
 | 30+ minute call: timer stable, audio valid, transcription completes, UI responsive | ✓ live 60-min recorder soak, 60-min synthetic transcription (see PERFORMANCE.md) ☐ real call |
 | Clean is the default; Verbatim shows the fillers; switching changes nothing on disk | ✓ auto |
+| A long stretch of talking reads as paragraphs of about 15 s, each with its own time; with only one side speaking there are no speaker labels | ✓ auto |
 | Transcription failure (e.g. remove the model from the app bundle): "Transcription couldn't finish. Your recording is still saved", reason under Details, audio kept, Retry transcription | ✓ auto (UI, logic) ☐ (real) |
 | Delete audio after transcribing on: audio is gone after success; after a failure it's still there | ✓ auto |
 | Disk nearly full: Start is refused below 1 GB; recording stops cleanly below 150 MB | ✓ auto (thresholds) ☐ (real) |
+| On speakers, the others' words aren't transcribed as yours, and talking over them keeps your words; with "Remove call audio from your microphone" off, mic.wav is the raw microphone | ✓ auto (synthetic), ✓ live 2026-10-23 (real voice, simulated room; see PERFORMANCE) ☐ (real call on speakers) |
+| With headphones, your voice in mic.wav sounds the same with echo cancellation on as off | ☐ |
+| A call with three or more others reads "Speaker 1", "Speaker 2"… in the order they first spoke, and one other person stays "Others"; "Tell the others apart" off keeps "Others" | ✓ auto (labelling), ✓ live 2026-10-23 (synthetic four-voice call) ☐ (real people) |
+| Recording more of a meeting with Speaker 1 and 2: new voices continue from Speaker 3 | ✓ auto ☐ (real) |
+
+### Live transcript (macOS)
+| Check | Status |
+|---|---|
+| Words appear in the recorder a few seconds after each sentence ends, You on the right and Others on the left; dots show while someone talks | ✓ auto (UI); ✓ live 2026-09-29 (real recordings replayed, see PERFORMANCE) ☐ (real call) |
+| Starting a recording isn't delayed by loading the model ("Starting the live transcript…" shows meanwhile) | ☐ |
+| After Stop, the Transcript tab keeps the draft (labelled) until the full transcript replaces it | ✓ auto |
+| Settings → Privacy → "Show the transcript while recording" off: the next recording has no live transcript and uses no extra memory | ☐ |
+| Activity Monitor during a 30-minute call with the live transcript on: memory about 1 GB more than without; the call stays smooth | ☐ |
+| An English meeting switches to Parakeet within the first minute: words then appear about a second after they're said, the sentence being spoken updates as it grows, and memory drops by several hundred MB | ✓ live 2026-10-23 (real recording replayed) ☐ (real call) |
+| A meeting in another language stays with Whisper | ☐ |
+
+### Notes, last time and enhancing (any platform)
+| Check | Status |
+|---|---|
+| The next "Weekly sync" shows the last one's open action items and decisions above its notes; ticking one there ticks it in the last meeting's file | ✓ auto |
+| Enhance notes with Claude and with an Ollama model: the confirm says what's sent, the template matches the title, the preview's lines quote your notes or the transcript, and Use as summary writes headed sections without touching Notes | ✓ auto (UI, grounding) ☐ (a real model) |
+| Edit templates opens `.templates` with an example; a template added there appears in the picker, and one named like a built-in replaces it | ✓ auto (parsing) ☐ (real folder) |
+
+### Calendar, People and names
+| Check | Status |
+|---|---|
+| Settings → Privacy → Use your calendar shows macOS's Calendar prompt; denied says so with Open System Settings; until it's on, nothing calendar shows | ✓ auto (UI) ☐ (real prompt) |
+| With Google and Outlook accounts added to macOS: Home's Up next and the menu bar's Next line show today's meetings (not all-day or declined ones), and change within a minute of the calendar changing | ☐ |
+| Prepare notes makes the meeting with the event's title, attendees and the series' project, without recording; New meeting during an event fills in from it; a call recorded from the panel is named after the event | ✓ auto ☐ (real calendar) |
+| Next week's meeting of a series shows this week's open items (Last time), even when renamed | ✓ auto (logic) ☐ (real series) |
+| People lists invited people grouped by company, not by gmail.com or your own domain; a person's page shows their meetings and the items they own | ✓ auto |
+| Renaming a title or a voice changes meeting.md / transcript.md and nothing else; naming suggestions cite the line and send the invited names only when asked | ✓ auto (UI, grounding) ☐ (a real model) |
+| `quietnote mcp` added to Claude Desktop and Claude Code: listing, searching and reading a meeting work, and nothing can be changed | ✓ live 2026-10-23 (stdio round trip on this Mac's archive) ☐ (in Claude Desktop) |
+
+### Recording more of a finished meeting
+| Check | Status |
+|---|---|
+| Resume recording on a finished meeting: the clock carries on, and after Stop the new part follows the earlier transcript with continuing times | ✓ auto (UI, transcript merge, recovery) ☐ (real) |
+| With "Delete audio after transcribing" on: resuming records into new files and the earlier transcript is kept | ☐ |
+| A meeting whose transcript was typed, not recorded, refuses to record more instead of replacing it | ☐ |
 
 ## Windows (pending: nothing below has been run on Windows)
 Everything above applies, with these differences. See [WINDOWS.md](WINDOWS.md) for the known risks.

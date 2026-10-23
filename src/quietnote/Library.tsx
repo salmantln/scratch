@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from 'react';
 import { Icon } from './Icon';
-import { track } from './Capture';
-import { actionItems, dayGroup, durationLabel, shortDate, statusLabel, timeLabel, type Meeting, type MeetingTab } from './model';
+import { othersWaiting, track } from './Capture';
+import { actionItems, dayGroup, durationLabel, shortDate, statusLabel, timeLabel, type CalendarEvent, type Meeting, type MeetingTab } from './model';
 import { isExample } from './seeds';
 import * as storage from './storage';
 
@@ -33,7 +33,7 @@ function CaptureCard({ live, onNewMeeting, onOpen }: { live: storage.CaptureStat
   const denied = live.available && !recording && live.microphone === 'denied';
   const attention = denied || Boolean(recording?.problem) || (live.available && live.model !== 'ready');
   const title = !live.available ? (storage.desktop ? 'Recording isn’t available on this platform yet.' : 'Recording needs the desktop app.')
-    : recording ? `Recording “${recording.title}”`
+    : recording ? `${recording.resumedAt === null ? 'Paused' : 'Recording'} “${recording.title}”`
     : denied ? 'Microphone access is off'
     : `Ready to record on this ${storage.device}`;
   const detail = !live.available ? 'You can still create meetings and take notes. Capture here is a prototype and records nothing.'
@@ -42,11 +42,11 @@ function CaptureCard({ live, onNewMeeting, onOpen }: { live: storage.CaptureStat
     : live.microphone === 'undetermined' ? 'The first time you record, QuietNote asks for access to your microphone and system audio. Nothing joins the call.'
     : 'Records your microphone and the call audio. Nothing joins the call.';
   return <section className={`capture-card ${attention ? 'attention' : ''} ${live.available ? '' : 'unavailable'}`} aria-label="Recording">
-    <i className={recording ? 'live-dot' : 'ready-dot'} aria-hidden="true" />
+    <i className={recording ? recording.resumedAt === null ? 'paused-dot' : 'live-dot' : 'ready-dot'} aria-hidden="true" />
     <div>
       <strong>{title}</strong>
       <p>{detail}</p>
-      {recording && <p>{track('Mic', recording.mic)} · {track('Call audio', recording.system)}</p>}
+      {recording && recording.resumedAt !== null && <p>{track('Mic', recording.mic)} · {track('Call audio', recording.system, othersWaiting)}</p>}
       {recording?.problem && <p className="capture-card-problem">{recording.problem}</p>}
       {live.available && !recording && live.model !== 'ready' && <p className="capture-card-problem">Transcription is unavailable: the speech model is {live.model}. You can still record.</p>}
       {transcribing && <p className="capture-card-job">Transcribing “{transcribing.title}” on this {storage.device}… {transcribing.percent}%{queued.length > 0 && ` · ${queued.length} more waiting`}<button className="text-button" onClick={() => onOpen(transcribing.meetingId)}>Open meeting</button></p>}
@@ -58,14 +58,34 @@ function CaptureCard({ live, onNewMeeting, onOpen }: { live: storage.CaptureStat
     </div>
   </section>;
 }
+/** Today's meetings still to come or going on, from the calendar: their notes are one press away, and recording
+ * still starts only from the meeting. */
+function UpNext({ events, meetings, onOpen, onPrepare }: { events: CalendarEvent[]; meetings: Meeting[]; onOpen: (id: string, tab?: MeetingTab) => void; onPrepare: (event: CalendarEvent) => void }) {
+  const today = new Date().toDateString();
+  const shown = events.filter(e => e.endMs > Date.now() && new Date(e.startMs).toDateString() === today).slice(0, 3);
+  if (!shown.length) return null;
+  const time = (ms: number) => timeLabel(new Date(ms).toISOString());
+  return <section className="home-section" aria-labelledby="home-next">
+    <h2 id="home-next">Up next</h2>
+    <ul className="up-next">{shown.map(e => {
+      const notes = meetings.find(m => m.metadata.calendarEvent === e.id);
+      const others = e.attendees.filter(a => !a.me);
+      return <li key={e.id}>
+        <span className="up-next-time">{time(e.startMs)}–{time(e.endMs)}</span>
+        <span className="up-next-title">{e.title}{others.length > 0 && <span className="subtle"> · {others.length === 1 ? others[0].name : `${others.length} others`}</span>}</span>
+        {notes ? <button className="text-button" onClick={() => onOpen(notes.metadata.id, 'Notes')}>Open notes</button> : <button className="text-button" onClick={() => onPrepare(e)}>Prepare notes</button>}
+      </li>;
+    })}</ul>
+  </section>;
+}
 type HomeProps = {
-  meetings: Meeting[]; live: storage.CaptureState; onOpen: (id: string, tab?: MeetingTab) => void; onNewMeeting: () => void;
+  meetings: Meeting[]; live: storage.CaptureState; events: CalendarEvent[]; onPrepare: (event: CalendarEvent) => void; onOpen: (id: string, tab?: MeetingTab) => void; onNewMeeting: () => void;
   onSearch: (text: string) => void; onToggle: (id: string, index: number) => Promise<void>; onAll: () => void;
 };
 const recentCount = 10;
 const itemCount = 6;
 /** Home: whether you can record, what you owe people, and what happened lately. Sections with nothing to show are left out. */
-export function Home({ meetings, live, onOpen, onNewMeeting, onSearch, onToggle, onAll }: HomeProps) {
+export function Home({ meetings, live, events, onPrepare, onOpen, onNewMeeting, onSearch, onToggle, onAll }: HomeProps) {
   // Items ticked here stay listed (struck through) until you leave, so a mistaken tick is easy to undo.
   const [ticked, setTicked] = useState<string[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -77,6 +97,7 @@ export function Home({ meetings, live, onOpen, onNewMeeting, onSearch, onToggle,
   const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
   return <div className="page home-page">
     <header className="page-header"><h1>{today}</h1></header>
+    <UpNext events={events} meetings={meetings} onOpen={onOpen} onPrepare={onPrepare} />
     <CaptureCard live={live} onNewMeeting={onNewMeeting} onOpen={onOpen} />
     {meetings.length > 0 && <label className="search-field home-search"><Icon name="search" size={18} /><input type="search" aria-label="Search meetings" placeholder="Search meetings, decisions and transcripts…" value="" onChange={e => onSearch(e.target.value)} /><kbd aria-hidden="true">⌘K</kbd></label>}
     {items.length > 0 && <section className="home-section" aria-labelledby="home-actions">

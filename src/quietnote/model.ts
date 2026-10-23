@@ -17,7 +17,18 @@ export interface MeetingMetadata {
   interrupted?: boolean;
   /** Why the last transcription failed; the audio is kept for a retry. */
   error?: string | null;
+  /** Set while recording resumed on a finished meeting: where the new part begins (Rust owns it). */
+  resume?: { atMs: number; sample: number } | null;
+  /** The calendar event occurrence the meeting was made from, and its series (a weekly meeting's every week). */
+  calendarEvent?: string;
+  calendarSeries?: string;
+  /** Who was invited, from the calendar. `participants` holds the others' names. */
+  attendees?: Attendee[];
 }
+/** Someone invited, as the calendar says; `me` is the user. */
+export interface Attendee { name: string; email: string; me?: boolean }
+/** One occurrence of a calendar event, read from the Mac's calendars (Rust `calendar`). */
+export interface CalendarEvent { id: string; series: string | null; title: string; startMs: number; endMs: number; attendees: Attendee[]; link: string | null }
 export interface Meeting { metadata: MeetingMetadata; markdown: string; transcript: string }
 export type MeetingTab = 'Summary' | 'Decisions' | 'Action items' | 'Notes' | 'Transcript';
 export const meetingTabs: MeetingTab[] = ['Summary', 'Decisions', 'Action items', 'Notes', 'Transcript'];
@@ -65,6 +76,101 @@ export function actionItems(markdown: string): ActionItem[] {
     return { index, done: /^- \[[xX]\]/.test(line), text: rest.length ? rest.join(' — ') : text, owner: rest.length ? owner : '', ...(match && { link: { label: match[1], url: match[2] } }) };
   });
 }
+/** The project a meeting from `event` belongs in: that of the series' last meeting, else the one where most of
+ * the same people's earlier meetings are, else `fallback`. */
+export function projectFor(event: CalendarEvent, all: Meeting[], fallback: string): string {
+  const latest = [...all].sort((a, b) => b.metadata.date.localeCompare(a.metadata.date));
+  const series = event.series && latest.find(m => m.metadata.calendarSeries === event.series);
+  if (series) return series.metadata.project;
+  const emails = new Set(event.attendees.filter(a => !a.me && a.email).map(a => a.email));
+  const counts = new Map<string, number>();
+  for (const m of latest) if ((m.metadata.attendees ?? []).some(a => !a.me && emails.has(a.email))) counts.set(m.metadata.project, (counts.get(m.metadata.project) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? fallback;
+}
+/** Someone the user meets, from meetings' invites (or names typed as participants): `key` is their email, or
+ * their name without one. `company` is their email's domain, unless it's a personal address or the user's own. */
+export interface Person { key: string; name: string; email: string; company: string; meetingIds: string[]; lastMet: string }
+const personalDomains = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'icloud.com', 'me.com', 'mac.com', 'yahoo.com', 'proton.me', 'protonmail.com', 'aol.com', 'gmx.com']);
+export function people(all: Meeting[]): Person[] {
+  const own = new Set(all.flatMap(m => (m.metadata.attendees ?? []).filter(a => a.me && a.email).map(a => a.email.split('@')[1])));
+  const found = new Map<string, Person>();
+  for (const { metadata } of [...all].sort((a, b) => b.metadata.date.localeCompare(a.metadata.date))) {
+    const invited = metadata.attendees?.length ? metadata.attendees.filter(a => !a.me) : metadata.participants.map(name => ({ name, email: '' }));
+    for (const { name, email } of invited) {
+      const key = (email || name).trim().toLowerCase();
+      if (!key) continue;
+      const domain = email.split('@')[1] ?? '';
+      const person = found.get(key) ?? { key, name: name.trim() || email, email, company: domain && !personalDomains.has(domain) && !own.has(domain) ? domain : '', meetingIds: [], lastMet: metadata.date };
+      if (!person.meetingIds.includes(metadata.id)) person.meetingIds.push(metadata.id);
+      found.set(key, person);
+    }
+  }
+  return [...found.values()].sort((a, b) => b.lastMet.localeCompare(a.lastMet));
+}
+/** Whether an action item's owner ("Maria", "Maria Lopez") is this person. */
+export function owns(person: Person, owner: string): boolean {
+  const o = owner.trim().toLowerCase();
+  const name = person.name.toLowerCase();
+  return Boolean(o) && (o === name || o === name.split(/\s+/)[0] || (Boolean(person.email) && o === person.email));
+}
+/** The meeting file with a new title on its `# ` line. */
+export function retitle(markdown: string, title: string): string {
+  const lines = markdown.split('\n');
+  const at = lines.findIndex(l => l.startsWith('# '));
+  if (at < 0) return `# ${title}\n\n${markdown}`;
+  lines[at] = `# ${title}`;
+  return lines.join('\n');
+}
+/** Whether a title is one QuietNote gave by itself, worth replacing with a real one. */
+export const madeUp = (title: string) => generic.test(title.trim());
+/** Titles QuietNote gives a meeting by itself ("Zoom call"), which don't make meetings a series. */
+const generic = /^(untitled meeting|new meeting|.+ call)$/i;
+/** The meeting before this one, to carry its open action items and decisions into this one: the latest earlier
+ * meeting of the same series (same title) in the project, or else the latest earlier one in the project. Only
+ * worth showing when it left something open, so `null` otherwise. Examples only lead to examples. */
+export function previousMeeting(meeting: Meeting, all: Meeting[], example: (id: string) => boolean): Meeting | null {
+  const { id, project, date, title } = meeting.metadata;
+  const earlier = all.filter(m => m.metadata.id !== id && m.metadata.project === project && m.metadata.date < date && example(m.metadata.id) === example(id))
+    .sort((a, b) => b.metadata.date.localeCompare(a.metadata.date));
+  const calendar = meeting.metadata.calendarSeries && earlier.find(m => m.metadata.calendarSeries === meeting.metadata.calendarSeries);
+  const series = calendar || (generic.test(title.trim()) ? undefined : earlier.find(m => m.metadata.title.trim().toLowerCase() === title.trim().toLowerCase()));
+  const previous = series ?? earlier[0];
+  return previous && (actionItems(previous.markdown).some(a => !a.done) || decisions(previous.markdown).length > 0) ? previous : null;
+}
+/** Enhanced notes as Markdown for the Summary section: a `###` heading per section, a line per point, and the
+ * transcript time after each point that came from it (`[12:04]`). Points from the user's own notes have none. */
+export function notesMarkdown(sections: { heading: string; lines: { text: string; atMs: number | null }[] }[]): string {
+  return sections.map(s => `### ${s.heading}\n${s.lines.map(l => `- ${l.text}${l.atMs === null ? '' : ` [${clock(l.atMs / 1000)}]`}`).join('\n')}`).join('\n\n');
+}
+export type SummaryBlock = { kind: 'heading'; text: string } | { kind: 'paragraph'; text: string } | { kind: 'list'; items: { text: string; at: string | null }[] };
+/** The Summary section as headings, lists and paragraphs, with a list item's trailing `[mm:ss]` as its transcript time. */
+export function summaryBlocks(summary: string): SummaryBlock[] {
+  const blocks: SummaryBlock[] = [];
+  for (const chunk of summary.split(/\n{2,}/)) {
+    let paragraph: string[] = [];
+    const flush = () => { if (paragraph.length) blocks.push({ kind: 'paragraph', text: paragraph.join(' ') }); paragraph = []; };
+    for (const line of chunk.split('\n')) {
+      const heading = line.match(/^#{3,6} (.+)$/);
+      const item = line.match(/^[-*] (.+?)(?: \[(\d{1,2}:\d{2}(?::\d{2})?)\])?$/);
+      if (heading) { flush(); blocks.push({ kind: 'heading', text: heading[1].trim() }); }
+      else if (item) {
+        flush();
+        const last = blocks[blocks.length - 1];
+        const entry = { text: item[1].trim(), at: item[2] ?? null };
+        if (last?.kind === 'list') last.items.push(entry); else blocks.push({ kind: 'list', items: [entry] });
+      } else if (line.trim()) paragraph.push(line.trim());
+    }
+    flush();
+  }
+  return blocks;
+}
+/** The template that fits a meeting's title best, from those available ("Weekly 1:1" → 1:1). */
+/** The template a meeting's title suggests, else the one chosen when setting up (`preferred`), else General. */
+export function templateFor(title: string, names: string[], preferred = ''): string {
+  const fits: [RegExp, string][] = [[/\b1[:-]1\b|one[- ]on[- ]one/i, '1:1'], [/stand-?up/i, 'Standup'], [/sales|demo|discovery|prospect/i, 'Sales call'], [/interview/i, 'User interview'], [/kick-?off/i, 'Project kickoff']];
+  const fit = fits.find(([pattern, name]) => pattern.test(title) && names.includes(name))?.[1];
+  return fit ?? (names.includes(preferred) ? preferred : names.find(n => n === 'General')) ?? names[0] ?? '';
+}
 export function transcriptTurns(transcript: string): TranscriptTurn[] {
   return transcript.split(/^### /m).slice(1).map(chunk => {
     const [heading, ...body] = chunk.trim().split('\n');
@@ -73,7 +179,7 @@ export function transcriptTurns(transcript: string): TranscriptTurn[] {
   });
 }
 export function matchesMeeting(meeting: Meeting, query: string): boolean {
-  const haystack = [meeting.metadata.title, meeting.metadata.project, ...meeting.metadata.tags, ...meeting.metadata.participants, meeting.markdown, meeting.transcript].join(' ').toLowerCase();
+  const haystack = [meeting.metadata.title, meeting.metadata.project, ...meeting.metadata.tags, ...meeting.metadata.participants, ...(meeting.metadata.attendees ?? []).map(a => a.email), meeting.markdown, meeting.transcript].join(' ').toLowerCase();
   return query.trim().toLowerCase().split(/\s+/).every(term => haystack.includes(term));
 }
 export function searchTerms(query: string): string[] { return query.trim().toLowerCase().split(/\s+/).filter(Boolean); }
@@ -121,10 +227,17 @@ export function shortDate(date: string, now = new Date()): string {
 }
 export function timeLabel(date: string): string { return new Date(date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
 /** Elapsed recording time, the same in the window and the tray: `mm:ss`, then `h:mm:ss`. */
+/** How a recording about to stop by itself counts down: the time left, then waiting for quiet (Rust stops it only once nobody's talking). */
+export function stopsIn(stopsAt: string, now: number): string {
+  const left = Math.ceil((Date.parse(stopsAt) - now) / 1000);
+  return left > 0 ? `Recording stops in ${clock(left)}.` : 'Recording stops once it’s quiet.';
+}
 export function clock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds)), pad = (n: number) => String(n).padStart(2, '0');
   return s >= 3600 ? `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
 }
+/** Recorded seconds of a live recording: what was recorded before the last resume, plus the time since. Pauses don't count. */
+export function recorded(r: { recordedMs: number; resumedAt: string | null }, now: number): number { return (r.recordedMs + (r.resumedAt ? now - Date.parse(r.resumedAt) : 0)) / 1000; }
 export function durationLabel(seconds: number): string { return seconds <= 0 ? '' : seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)} min`; }
 export function dayGroup(date: string, now = new Date()): string {
   const day = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
@@ -135,11 +248,13 @@ export function dayGroup(date: string, now = new Date()): string {
   if (days < 7) return 'Previous 7 days';
   return value.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 }
-export function makeMeeting(title: string, project: string): Meeting {
-  const now = new Date().toISOString();
+/** A new meeting; from a calendar event, it's dated at the event and knows who was invited and which series it's in. */
+export function makeMeeting(title: string, project: string, event?: CalendarEvent | null): Meeting {
+  const now = event ? new Date(event.startMs).toISOString() : new Date().toISOString();
   const id = `${now.slice(0, 10)}-${crypto.randomUUID()}`;
+  const invited = event ? { participants: event.attendees.filter(a => !a.me).map(a => a.name), attendees: event.attendees, calendarEvent: event.id, ...(event.series && { calendarSeries: event.series }) } : { participants: [] };
   return {
-    metadata: { id, title, project, date: now, duration: 0, participants: [], status: 'idle', captureStartedAt: null, captureEndedAt: null, audioPath: null, transcriptPath: `${project}/${id}/transcript.md`, meetingPath: `${project}/${id}/meeting.md`, tags: [] },
+    metadata: { id, title, project, date: now, duration: 0, status: 'idle', captureStartedAt: null, captureEndedAt: null, audioPath: null, transcriptPath: `${project}/${id}/transcript.md`, meetingPath: `${project}/${id}/meeting.md`, tags: [], ...invited },
     markdown: `# ${title}\n\nDate: ${dateLabel(now)}\nProject: ${project}\n\n## Summary\n\n## Decisions\n\n## Action items\n\n## Notes\n`,
     transcript: '# Transcript\n',
   };

@@ -1,0 +1,4 @@
+# sherpa-onnx (speaker separation and the Parakeet live transcript, macOS) builds from the library archive
+# `npm run models` downloads and pins by SHA-256, instead of its build script fetching it unchecked.
+[env]
+SHERPA_ONNX_ARCHIVE_DIR = { value = "resources/sherpa", relative = true }

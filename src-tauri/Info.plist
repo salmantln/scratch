@@ -6,5 +6,9 @@
   <string>QuietNote records your side of a meeting, only after you press Start recording. The audio stays on this Mac and is transcribed here.</string>
   <key>NSAudioCaptureUsageDescription</key>
   <string>QuietNote records what the other people in your meeting say, from your Mac’s sound output, only after you press Start recording. It never joins the call. The audio stays on this Mac.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>QuietNote reads your calendar to name your meetings and see who’s invited. It never changes your calendar or starts a recording, and nothing leaves this Mac.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>QuietNote reads your calendar to name your meetings and see who’s invited. It never changes your calendar or starts a recording, and nothing leaves this Mac.</string>
 </dict>
 </plist>

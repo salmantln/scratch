@@ -9,14 +9,16 @@ import { NewMeetingDialog, NewProjectDialog } from './Dialogs';
 import { ConnectionsDialog, SendDialog, type IssueLink } from './Connectors';
 import { Settings, type SettingsSection } from './Settings';
 import { MeetingDetail } from './MeetingDetail';
+import { People } from './People';
 import { Home, MeetingList } from './Library';
-import { clock, linkAction, makeMeeting, replaceSection, searchMeeting, searchTerms, section, shortDate, toggleAction, type Meeting, type MeetingTab } from './model';
+import { Onboarding } from './Onboarding';
+import { clock, linkAction, recorded, makeMeeting, previousMeeting, projectFor, retitle, replaceSection, searchMeeting, searchTerms, section, shortDate, stopsIn, toggleAction, type CalendarEvent, type Meeting, type MeetingTab } from './model';
 import { demoMeetings, isExample } from './seeds';
 import * as storage from './storage';
 import './quietnote.css';
 
-type View = 'home' | 'all' | 'project' | 'meeting' | 'search' | 'settings';
-type Place = { view: View; project: string; selected: string; tab: MeetingTab; section: SettingsSection };
+type View = 'home' | 'all' | 'project' | 'meeting' | 'search' | 'settings' | 'people';
+type Place = { view: View; project: string; selected: string; tab: MeetingTab; section: SettingsSection; person: string };
 const placeKey = 'quietnote.place.v1';
 const lastProjectKey = 'quietnote.lastProject';
 function remembered<T>(key: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(key) ?? 'null') ?? fallback; } catch { return fallback; } }
@@ -28,27 +30,21 @@ function Highlight({ text, terms }: { text: string; terms: string[] }) {
   const pattern = new RegExp(`(${[terms.join(' '), ...terms].map(escape).join('|')})`, 'gi');
   return <>{text.split(pattern).map((part, i) => i % 2 ? <mark key={i}>{part}</mark> : part)}</>;
 }
-/** Shown in every view while recording, so "is QuietNote recording?" always has an answer. The recording meeting has its own recorder strip instead. */
-function RecordingBar({ recording, onOpen, onStop }: { recording: NonNullable<storage.CaptureState['recording']>; onOpen: () => void; onStop: () => void }) {
+/** Shown in every view while recording, so "is QuietNote recording?" always has an answer. The recording meeting has its own recorder bar instead. */
+function RecordingBar({ recording, onOpen, onStop, onResume, onKeep }: { recording: NonNullable<storage.CaptureState['recording']>; onOpen: () => void; onStop: () => void; onResume: () => void; onKeep: () => void }) {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 500); return () => clearInterval(timer); }, []);
-  const elapsed = clock((now - Date.parse(recording.startedAt)) / 1000);
-  return <div className="recording-bar" role="group" aria-label={`Recording ${recording.title}, ${elapsed}`}>
-    <i className="live-dot" aria-hidden="true" /><span className="recording-label">Recording</span>
+  const paused = recording.resumedAt === null;
+  useEffect(() => { if (paused) return; const timer = window.setInterval(() => setNow(Date.now()), 500); return () => clearInterval(timer); }, [paused]);
+  const elapsed = clock(recorded(recording, now));
+  const label = paused ? 'Paused' : 'Recording';
+  return <div className={`recording-bar ${paused ? 'paused' : ''}`} role="group" aria-label={`${label} ${recording.title}, ${elapsed}`}>
+    <i className={paused ? 'paused-dot' : 'live-dot'} aria-hidden="true" /><span className="recording-label">{label}</span>
     <button className="text-button recording-title" title="Open meeting" onClick={onOpen}>{recording.title}</button>
     <span className="recording-time" aria-hidden="true">{elapsed}</span>
     {recording.problem && <span className="recording-problem" role="img" aria-label={recording.problem} title={recording.problem}><Icon name="info" size={14} /></span>}
-    <button className="text-button" onClick={onStop}>Stop recording</button>
-  </div>;
-}
-function Welcome({ recording, onCreate, onExamples, busy }: { recording: boolean; onCreate: () => void; onExamples: () => void; busy: boolean }) {
-  return <div className="welcome" data-tauri-drag-region>
-    <Folder />
-    <h1>Keep the useful part of every meeting.</h1>
-    <p>{recording ? `Records and transcribes your meetings on this ${storage.device}. No bot joins the call, and nothing records until you press Start.` : 'Notes, decisions and action items for your meetings, organized by project and kept on your device.'}</p>
-    <button className="primary large" onClick={onCreate}>Create your first project</button>
-    <button className="text-button" disabled={busy} onClick={onExamples}>{busy ? 'Adding examples…' : 'Explore example meetings'}</button>
-    {!storage.desktop && <p className="subtle">Browser preview · meetings are saved in this browser only.</p>}
+    {recording.ending && <><span className="recording-ending" role="status">{recording.ending.reason} {stopsIn(recording.ending.stopsAt, now)}</span><button className="text-button" onClick={onKeep}>Keep recording</button></>}
+    {paused && <button className="text-button" onClick={onResume}>Resume</button>}
+    <button className="text-button" aria-label="Stop recording" title="Stop recording" onClick={onStop}>Stop</button>
   </div>;
 }
 function Shell() {
@@ -69,6 +65,8 @@ function Shell() {
   const [view, setView] = useState<View>(!initial.view || (initial.view as string) === 'recent' ? 'home' : initial.view);
   const [project, setProject] = useState(initial.project ?? '');
   const [selected, setSelected] = useState(initial.selected ?? '');
+  // On People: a person's key or `@domain`, or nobody (the list).
+  const [person, setPerson] = useState(initial.person ?? '');
   const [tab, setTab] = useState<MeetingTab>(initial.tab ?? 'Summary');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(initial.section ?? 'Privacy');
   const [query, setQuery] = useState('');
@@ -85,6 +83,7 @@ function Shell() {
   const [addingExamples, setAddingExamples] = useState(false);
   const [preferences, setPreferences] = useState<storage.PrivacyPreferences>({});
   const [connections, setConnections] = useState<storage.Connections>({});
+  const [summaryKey, setSummaryKey] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const dirty = useRef(new Map<string, string>());
   const queue = useRef(Promise.resolve());
@@ -111,11 +110,12 @@ function Shell() {
       setPreferences(await storage.preferences());
       await storage.captureStatus().then(setLive).catch(() => { /* Recording controls stay hidden. */ });
       storage.connections().then(setConnections).catch(e => setProblem(`Couldn’t read your connections. ${String(e)}`));
+      storage.summaryKeySaved().then(setSummaryKey).catch(() => setSummaryKey(false));
     } catch (e) { setLoadError(String(e)); }
     finally { setLoading(false); }
   }, [setRecords]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { remember(placeKey, { view, project, selected, tab, section: settingsSection }); }, [view, project, selected, tab, settingsSection]);
+  useEffect(() => { remember(placeKey, { view, project, selected, tab, section: settingsSection, person }); }, [view, project, selected, tab, settingsSection, person]);
   useEffect(() => { main.current?.scrollTo(0, 0); }, [selected, view, project, tab]);
   useEffect(() => { if (view === 'search') searchInput.current?.focus(); }, [view]);
   useEffect(() => {
@@ -139,6 +139,8 @@ function Shell() {
     let cancelled = false; const unlisten: (() => void)[] = [];
     const keep = (fn: () => void) => { if (cancelled) fn(); else unlisten.push(fn); };
     listen<storage.CaptureState>('quietnote://capture-state', event => setLive(event.payload)).then(keep);
+    // The tray's Pause, Resume and Stop run in Rust; if one fails, the window says why.
+    listen<string>('quietnote://capture-problem', event => setProblem(event.payload)).then(keep);
     listen<storage.MeetingChanged>('quietnote://meeting-changed', ({ payload }) => {
       if (payload.transcript !== null) storage.noteWrite(payload.metadata.transcriptPath);
       const existing = records.current.find(m => m.metadata.id === payload.metadata.id);
@@ -213,13 +215,20 @@ function Shell() {
     if (dirty.current.size) { setProblem('Save or discard your unsaved changes before reloading.'); return; }
     await load(); setExternal(false); setReloadKey(v => v + 1);
   }
-  function changePreference(key: string, value: boolean | string) {
+  function changePreference(key: string, value: storage.PrivacyPreferences[string]) {
     const next = { ...preferences, [key]: value }; setPreferences(next);
     queue.current = queue.current.then(async () => {
       try { await storage.preferences(next); } catch (e) { setProblem(`Couldn’t save your privacy preferences. ${String(e)}`); return; }
       if (key === 'cleanTranscript') await storage.renderTranscripts(value === true).catch(e => setProblem(`Couldn’t update your transcripts. ${String(e)}`));
     });
   }
+  // Suggestions need recording (a transcript to read) and a model that's ready to use.
+  const summarizer = useMemo(() => {
+    if (!live.available) return null;
+    if (preferences.summaryProvider === 'anthropic') return summaryKey ? { local: false, label: 'Claude' } : null;
+    const model = preferences.summaryProvider === 'ollama' ? preferences.ollamaModel : '';
+    return typeof model === 'string' && model ? { local: true, label: model } : null;
+  }, [live.available, preferences.summaryProvider, preferences.ollamaModel, summaryKey]);
   const go = useCallback((next: View, nextProject = '') => { setView(next); setProject(nextProject); }, []);
   const [find, setFind] = useState('');
   const openMeeting = useCallback((id: string, nextTab: MeetingTab = 'Summary', nextFind = '') => { setSelected(id); setTab(nextTab); setFind(nextFind); setView('meeting'); }, []);
@@ -229,8 +238,30 @@ function Shell() {
   const sorted = useMemo(() => [...meetings].sort((a, b) => b.metadata.date.localeCompare(a.metadata.date)), [meetings]);
   const allProjects = useMemo(() => [...new Set([...projects, ...meetings.map(m => m.metadata.project)])].sort((a, b) => a.localeCompare(b)), [projects, meetings]);
   const current = meetings.find(m => m.metadata.id === selected);
+  const previous = useMemo(() => current ? previousMeeting(current, meetings, isExample) : null, [current, meetings]);
   const contextProject = view === 'project' ? project : view === 'meeting' && current ? current.metadata.project : remembered(lastProjectKey, '');
-  const newMeeting = useCallback(() => { setMeetingNext(!allProjects.length); setDialog(allProjects.length ? 'meeting' : 'project'); }, [allProjects.length]);
+  // The calendar (macOS, while it's on): today's events, for Home, New meeting and recording a call.
+  const calendarOn = storage.desktop && preferences.calendar === true;
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  useEffect(() => {
+    if (!calendarOn) { setEvents([]); return; }
+    let cancelled = false;
+    const read = () => { storage.calendarEvents(1).then(e => { if (!cancelled) setEvents(e); }).catch(() => { /* The calendar only fills things in. */ }); };
+    // Just turned on: Rust reads the preference, so the first read waits for it to be saved.
+    void queue.current.then(read);
+    const timer = window.setInterval(read, 60_000);
+    window.addEventListener('focus', read);
+    return () => { cancelled = true; clearInterval(timer); window.removeEventListener('focus', read); };
+  }, [calendarOn]);
+  const fallbackProject = allProjects.includes(contextProject) ? contextProject : allProjects[0];
+  const projectOf = useCallback((event: CalendarEvent) => projectFor(event, meetings, fallbackProject), [meetings, fallbackProject]);
+  // New meeting from an event, or without one the event happening now fills it in once it's found.
+  const [meetingEvent, setMeetingEvent] = useState<CalendarEvent | null>(null);
+  const newMeeting = useCallback((event: CalendarEvent | null = null) => {
+    setMeetingEvent(event);
+    if (!event && calendarOn) storage.calendarNow().then(now => { if (now) setMeetingEvent(e => e ?? now); }).catch(() => { /* Then it's a plain new meeting. */ });
+    setMeetingNext(!allProjects.length); setDialog(allProjects.length ? 'meeting' : 'project');
+  }, [allProjects.length, calendarOn]);
   const results = useMemo(() => {
     if (!query.trim()) return [];
     return sorted.flatMap(meeting => {
@@ -243,18 +274,46 @@ function Shell() {
     if (loading) return;
     if ((view === 'meeting' && !current) || (view === 'project' && !allProjects.includes(project))) go('home');
   }, [loading, view, current, project, allProjects, go]);
+  // The compact window: a call recorded from the panel gets a narrow column beside the call with just the
+  // meeting, like a notepad next to it. Rust sizes the window; leaving puts it back where it was.
+  const [compact, setCompact] = useState(false);
+  const setWindowCompact = useCallback((on: boolean) => {
+    setCompact(on);
+    storage.windowCompact(on).catch(e => setProblem(`Couldn’t resize the window. ${String(e)}`));
+  }, []);
+  // Going anywhere but the meeting (a shortcut, the tray) brings the full window back.
+  useEffect(() => { if (compact && view !== 'meeting') setWindowCompact(false); }, [compact, view, setWindowCompact]);
   const blocked = Boolean(dialog);
   // Tray actions arrive after Rust has shown the window. An open dialog is never replaced.
-  const trayActions = useRef({ blocked, newMeeting, openMeeting, go });
-  trayActions.current = { blocked, newMeeting, openMeeting, go };
+  // The call panel's Start recording: a meeting named after the app, recording at once (the first-run
+  // explanation still comes first). Without a project yet, New meeting asks for one.
+  // With the calendar on, the meeting is named after the event the user is in, and knows who's invited.
+  async function recordCall(app: string) {
+    if (live.recording) { openMeeting(live.recording.meetingId, 'Notes'); setWindowCompact(true); return; }
+    if (!allProjects.length) { newMeeting(); return; }
+    const event = calendarOn ? await storage.calendarNow().catch(() => null) : null;
+    createMeeting(event?.title ?? `${app} call`, event ? projectOf(event) : fallbackProject, true, event).then(() => setWindowCompact(true)).catch(e => setProblem(`Couldn’t start recording. ${String(e)}`));
+  }
+  // The tray's next meeting opens New meeting for that event.
+  function newMeetingFor(eventId?: string) {
+    if (!eventId) { newMeeting(); return; }
+    const known = events.find(e => e.id === eventId);
+    if (known) newMeeting(known);
+    else storage.calendarEvents(1).then(list => newMeeting(list.find(e => e.id === eventId) ?? null)).catch(() => newMeeting());
+  }
+  const trayActions = useRef({ blocked, newMeetingFor, openMeeting, go, recordCall });
+  trayActions.current = { blocked, newMeetingFor, openMeeting, go, recordCall };
   useEffect(() => {
     if (!storage.desktop) return;
     let cancelled = false; const unlisten: (() => void)[] = [];
     const on = <T,>(event: string, action: (payload: T) => void) => listen<T>(event, e => { if (!trayActions.current.blocked) action(e.payload); }).then(fn => { if (cancelled) fn(); else unlisten.push(fn); });
     on<string>('quietnote://open-meeting', id => trayActions.current.openMeeting(id));
     on<string>('quietnote://open-project', p => trayActions.current.go('project', p));
-    on('quietnote://new-meeting', () => trayActions.current.newMeeting());
+    on<{ eventId?: string } | null>('quietnote://new-meeting', p => trayActions.current.newMeetingFor(p?.eventId));
     on('quietnote://open-settings', () => trayActions.current.go('settings'));
+    on<string>('quietnote://record-call', app => trayActions.current.recordCall(app));
+    // The call panel's "Don't notify" writes the preferences in Rust.
+    listen('quietnote://preferences-changed', () => { storage.preferences().then(setPreferences).catch(() => { /* The next load reads them. */ }); }).then(fn => { if (cancelled) fn(); else unlisten.push(fn); });
     return () => { cancelled = true; unlisten.forEach(fn => fn()); };
   }, []);
   // Notes edits don't change this, so the tray menu is only rebuilt when what it shows changes.
@@ -292,8 +351,8 @@ function Shell() {
     await storage.createProject(name);
     setProjects(p => [...p, name]); setDialog(meetingNext ? 'meeting' : ''); setMeetingNext(false); go('project', name);
   }
-  async function createMeeting(title: string, meetingProject: string, record: boolean) {
-    const meeting = makeMeeting(title, meetingProject);
+  async function createMeeting(title: string, meetingProject: string, record: boolean, event: CalendarEvent | null = null) {
+    const meeting = makeMeeting(title, meetingProject, event);
     await storage.createMeeting(meeting);
     upsert(meeting); remember(lastProjectKey, meetingProject); setDialog(''); openMeeting(meeting.metadata.id, record ? 'Notes' : 'Summary');
     if (record) setCapture(meeting.metadata.id);
@@ -303,6 +362,22 @@ function Shell() {
     try { await storage.addExamples(records.current.map(m => m.metadata.id)); await load(); go('home'); }
     catch (e) { setProblem(`Couldn’t add the example meetings. ${String(e)}`); }
     finally { setAddingExamples(false); }
+  }
+  /** A new title: the metadata (Rust refuses while the meeting records or transcribes), then the `# ` line of its notes file. */
+  async function renameMeeting(id: string, title: string) {
+    const meeting = records.current.find(m => m.metadata.id === id);
+    const name = title.trim();
+    if (!meeting || !name || name === meeting.metadata.title) return;
+    const next = { ...meeting, metadata: { ...meeting.metadata, title: name } };
+    await storage.saveMetadata(next.metadata);
+    upsert(next);
+    await persist(id, retitle(next.markdown, name));
+  }
+  /** A voice named in the transcript: Rust rewrites it and returns it as written. */
+  async function renameSpeaker(id: string, from: string, to: string) {
+    const transcript = await storage.renameSpeaker(id, from, to);
+    const latest = records.current.find(m => m.metadata.id === id);
+    if (latest) upsert({ ...latest, transcript });
   }
   async function markEnded(meeting: Meeting) {
     const next: Meeting = { ...meeting, metadata: { ...meeting.metadata, status: 'ready', captureEndedAt: meeting.metadata.captureEndedAt ?? new Date().toISOString() } };
@@ -319,8 +394,8 @@ function Shell() {
   }
   const dialogs = <>
     {dialog === 'project' && <NewProjectDialog existing={allProjects} onCreate={createProject} onClose={() => { setDialog(''); setMeetingNext(false); }} />}
-    {dialog === 'meeting' && <NewMeetingDialog projects={allProjects} project={contextProject} canRecord={live.available} onCreate={createMeeting} onClose={() => setDialog('')} />}
-    {dialog === 'connections' && <ConnectionsDialog connections={connections} onChange={setConnections} onClose={() => setDialog('')} />}
+    {dialog === 'meeting' && <NewMeetingDialog projects={allProjects} project={contextProject} canRecord={live.available} event={meetingEvent} projectFor={projectOf} onCreate={createMeeting} onClose={() => setDialog('')} />}
+    {dialog === 'connections' && <ConnectionsDialog detectsCalls={live.detectsCalls} connections={connections} onChange={setConnections} onClose={() => setDialog('')} />}
     {dialog === 'send' && current && <SendDialog meeting={current} connections={connections} lastTargets={{ linear: String(preferences['send.linear'] ?? ''), github: String(preferences['send.github'] ?? '') }} onSent={(service, target, links) => sent(current.metadata.id, service, target, links)} onClose={() => setDialog('')} />}
   </>;
   if (loading && !meetings.length) return <div className="quietnote-shell centered" data-tauri-drag-region><p className="subtle" role="status">Opening your meetings…</p></div>;
@@ -331,7 +406,7 @@ function Shell() {
     <details className="advanced"><summary>View details</summary><p className="path">{loadError}</p></details>
     {problem && <p className="field-error">{problem}</p>}
   </div></div>;
-  if (!allProjects.length && !meetings.length) return <div className="quietnote-shell centered"><Welcome recording={live.available} busy={addingExamples} onCreate={() => setDialog('project')} onExamples={() => void addExamples()} />{problem && <p className="field-error floating" role="alert">{problem}</p>}{dialogs}</div>;
+  if (!allProjects.length && !meetings.length) return <div className="quietnote-shell centered"><Onboarding live={live} preferences={preferences} busy={addingExamples} onPreference={changePreference} onCreate={createProject} onExamples={() => void addExamples()} />{problem && <p className="field-error floating" role="alert">{problem}</p>}{dialogs}</div>;
   // A transcript hit opens the transcript filtered to the search, so the passage is on screen.
   const openResult = (id: string, hitTab: MeetingTab) => openMeeting(id, hitTab, hitTab === 'Transcript' ? query.trim() : '');
   const libraryMeetings = view === 'project' ? sorted.filter(m => m.metadata.project === project) : sorted;
@@ -340,8 +415,8 @@ function Shell() {
   const saveText = saveState === 'saving' ? 'Saving…' : saveState === 'unsaved' ? 'Not saved' : storage.desktop ? 'Saved' : 'Saved in this browser';
   const navItem = (active: boolean, icon: Parameters<typeof Icon>[0]['name'], label: string, onClick: () => void, extra?: ReactNode, className = '') =>
     <button className={`sidebar-item ${className} ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined} title={label} onClick={onClick}><Icon name={icon} size={16} /><span className="label">{label}</span>{extra}</button>;
-  return <div className={`quietnote-shell ${sidebarHidden ? 'sidebar-hidden' : ''} ${storage.desktop && storage.device === 'Mac' ? 'mac-titlebar' : ''} ${showKeys ? 'show-keys' : ''}`}>
-    <aside className="qn-sidebar" aria-label="Main navigation" inert={sidebarHidden}>
+  return <div className={`quietnote-shell ${sidebarHidden ? 'sidebar-hidden' : ''} ${compact ? 'compact' : ''} ${storage.desktop && storage.device === 'Mac' ? 'mac-titlebar' : ''} ${showKeys ? 'show-keys' : ''}`}>
+    <aside className="qn-sidebar" aria-label="Main navigation" inert={sidebarHidden || compact}>
       <div className="sidebar-drag" data-tauri-drag-region />
       <div className="sidebar-top">
         <button className="brand" aria-label="QuietNote" onClick={() => go('home')}><Logo /><span className="label">QuietNote</span></button>
@@ -351,6 +426,7 @@ function Shell() {
         <h2 className="sidebar-label">Meetings</h2>
         {navItem(view === 'home', 'home', 'Home', () => go('home'))}
         {navItem(view === 'all', 'meeting', 'All meetings', () => go('all'))}
+        {navItem(view === 'people', 'people', 'People', () => { setPerson(''); go('people'); })}
         <div className="sidebar-label-row"><h2 className="sidebar-label">Projects</h2><button className="icon-button small" aria-label="New project" title="New project" onClick={() => setDialog('project')}><Icon name="plus" size={14} /></button></div>
         {allProjects.map((p, i) => <div key={p}>{navItem(view === 'project' && project === p, 'folder', p, () => go('project', p), <><span className="initial" aria-hidden="true">{p.slice(0, 1).toUpperCase()}</span>{i < 9 && <kbd aria-hidden="true">⌘{i + 1}</kbd>}<span className="sidebar-count">{meetings.filter(m => m.metadata.project === p).length || ''}</span></>, 'project-item')}</div>)}
       </nav>
@@ -363,8 +439,8 @@ function Shell() {
     </aside>
     <div className="qn-workspace">
       <header className="window-bar" data-tauri-drag-region>
-        <div className="window-context"><button className="icon-button sidebar-toggle" aria-label={sidebarHidden ? 'Show sidebar' : 'Hide sidebar'} aria-expanded={!sidebarHidden} title={`${sidebarHidden ? 'Show' : 'Hide'} sidebar (⌘\\)`} onClick={() => setSidebarHidden(v => !v)}><Icon name="sidebar" size={16} /></button>{view === 'meeting' && current && <button className="text-button" onClick={() => go('project', current.metadata.project)}><Icon name="folder" size={15} />{current.metadata.project}</button>}</div>
-        {live.recording && !(view === 'meeting' && selected === live.recording.meetingId) && <RecordingBar recording={live.recording} onOpen={() => openMeeting(live.recording!.meetingId, 'Notes')} onStop={() => void captureAction(storage.captureStop, 'Couldn’t stop recording.')} />}
+        <div className="window-context">{compact ? <button className="icon-button" aria-label="Open full window" title="Open full window" onClick={() => setWindowCompact(false)}><Icon name="expand" size={16} /></button> : <><button className="icon-button sidebar-toggle" aria-label={sidebarHidden ? 'Show sidebar' : 'Hide sidebar'} aria-expanded={!sidebarHidden} title={`${sidebarHidden ? 'Show' : 'Hide'} sidebar (⌘\\)`} onClick={() => setSidebarHidden(v => !v)}><Icon name="sidebar" size={16} /></button>{view === 'meeting' && current && <button className="text-button" onClick={() => go('project', current.metadata.project)}><Icon name="folder" size={15} />{current.metadata.project}</button>}</>}</div>
+        {live.recording && !compact && !(view === 'meeting' && selected === live.recording.meetingId) && <RecordingBar recording={live.recording} onOpen={() => openMeeting(live.recording!.meetingId, 'Notes')} onStop={() => void captureAction(storage.captureStop, 'Couldn’t stop recording.')} onResume={() => void storage.captureResume().catch((e: storage.CaptureFailure) => setProblem(`Couldn’t resume recording. ${e.message}`))} onKeep={() => void storage.captureKeep().catch(e => setProblem(`Couldn’t keep recording. ${String(e)}`))} />}
         <div className={`save-status ${saveState}`} role="status" aria-live="polite"><i aria-hidden="true" />{saveText}{!storage.desktop && <span className="badge">Browser preview</span>}</div>
       </header>
       {unsaved && <div className="banner warning" role="alert">
@@ -388,8 +464,8 @@ function Shell() {
       {external && !unsaved && <div className="banner" role="status"><div><strong>Files changed outside QuietNote.</strong><span>Refresh to load the latest version from disk.</span></div><div className="banner-actions"><button className="secondary" onClick={() => void reload()}>Refresh</button></div></div>}
       {problem && <div className="banner warning" role="alert"><div><strong>{problem}</strong></div><div className="banner-actions"><button className="text-button" onClick={() => setProblem('')}>Dismiss</button></div></div>}
       <main className="qn-main" ref={main}>
-        {view === 'settings' ? <Settings recording={live.available} connections={connections} section={settingsSection} onSection={setSettingsSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
-        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} onDismissRecovered={() => void dismissRecovered(current)} armed={capture === current.metadata.id} onUpdated={upsert} onStartCapture={() => { setCapture(current.metadata.id); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onMarkEnded={() => void markEnded(current)} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
+        {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} connections={connections} summaryKey={summaryKey} onSummaryKey={setSummaryKey} section={settingsSection} onSection={setSettingsSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
+        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={markdown => persist(previous!.metadata.id, markdown)} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture === current.metadata.id} onUpdated={upsert} onStartCapture={() => { setCapture(current.metadata.id); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onMarkEnded={() => void markEnded(current)} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
           const latest = records.current.find(m => m.metadata.id === current.metadata.id)!;
           return persist(current.metadata.id, replaceSection(latest.markdown, 'Notes', notes));
         }} />
@@ -403,7 +479,8 @@ function Shell() {
           </button></li>)}</ul></>
           : <div className="empty-inline" role="status"><h2>No meetings found for ‘{query.trim()}’.</h2><p>Try another term.</p></div>}
         </div>
-        : view === 'home' ? <Home meetings={sorted} live={live} onOpen={openMeeting} onNewMeeting={newMeeting} onSearch={text => { setQuery(text); setView('search'); }} onToggle={toggleItem} onAll={() => go('all')} />
+        : view === 'people' ? <People meetings={meetings} selected={person} calendar={calendarOn} onSelect={setPerson} onOpen={openMeeting} onToggle={toggleItem} onSettings={() => go('settings')} />
+        : view === 'home' ? <Home meetings={sorted} live={live} events={events} onPrepare={event => void (allProjects.length ? createMeeting(event.title, projectOf(event), false, event) : Promise.resolve(newMeeting(event))).catch(e => setProblem(`Couldn’t create the meeting. ${String(e)}`))} onOpen={openMeeting} onNewMeeting={() => newMeeting()} onSearch={text => { setQuery(text); setView('search'); }} onToggle={toggleItem} onAll={() => go('all')} />
         : <div className="page library-page">
           <header className="page-header"><div><h1>{view === 'project' ? project : 'All meetings'}</h1>{libraryMeetings.length > 0 && <p className="subtle">{count(libraryMeetings.length)}</p>}</div></header>
           {libraryMeetings.length ? <MeetingList meetings={libraryMeetings} showProject={view !== 'project'} onOpen={openMeeting} />

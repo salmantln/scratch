@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Modal } from './Dialogs';
 import { Icon } from './Icon';
 import { categories, connectors, matchesConnector, serviceName, type Connector } from './catalog';
@@ -10,14 +12,50 @@ export function BrandMark({ connector: c, appIcon }: { connector: Connector; app
   if (c.logo) return <span className="brand-mark logo" aria-hidden="true"><img src={c.logo} alt="" /></span>;
   return <span className="brand-mark" style={{ background: `#${c.color}` }} aria-hidden="true">{c.monogram}</span>;
 }
-function ConnectorRow({ connector: c, appIcon, account, onChange }: { connector: Connector; appIcon?: string; account?: { account: string }; onChange: (service: storage.Service, account?: { account: string }) => void }) {
+/** Signing in through the browser: what to do there, with a way out of every in-between state. */
+function SignInWait({ name, waiting, onCancel, onKey }: { name: string; waiting: storage.SigningIn | null; onCancel: () => void; onKey: () => void }) {
+  const [copied, setCopied] = useState('');
+  async function copy(text: string, what: string) {
+    try { await writeText(text); setCopied(what); window.setTimeout(() => setCopied(''), 1500); } catch { setCopied(''); }
+  }
+  const open = () => void storage.openLink(waiting!.url).catch(() => { /* Copy link is right there. */ });
+  const cancel = <button type="button" className="text-button" onClick={onCancel}>Cancel</button>;
+  if (!waiting) return <div className="sign-in-wait" role="status"><p>Starting to sign in to {name}…</p><div className="token-field">{cancel}</div></div>;
+  if (waiting.code) return <div className="sign-in-wait" role="status">
+    <p>Enter this code on {name}:</p>
+    <p className="device-code" aria-label={`Code ${waiting.code}`}>{waiting.code}</p>
+    <div className="token-field">{cancel}<button type="button" className="secondary" onClick={() => { void copy(waiting.code!, 'code'); open(); }}>{copied === 'code' ? 'Code copied' : `Copy code and open ${name}`}</button></div>
+    <p className="connector-note">Waiting for you to enter it. Access is kept in your macOS Keychain. <button type="button" className="text-button" onClick={onKey}>Use a key instead</button></p>
+  </div>;
+  return <div className="sign-in-wait" role="status">
+    <p>{waiting.opened ? `Finish signing in to ${name} in your browser. QuietNote picks up when you’re done.` : `Couldn’t open your browser. Copy the sign-in link into your browser, or try again.`}</p>
+    <div className="token-field">{cancel}<button type="button" className="text-button" onClick={() => void copy(waiting.url, 'link')}><Icon name="copy" size={13} />{copied === 'link' ? 'Copied' : 'Copy link'}</button><button type="button" className="secondary" onClick={open}>{waiting.opened ? 'Reopen browser' : 'Open browser'}</button></div>
+    <p className="connector-note">Access is kept in your macOS Keychain, never on a QuietNote server. <button type="button" className="text-button" onClick={onKey}>Use a key instead</button></p>
+  </div>;
+}
+function ConnectorRow({ connector: c, appIcon, account, detecting, signIn, onChange }: { connector: Connector; appIcon?: string; account?: { account: string }; detecting: boolean; signIn: boolean; onChange: (service: storage.Service, account?: { account: string }) => void }) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState(false);
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Signing in through the browser: null while it starts, then what to do there.
+  const [signing, setSigning] = useState(false);
+  const [waiting, setWaiting] = useState<storage.SigningIn | null>(null);
+  const stopped = useRef(false);
   useEffect(() => { if (form) input.current?.focus(); }, [form]);
+  async function browserSignIn(service: storage.Service) {
+    setSigning(true); setWaiting(null); setError(''); setForm(false); stopped.current = false;
+    let unlisten: (() => void) | undefined;
+    try {
+      unlisten = await listen<storage.SigningIn>('quietnote://sign-in', e => { if (e.payload.service === service) setWaiting(e.payload); });
+      onChange(service, await storage.signIn(service));
+    } catch (e) { if (!stopped.current) setError(message(e)); }
+    finally { unlisten?.(); setSigning(false); }
+  }
+  // Cancelling (or switching to a key) stops waiting in Rust; the sign-in then ends quietly.
+  const stopSignIn = (then?: () => void) => { stopped.current = true; void storage.cancelSignIn(c.service!); setSigning(false); then?.(); };
   async function connect(service: storage.Service) {
     setBusy(true); setError('');
     try { const connected = await storage.connect(service, token); setToken(''); setForm(false); onChange(service, connected); }
@@ -29,10 +67,11 @@ function ConnectorRow({ connector: c, appIcon, account, onChange }: { connector:
     try { await storage.disconnect(service); onChange(service); }
     catch (e) { setError(`Couldn’t disconnect ${c.name}. ${message(e)}`); setBusy(false); }
   }
-  const action = !c.service ? <span className="badge">Planned</span>
+  const action = detecting ? <span className="badge">Built in</span>
+    : !c.service ? <span className="badge">Planned</span>
     : account ? <button className="text-button" disabled={busy} onClick={() => void disconnect(c.service!)}>Disconnect</button>
     : !storage.desktop ? <button className="secondary" disabled>Desktop only</button>
-    : !form && <button className="secondary" onClick={() => setForm(true)}>Connect</button>;
+    : !form && !signing && <button className="secondary" onClick={() => signIn ? void browserSignIn(c.service!) : setForm(true)}>{error && signIn ? 'Try again' : 'Connect'}</button>;
   return <li className={`connector ${form ? 'expanded' : ''}`}>
     <div className="connector-row"><BrandMark connector={c} appIcon={appIcon} /><div className="connector-text"><strong>{c.name}</strong><span>{account ? `Connected as ${account.account}` : c.blurb}</span></div>{action}</div>
     {form && c.service && c.setup && <form className="token-form" onSubmit={e => { e.preventDefault(); if (token.trim()) void connect(c.service!); }}>
@@ -45,13 +84,16 @@ function ConnectorRow({ connector: c, appIcon, account, onChange }: { connector:
       </div>
       <p className="connector-note">QuietNote checks the key with {c.name}, then keeps it in your macOS Keychain.</p>
     </form>}
-    {error && <p className="field-error" role="alert">{error}</p>}
+    {signing && <SignInWait name={c.name} waiting={waiting} onCancel={() => stopSignIn()} onKey={() => stopSignIn(() => setForm(true))} />}
+    {error && <p className="field-error" role="alert">{error}{signIn && !form && <> <button type="button" className="text-button" onClick={() => { setError(''); setForm(true); }}>Use a key instead</button></>}</p>}
   </li>;
 }
-export function ConnectionsDialog({ connections, onChange, onClose }: { connections: storage.Connections; onChange: (next: storage.Connections) => void; onClose: () => void }) {
+export function ConnectionsDialog({ detectsCalls = false, connections, onChange, onClose }: { detectsCalls?: boolean; connections: storage.Connections; onChange: (next: storage.Connections) => void; onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [appIcons, setAppIcons] = useState<Record<string, string>>({});
+  const [signIns, setSignIns] = useState<storage.Service[]>([]);
   useEffect(() => { storage.appIcons().then(setAppIcons).catch(() => { /* Letter tiles stand in. */ }); }, []);
+  useEffect(() => { storage.signInServices().then(setSignIns).catch(() => { /* Keys still connect. */ }); }, []);
   const shown = connectors.filter(c => matchesConnector(c, query));
   const isConnected = (c: Connector) => Boolean(c.service && connections[c.service]);
   const groups = [['Connected', shown.filter(isConnected)] as const, ...categories.map(name => [name, shown.filter(c => c.category === name && !isConnected(c))] as const)].filter(([, list]) => list.length);
@@ -64,9 +106,9 @@ export function ConnectionsDialog({ connections, onChange, onClose }: { connecti
     <p className="lede">Connect only the services you use. QuietNote never joins your calls, and nothing leaves this Mac until you choose to send it.</p>
     <label className="search-field"><Icon name="search" size={16} /><input type="search" data-autofocus aria-label="Search connections" placeholder="Search connections" value={query} onChange={e => setQuery(e.target.value)} /></label>
     <div className="connector-groups">
-      {groups.map(([name, list]) => <section key={name} aria-label={name}><h3>{name}</h3><ul>{list.map(c => <ConnectorRow key={c.id} connector={c} appIcon={c.app && appIcons[c.id]} account={c.service && connections[c.service]} onChange={change} />)}</ul></section>)}
+      {groups.map(([name, list]) => <section key={name} aria-label={name}><h3>{name}</h3><ul>{list.map(c => <ConnectorRow key={c.id} connector={c} appIcon={c.app && appIcons[c.id]} account={c.service && connections[c.service]} detecting={Boolean(c.detects && detectsCalls)} signIn={Boolean(c.service && signIns.includes(c.service))} onChange={change} />)}</ul></section>)}
       {!groups.length && <p className="subtle" role="status">No connections match “{query.trim()}”.</p>}
-      <p className="connector-note directory-note">Planned services that need a sign-in will sign in through your browser and keep access on this Mac, never on a QuietNote server.</p>
+      <p className="connector-note directory-note">{signIns.length ? 'Services sign in through your browser, and access is kept in your macOS Keychain, never on a QuietNote server.' : 'Planned services that need a sign-in will sign in through your browser and keep access on this Mac, never on a QuietNote server.'}</p>
     </div>
     <button className="icon-button modal-close" aria-label="Close" onClick={onClose}><Icon name="close" size={16} /></button>
   </Modal>;

@@ -2,7 +2,13 @@
   "bundle": {
     "resources": {
       "resources/models/ggml-large-v3-turbo-q5_0.bin": "models/ggml-large-v3-turbo-q5_0.bin",
-      "resources/models/ggml-silero-v6.2.0.bin": "models/ggml-silero-v6.2.0.bin"
+      "resources/models/ggml-silero-v6.2.0.bin": "models/ggml-silero-v6.2.0.bin",
+      "resources/models/pyannote-segmentation-3.0.onnx": "models/pyannote-segmentation-3.0.onnx",
+      "resources/models/3dspeaker-eres2net-en-voxceleb-16k.onnx": "models/3dspeaker-eres2net-en-voxceleb-16k.onnx",
+      "resources/models/parakeet-tdt-110m-en-int8/encoder.int8.onnx": "models/parakeet-tdt-110m-en-int8/encoder.int8.onnx",
+      "resources/models/parakeet-tdt-110m-en-int8/decoder.int8.onnx": "models/parakeet-tdt-110m-en-int8/decoder.int8.onnx",
+      "resources/models/parakeet-tdt-110m-en-int8/joiner.int8.onnx": "models/parakeet-tdt-110m-en-int8/joiner.int8.onnx",
+      "resources/models/parakeet-tdt-110m-en-int8/tokens.txt": "models/parakeet-tdt-110m-en-int8/tokens.txt"
     }
   }
 }

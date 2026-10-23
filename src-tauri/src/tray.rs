@@ -54,7 +54,8 @@ fn label(text: &str) -> String {
 enum Entry { Item(String, String, bool), Separator, Projects(Option<String>, Vec<String>) }
 fn item(id: impl Into<String>, text: impl Into<String>, enabled: bool) -> Entry { Entry::Item(id.into(), text.into(), enabled) }
 
-fn entries(state: &capture::State, listing: Option<&meetings::Listing>, project: Option<String>) -> Vec<Entry> {
+/// `next` is the calendar's current or next meeting (`calendar::next`): its occurrence id and its line.
+fn entries(state: &capture::State, listing: Option<&meetings::Listing>, project: Option<String>, next: Option<(String, String)>) -> Vec<Entry> {
     let mut out = Vec::new();
     let quit = if state.recording.is_some() { item("quit", "Stop recording and quit", true) } else { item("quit", "Quit QuietNote", true) };
     let Some((projects, recent)) = listing else {
@@ -63,15 +64,24 @@ fn entries(state: &capture::State, listing: Option<&meetings::Listing>, project:
     };
     if let Some(live) = &state.recording {
         let started = chrono::DateTime::parse_from_rfc3339(&live.started_at).map(|t| t.with_timezone(&chrono::Local).format("%H:%M").to_string()).unwrap_or_default();
-        out.push(item("recording", format!("● Recording: {}", label(&live.title)), false));
+        let paused = live.resumed_at.is_none();
+        out.push(item("recording", format!("{} {}", if paused { "❙❙ Paused:" } else { "● Recording:" }, label(&live.title)), false));
         out.push(item("started", format!("Started {started} by you · No bot joined"), false));
         // The first sentence of a problem ("Microphone disconnected.") fits a menu line.
         if let Some(problem) = &live.problem { out.push(item("problem", format!("⚠ {}", label(problem.split_inclusive(". ").next().unwrap_or(problem))), false)); }
+        if let Some(ending) = &live.ending {
+            let at = chrono::DateTime::parse_from_rfc3339(&ending.stops_at).map(|t| t.with_timezone(&chrono::Local).format("%H:%M").to_string()).unwrap_or_default();
+            out.push(item("ending", format!("⏱ {} Stops at {at}", label(&ending.reason)), false));
+            out.push(item("keep", "Keep recording", true));
+        }
+        out.push(if paused { item("resume", "Resume recording", true) } else { item("pause", "Pause recording", true) });
         out.push(item("stop", "Stop recording", true));
         out.push(item(format!("meeting:{}", live.meeting_id), "Open meeting", true));
     } else if state.available {
         // New meeting's primary action is Start recording, so one entry opens it.
         out.push(item("record", "Start recording…", true));
+        // Opens New meeting filled in from the event; it doesn't start recording.
+        if let Some((event, text)) = next { out.push(item(format!("event:{event}"), label(&text), true)); }
     } else {
         out.push(item("new", "New meeting…", true));
     }
@@ -95,7 +105,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let menu = Menu::new(app)?;
     let listing = meetings::tray_listing(app, 3).ok();
     let mut progress = None;
-    for entry in entries(&capture::snapshot(app), listing.as_ref(), app.state::<Shared>().project()) {
+    for entry in entries(&capture::snapshot(app), listing.as_ref(), app.state::<Shared>().project(), crate::calendar::next()) {
         match entry {
             Entry::Item(id, text, enabled) => {
                 let item = MenuItem::with_id(app, &id, &text, enabled, None::<&str>)?;
@@ -118,9 +128,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
 fn on_menu(app: &AppHandle, id: &str) {
     if id == "quit" { return request_quit(app); }
-    if id == "stop" {
-        let app = app.clone();
-        std::thread::spawn(move || { let _ = capture::stop(&app, None); });
+    if id == "keep" { return capture::keep(app); }
+    if matches!(id, "stop" | "pause" | "resume") {
+        let (app, id) = (app.clone(), id.to_string());
+        std::thread::spawn(move || {
+            let failed = match id.as_str() { "stop" => capture::stop(&app, None).err(), "pause" => capture::pause(&app).err(), _ => capture::resume(&app).err().map(|f| f.message) };
+            // Resuming can fail (the microphone was turned off meanwhile); the window says why.
+            if let Some(problem) = failed { show_main(&app); let _ = app.emit_to("main", "quietnote://capture-problem", problem); }
+        });
         return;
     }
     show_main(app);
@@ -128,9 +143,10 @@ fn on_menu(app: &AppHandle, id: &str) {
         // Opens New meeting; recording starts only from its Start recording button.
         "new" | "record" => app.emit_to("main", "quietnote://new-meeting", ()),
         "settings" => app.emit_to("main", "quietnote://open-settings", ()),
-        _ => match (id.strip_prefix("meeting:"), id.strip_prefix("project:")) {
-            (Some(meeting), _) => app.emit_to("main", "quietnote://open-meeting", meeting),
-            (_, Some(project)) => app.emit_to("main", "quietnote://open-project", project),
+        _ => match (id.strip_prefix("meeting:"), id.strip_prefix("project:"), id.strip_prefix("event:")) {
+            (Some(meeting), _, _) => app.emit_to("main", "quietnote://open-meeting", meeting),
+            (_, Some(project), _) => app.emit_to("main", "quietnote://open-project", project),
+            (_, _, Some(event)) => app.emit_to("main", "quietnote://new-meeting", serde_json::json!({ "eventId": event })),
             _ => Ok(()),
         },
     };
@@ -148,20 +164,20 @@ fn icon(recording: bool) -> tauri::Result<Image<'static>> {
     let bytes: &[u8] = if recording { include_bytes!("../icons/tray-recording.png") } else { include_bytes!("../icons/32x32.png") };
     Image::from_bytes(bytes)
 }
-/// Shows the elapsed recording time (next to the menu bar icon on macOS, in the tooltip elsewhere)
-/// and the recording icon; `None` restores the idle tray.
-pub fn recording_tick(app: &AppHandle, elapsed: Option<Duration>) {
+/// Shows the recorded time (next to the menu bar icon on macOS, in the tooltip elsewhere), whether
+/// it's paused, and the recording icon; `None` restores the idle tray.
+pub fn recording_tick(app: &AppHandle, clock: Option<(Duration, bool)>) {
     let Some(tray) = app.tray_by_id(TRAY) else { return };
-    let recording = elapsed.is_some();
+    let recording = clock.is_some();
     if RECORDING_ICON.swap(recording, Ordering::Relaxed) != recording {
         if let Ok(image) = icon(recording) { let _ = tray.set_icon(Some(image)); }
         #[cfg(target_os = "macos")]
         let _ = tray.set_icon_as_template(true);
     }
-    let clock = elapsed.map(|e| { let s = e.as_secs(); if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{:02}:{:02}", s / 60, s % 60) } });
+    let time = |e: Duration| { let s = e.as_secs(); if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{:02}:{:02}", s / 60, s % 60) } };
     #[cfg(target_os = "macos")]
-    let _ = tray.set_title(clock.as_deref());
-    let _ = tray.set_tooltip(Some(clock.map_or("QuietNote".to_string(), |c| format!("QuietNote: Recording {c}"))));
+    let _ = tray.set_title(clock.map(|(e, paused)| if paused { format!("❙❙ {}", time(e)) } else { time(e) }).as_deref());
+    let _ = tray.set_tooltip(Some(clock.map_or("QuietNote".to_string(), |(e, paused)| format!("QuietNote: {} {}", if paused { "Paused" } else { "Recording" }, time(e)))));
 }
 /// Updates the "Transcribing…" line in place, or rebuilds the menu when transcription ends.
 pub fn progress(app: &AppHandle, text: Option<&str>) {
@@ -206,10 +222,10 @@ mod tests {
     use super::*;
     fn state(recording: bool, transcribing: bool, problem: Option<&str>) -> capture::State {
         capture::State {
-            available: true, microphone: "granted", model: "ready", queued: vec![],
+            available: true, microphone: "granted", model: "ready", queued: vec![], detects_calls: true, live_transcript: true,
             recording: recording.then(|| capture::Live {
-                meeting_id: "m1".into(), title: "Acme onboarding".into(), started_at: "2026-09-29T10:05:00.000Z".into(),
-                mic: capture::Level::Heard, system: capture::Level::Waiting, mic_device: None, system_device: None, problem: problem.map(Into::into), note: None,
+                meeting_id: "m1".into(), title: "Acme onboarding".into(), started_at: "2026-09-29T10:05:00.000Z".into(), recorded_ms: 0, resumed_at: Some("2026-09-29T10:05:00.000Z".into()),
+                mic: capture::Level::Heard, system: capture::Level::Waiting, mic_device: None, system_device: None, problem: problem.map(Into::into), note: None, live_text: capture::LiveText::Off, ending: None,
             }),
             transcribing: transcribing.then(|| capture::Progress { meeting_id: "m0".into(), title: "Standup".into(), percent: 42 }),
         }
@@ -218,21 +234,33 @@ mod tests {
     #[test]
     fn menu_says_what_the_window_says() {
         let listing: meetings::Listing = (vec!["Acme".into()], vec![("m1".into(), "Acme onboarding".into())]);
-        let idle = entries(&state(false, false, None), Some(&listing), Some("Acme".into()));
+        let idle = entries(&state(false, false, None), Some(&listing), Some("Acme".into()), None);
         assert_eq!(texts(&idle), ["Start recording…", "Recent", "Acme onboarding", "Open QuietNote", "Settings…", "Quit QuietNote"]);
+        // The calendar's next meeting sits under Start recording, and opens New meeting for that event.
+        let next = entries(&state(false, false, None), Some(&listing), None, Some(("ev1@0".into(), "Next: Weekly sync · 14:00".into())));
+        assert_eq!(&texts(&next)[..2], ["Start recording…", "Next: Weekly sync · 14:00"]);
+        assert!(next.contains(&Entry::Item("event:ev1@0".into(), "Next: Weekly sync · 14:00".into(), true)));
+        // Not while recording: the menu is the recording's controls.
+        assert!(!texts(&entries(&state(true, false, None), Some(&listing), None, Some(("e".into(), "Now: Sync".into())))).contains(&"Now: Sync"));
         assert!(idle.contains(&Entry::Projects(Some("Acme".into()), vec!["Acme".into()])));
         let mut unavailable = state(false, false, None);
         unavailable.available = false;
-        assert_eq!(texts(&entries(&unavailable, Some(&listing), None))[0], "New meeting…");
-        let recording = entries(&state(true, true, Some("Microphone disconnected. Reconnecting…")), Some(&listing), Some("Acme".into()));
+        assert_eq!(texts(&entries(&unavailable, Some(&listing), None, None))[0], "New meeting…");
+        let recording = entries(&state(true, true, Some("Microphone disconnected. Reconnecting…")), Some(&listing), Some("Acme".into()), None);
         let lines = texts(&recording);
         assert_eq!(lines[0], "● Recording: Acme onboarding");
         assert!(lines[1].starts_with("Started ") && lines[1].ends_with(" by you · No bot joined"));
         assert_eq!(lines[2], "⚠ Microphone disconnected.");
         // Only what matters while recording: no Start, no recent meetings, no projects.
-        assert_eq!(&lines[3..], ["Stop recording", "Open meeting", "Transcribing Standup… 42%", "Open QuietNote", "Settings…", "Stop recording and quit"]);
+        assert_eq!(&lines[3..], ["Pause recording", "Stop recording", "Open meeting", "Transcribing Standup… 42%", "Open QuietNote", "Settings…", "Stop recording and quit"]);
         assert!(!recording.iter().any(|e| matches!(e, Entry::Projects(..))));
-        let broken = entries(&state(true, false, None), None, None);
+        let mut paused = state(true, false, None);
+        if let Some(live) = paused.recording.as_mut() { live.resumed_at = None; }
+        let lines = entries(&paused, Some(&listing), None, None);
+        let lines = texts(&lines);
+        assert_eq!(lines[0], "❙❙ Paused: Acme onboarding");
+        assert_eq!(&lines[2..4], ["Resume recording", "Stop recording"]);
+        let broken = entries(&state(true, false, None), None, None, None);
         assert_eq!(texts(&broken), ["QuietNote needs attention.", "Open QuietNote", "Stop recording and quit"]);
     }
 }

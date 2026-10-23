@@ -2,7 +2,7 @@
 
 Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generated dependencies, build outputs, and test scratch output are ignored and excluded.
 
-## Modified files (42)
+## Modified files (43)
 
 - `.github/workflows/ci.yml`
 - `.github/workflows/release.yml`
@@ -33,6 +33,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src-tauri/icons/icon.ico`
 - `src-tauri/icons/icon.png`
 - `src-tauri/src/lib.rs`
+- `src-tauri/src/main.rs`
 - `src-tauri/tauri.conf.json`
 - `src-tauri/tauri.linux.conf.json`
 - `src/App.tsx`
@@ -47,13 +48,15 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/main.tsx`
 - `vite.config.ts`
 
-## Added files (67)
+## Added files (85)
 
 - `docs/MODIFIED-FILES.md`
 - `docs/PERFORMANCE.md`
 - `docs/QA-RECORDING.md`
 - `docs/SCRATCH-AUDIT.md`
 - `docs/SCREENSHOTS.md`
+- `docs/screenshots/00-onboarding-kind.png`
+- `docs/screenshots/00-onboarding-microphone.png`
 - `docs/screenshots/00-welcome.png`
 - `docs/screenshots/01-library.png`
 - `docs/screenshots/02-summary.png`
@@ -72,17 +75,31 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `playwright.config.ts`
 - `public/quietnote.svg`
 - `scripts/fetch-models.mjs`
+- `src-tauri/.cargo/config.toml`
+- `src-tauri/capabilities/call.json`
 - `src-tauri/Entitlements.plist`
 - `src-tauri/icons/tray-recording-template.png`
 - `src-tauri/icons/tray-recording.png`
 - `src-tauri/icons/tray-template.png`
 - `src-tauri/Info.plist`
 - `src-tauri/src/app_state.rs`
+- `src-tauri/src/ax.rs`
+- `src-tauri/src/calendar.rs`
+- `src-tauri/src/calls.rs`
 - `src-tauri/src/capture.rs`
 - `src-tauri/src/cleanup.rs`
+- `src-tauri/src/cli.rs`
+- `src-tauri/src/compact.rs`
 - `src-tauri/src/connectors.rs`
+- `src-tauri/src/live.rs`
+- `src-tauri/src/mcp.rs`
 - `src-tauri/src/meetings.rs`
+- `src-tauri/src/oauth.rs`
+- `src-tauri/src/parakeet.rs`
 - `src-tauri/src/recorder.rs`
+- `src-tauri/src/speakers.rs`
+- `src-tauri/src/summarize.rs`
+- `src-tauri/src/templates.rs`
 - `src-tauri/src/transcribe.rs`
 - `src-tauri/src/transcript.rs`
 - `src-tauri/src/tray.rs`
@@ -103,6 +120,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/quietnote/brands/teams.svg`
 - `src/quietnote/brands/todoist.svg`
 - `src/quietnote/brands/zoom.svg`
+- `src/quietnote/CallPanel.tsx`
 - `src/quietnote/Capture.tsx`
 - `src/quietnote/catalog.ts`
 - `src/quietnote/Connectors.tsx`
@@ -110,9 +128,12 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/quietnote/Icon.tsx`
 - `src/quietnote/MeetingDetail.tsx`
 - `src/quietnote/model.ts`
+- `src/quietnote/Onboarding.tsx`
+- `src/quietnote/People.tsx`
 - `src/quietnote/quietnote.css`
 - `src/quietnote/QuietNoteApp.tsx`
 - `src/quietnote/seeds.ts`
 - `src/quietnote/Settings.tsx`
 - `src/quietnote/storage.ts`
+- `src/quietnote/Suggestions.tsx`
 - `tests/quietnote.spec.ts`

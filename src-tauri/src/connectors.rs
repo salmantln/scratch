@@ -1,6 +1,8 @@
-//! QuietNote connections to Linear and GitHub. Keys live in the macOS Keychain and never
-//! return to the webview; the network is used only to verify a key or for an explicit send.
+//! QuietNote connections to Linear and GitHub, signed in through the browser (`oauth`) or with a pasted key.
+//! Tokens and keys live in the macOS Keychain and never return to the webview; the network is used only to
+//! sign in, verify a key, refresh a sign-in or for an explicit send.
 use crate::meetings::atomic_write;
+use crate::oauth;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -38,7 +40,7 @@ fn write_accounts(app: &AppHandle, accounts: &BTreeMap<String, Account>) -> Resu
 }
 
 #[cfg(target_os = "macos")]
-mod keychain {
+pub(crate) mod keychain {
     fn entry(service: &str) -> Result<keyring::Entry, String> { keyring::Entry::new("app.quietnote.desktop.connectors", service).map_err(|e| e.to_string()) }
     pub fn store(service: &str, token: &str) -> Result<(), String> { entry(service)?.set_password(token).map_err(|e| format!("Couldn’t save the key to the Keychain. {e}")) }
     pub fn read(service: &str) -> Result<Option<String>, String> {
@@ -49,14 +51,28 @@ mod keychain {
     }
 }
 #[cfg(not(target_os = "macos"))]
-mod keychain {
-    const UNSUPPORTED: &str = "Connections need the macOS Keychain and aren’t available on this platform yet.";
+pub(crate) mod keychain {
+    const UNSUPPORTED: &str = "Saving keys needs the macOS Keychain and isn’t available on this platform yet.";
     pub fn store(_: &str, _: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
     pub fn read(_: &str) -> Result<Option<String>, String> { Err(UNSUPPORTED.into()) }
     pub fn delete(_: &str) -> Result<(), String> { Ok(()) }
 }
-fn token(service: &str) -> Result<String, String> {
-    keychain::read(service)?.ok_or_else(|| format!("{} isn’t connected. Connect it again in Connections.", name(service).unwrap_or(service)))
+/// What a request authorizes with: a pasted key as it is (Linear takes it bare), or a signed-in token,
+/// refreshed first when it's about to expire.
+async fn token(service: &str) -> Result<String, String> {
+    let stored = keychain::read(service)?.ok_or_else(|| format!("{} isn’t connected. Connect it again in Connections.", name(service).unwrap_or(service)))?;
+    let Some(mut tokens) = oauth::Tokens::parse(&stored) else { return Ok(stored) };
+    if tokens.stale(oauth::now()) {
+        tokens = oauth::refresh(service, tokens.refresh.as_deref().unwrap_or_default()).await?;
+        keychain::store(service, &serde_json::to_string(&tokens).map_err(|e| e.to_string())?)?;
+    }
+    Ok(header(service, &tokens))
+}
+fn header(service: &str, tokens: &oauth::Tokens) -> String { if service == "linear" { format!("Bearer {}", tokens.access) } else { tokens.access.clone() } }
+fn remember(app: &AppHandle, service: String, account: &Account) -> Result<(), String> {
+    let mut accounts = read_accounts(app)?;
+    accounts.insert(service, account.clone());
+    write_accounts(app, &accounts)
 }
 
 fn client() -> Result<reqwest::Client, String> {
@@ -129,11 +145,24 @@ pub async fn connector_connect(app: AppHandle, service: String, token: String) -
     if token.is_empty() { return Err("Paste a key first.".into()); }
     let account = Account { account: verify(&service, token).await? };
     keychain::store(&service, token)?;
-    let mut accounts = read_accounts(&app)?;
-    accounts.insert(service, account.clone());
-    write_accounts(&app, &accounts)?;
+    remember(&app, service, &account)?;
     Ok(account)
 }
+/// The services this build can sign in to through the browser; the others take a pasted key.
+#[tauri::command]
+pub fn connector_sign_in_services() -> Vec<&'static str> { ["linear", "github"].into_iter().filter(|s| oauth::provider(s).is_some()).collect() }
+/// Signs in through the browser, checks the account, then keeps the tokens in the Keychain.
+#[tauri::command]
+pub async fn connector_sign_in(app: AppHandle, service: String) -> Result<Account, String> {
+    name(&service)?;
+    let tokens = oauth::sign_in(&app, &service).await?;
+    let account = Account { account: verify(&service, &header(&service, &tokens)).await? };
+    keychain::store(&service, &serde_json::to_string(&tokens).map_err(|e| e.to_string())?)?;
+    remember(&app, service, &account)?;
+    Ok(account)
+}
+#[tauri::command]
+pub fn connector_sign_in_cancel(service: String) { oauth::cancel(&service); }
 #[tauri::command]
 pub async fn connector_disconnect(app: AppHandle, service: String) -> Result<(), String> {
     name(&service)?;
@@ -144,13 +173,13 @@ pub async fn connector_disconnect(app: AppHandle, service: String) -> Result<(),
 }
 #[tauri::command]
 pub async fn connector_targets(service: String) -> Result<Vec<Target>, String> {
-    let token = token(&service)?;
+    let token = token(&service).await?;
     if service == "linear" { return Ok(linear_teams(&linear(&token, "query { teams(first: 100) { nodes { id key name } } }", json!({})).await?)); }
     Ok(github_repos(&call(&service, github(&token, client()?.get(format!("{GITHUB}/user/repos?per_page=100&sort=pushed")))).await?))
 }
 #[tauri::command]
 pub async fn connector_send(service: String, target: String, items: Vec<Item>) -> Result<Vec<Sent>, String> {
-    let token = token(&service)?;
+    let token = token(&service).await?;
     let mut sent = Vec::with_capacity(items.len());
     for item in &items {
         sent.push(match create(&service, &token, &target, item).await {

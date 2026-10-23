@@ -27,8 +27,9 @@ dist-ssr
 src-tauri/target/
 src-tauri/gen/
 
-# Speech models, fetched at build time by scripts/fetch-models.mjs
+# Speech models and the sherpa-onnx library, fetched at build time by scripts/fetch-models.mjs
 src-tauri/resources/models/
+src-tauri/resources/sherpa/
 
 # Build secrets
 .env.build

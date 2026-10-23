@@ -17,13 +17,29 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
 mod app_state;
+mod calendar;
+#[cfg(target_os = "macos")]
+mod ax;
+mod calls;
 mod capture;
 mod cleanup;
+mod cli;
+mod compact;
 mod connectors;
+mod oauth;
 mod git;
+#[cfg(target_os = "macos")]
+mod live;
+mod mcp;
 mod meetings;
+#[cfg(target_os = "macos")]
+mod parakeet;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod recorder;
+#[cfg(target_os = "macos")]
+mod speakers;
+mod summarize;
+mod templates;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod transcribe;
 mod transcript;
@@ -3718,6 +3734,9 @@ fn enable_webview_spellcheck_defaults() {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// The `quietnote` command-line tool, when the arguments are one of its commands (see `cli`); returns its exit code.
+pub fn command_line(args: &[String]) -> Option<i32> { cli::run(args) }
+
 pub fn run() {
     #[cfg(target_os = "macos")]
     enable_webview_spellcheck_defaults();
@@ -3793,8 +3812,11 @@ pub fn run() {
             app.manage(state);
             app.manage(app_state::Shared::default());
             app.manage(capture::Capture::default());
+            app.manage(compact::Compact::default());
+            app.manage(calls::Calls::default());
             // Recordings cut short by a crash or ⌘Q are recovered and transcribed.
             capture::recover(app.handle());
+            capture::pause_on_sleep(app.handle());
 
             // Add notes folder to asset protocol scope so images can be served
             if let Some(ref folder) = app.state::<AppState>().app_config.read().expect("app_config read lock").notes_folder.clone() {
@@ -3843,6 +3865,10 @@ pub fn run() {
             if let Err(e) = tray::init(app.handle()) {
                 eprintln!("Failed to create the tray icon: {}", e);
             }
+            // Offers to record when a call app starts using the microphone (macOS).
+            calls::spawn(app.handle());
+            // The tray's next meeting, while the calendar is on (macOS).
+            calendar::spawn(app.handle());
 
             Ok(())
         })
@@ -3879,18 +3905,49 @@ pub fn run() {
             tray::tray_sync,
             tray::quietnote_quit,
             capture::capture_status,
+            capture::capture_allow_microphone,
             capture::capture_start,
             capture::capture_stop,
+            capture::capture_pause,
+            capture::capture_resume,
+            capture::capture_devices,
+            capture::capture_set_device,
+            capture::capture_live_transcript,
+            compact::window_compact,
             capture::transcribe_meeting,
             capture::transcript_data,
             capture::render_transcripts,
             capture::open_privacy_settings,
+            capture::capture_keep,
+            capture::transcript_rename_speaker,
+            cli::cli_setup_command,
+            cli::mcp_config,
+            calendar::calendar_access,
+            calendar::calendar_events,
+            calendar::calendar_now,
+            summarize::notes_enhance,
+            summarize::meeting_names,
+            templates::note_templates,
+            templates::open_templates,
+            calls::call_accessibility,
+            calls::call_record,
+            calls::call_dismiss,
+            calls::call_open,
+            calls::call_mute,
             connectors::connector_status,
             connectors::connector_connect,
+            connectors::connector_sign_in_services,
+            connectors::connector_sign_in,
+            connectors::connector_sign_in_cancel,
             connectors::connector_disconnect,
             connectors::connector_targets,
             connectors::connector_send,
             connectors::connector_app_icons,
+            summarize::summary_key_status,
+            summarize::summary_set_key,
+            summarize::summary_remove_key,
+            summarize::summary_ollama_models,
+            summarize::summary_suggest,
             get_notes_folder,
             set_notes_folder,
             list_notes,
