@@ -41,7 +41,7 @@
 .sidebar-no-transition .qn-sidebar { transition: none; }
 /* Hiding slides the sidebar out past the window edge; visibility flips once it's gone so it can't take focus. */
 .sidebar-hidden .qn-sidebar { margin-left: calc(-1 * min(var(--sidebar-width, 232px), 40vw)); opacity: 0; visibility: hidden; transition: margin-left 260ms var(--qn-ease-out), opacity 200ms var(--qn-ease-out), visibility 0s 260ms; }
-.sidebar-drag { height: 40px; flex-shrink: 0; }
+.sidebar-drag { height: 60px; flex-shrink: 0; }
 .sidebar-top, .sidebar-bottom { flex-shrink: 0; }
 .sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; margin: 0 calc(-1 * var(--qn-sidebar-pad)); padding: var(--qn-space-2) var(--qn-sidebar-pad) var(--qn-space-4); }
 .qn-sidebar [role="separator"]:focus-visible { outline: none; }
@@ -365,35 +365,40 @@
 .quietnote-shell .field-error { color: var(--qn-red); font-size: 13px; margin: calc(-1 * var(--qn-space-2)) 0 var(--qn-space-3); }
 .quietnote-shell .field-error.floating { position: fixed; bottom: var(--qn-space-6); left: 50%; transform: translateX(-50%); margin: 0; }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--qn-space-2); margin-top: var(--qn-space-5); }
-/* The recorder is pinned to the bottom of the meeting while it runs: one line with the state, the time and the
-   controls, details above it on request, and a card only when a start needs explaining. The meeting becomes a
-   column so the bar sits at the bottom of the window even when the notes are short. */
+/* The recorder is pinned to the bottom of the meeting while it runs, as in Granola: a small pill with the levels,
+   the time and the controls. It widens into a card when the details open above it (the live transcript, the
+   consent line, the microphone) or something needs attention, and when a start needs explaining. The meeting
+   becomes a column so the bar sits at the bottom of the window even when the notes are short. */
 .meeting-detail.docked { min-height: 100%; display: flex; flex-direction: column; padding-bottom: 0; }
-.recorder-dock { position: sticky; bottom: var(--qn-space-4); z-index: 5; margin: auto 0 var(--qn-space-4); padding: var(--qn-space-2) var(--qn-space-2) var(--qn-space-2) var(--qn-space-3); border: 1px solid var(--qn-line); border-radius: 12px; background: var(--qn-paper); box-shadow: 0 10px 28px #1820331a, 0 1px 3px #1820330f; font-size: 13px; }
+.recorder-dock { position: sticky; bottom: var(--qn-space-4); z-index: 5; align-self: flex-start; max-width: 100%; margin: auto 0 var(--qn-space-4); padding: var(--qn-space-1); border: 1px solid var(--qn-line); border-radius: 14px; background: var(--qn-paper); box-shadow: 0 10px 28px #1820331a, 0 1px 3px #1820330f; font-size: 13px; }
+.recorder-dock.wide, .recorder-dock.expanded { align-self: stretch; }
 .meeting-detail.docked > .meeting-content { flex-shrink: 0; padding-bottom: var(--qn-space-6); }
 .recorder-dock.expanded { padding: var(--qn-space-4); }
-.recorder-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--qn-space-1) var(--qn-space-3); min-height: 32px; }
-.recorder-state { display: inline-flex; align-items: center; gap: var(--qn-space-2); font-weight: 600; color: var(--qn-red); }
+.recorder-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--qn-space-1); min-height: 32px; }
+.recorder-state { display: inline-flex; align-items: center; gap: var(--qn-space-2); padding-left: var(--qn-space-2); font-weight: 600; color: var(--qn-red); }
+/* Only the screen reader's word: no space for it. */
+.recorder-state:has(> .sr-only:only-child) { padding: 0; margin-right: calc(-1 * var(--qn-space-1)); }
 .recorder-dock.paused .recorder-state { color: var(--qn-muted); }
-.recorder-time { font-weight: 500; color: var(--qn-ink); font-variant-numeric: tabular-nums; }
-.recorder-detail { min-width: 0; color: var(--qn-muted); display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--qn-space-1) var(--qn-space-4); }
-.recorder-buttons { display: inline-flex; gap: var(--qn-space-2); margin-left: auto; }
-.quietnote-shell .recorder-buttons button { min-height: 32px; padding: 0 var(--qn-space-3); }
-.quietnote-shell .level-button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 var(--qn-space-2); border-radius: 8px; color: var(--qn-muted); }
+.recorder-time { padding: 0 var(--qn-space-2); font-weight: 500; color: var(--qn-ink); font-variant-numeric: tabular-nums; }
+.recorder-detail { min-width: 0; padding: 0 var(--qn-space-2); color: var(--qn-muted); }
+.recorder-buttons { display: inline-flex; align-items: center; gap: 2px; }
+.quietnote-shell .recorder-buttons .icon-button { min-width: 32px; min-height: 32px; border-radius: 10px; }
+.quietnote-shell .recorder-buttons .stop { color: var(--qn-ink); }
+.quietnote-shell .recorder-buttons .stop svg { fill: currentColor; }
+.quietnote-shell .recorder-buttons .stop:hover { color: var(--qn-red); }
+.quietnote-shell .recorder-buttons :is(.primary, .secondary) { min-height: 32px; padding: 0 var(--qn-space-3); border-radius: 10px; }
+.quietnote-shell .level-button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 var(--qn-space-2); border-radius: 10px; background: var(--qn-well); color: var(--qn-muted); }
 .quietnote-shell .level-button:hover { background: var(--qn-hover); color: var(--qn-ink); }
-.mic-picker { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--qn-muted); }
+.mic-picker { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; padding-right: var(--qn-space-1); color: var(--qn-muted); }
 .quietnote-shell .mic-picker select { min-height: 28px; max-width: 22ch; padding: 0 var(--qn-space-2); border-color: transparent; background: transparent; color: var(--qn-text); text-overflow: ellipsis; }
 .quietnote-shell .mic-picker select:hover, .quietnote-shell .mic-picker select:focus-visible { border-color: var(--qn-line); background: var(--qn-card); }
-.recorder-drawer { max-height: 40vh; overflow-y: auto; margin: calc(-1 * var(--qn-space-2)) calc(-1 * var(--qn-space-2)) var(--qn-space-2) calc(-1 * var(--qn-space-3)); padding: var(--qn-space-3) var(--qn-space-4); border-bottom: 1px solid var(--qn-line); animation: qn-drawer 220ms var(--qn-ease-out); }
+.recorder-drawer { max-height: 40vh; overflow-y: auto; margin: calc(-1 * var(--qn-space-1)) calc(-1 * var(--qn-space-1)) var(--qn-space-1); padding: var(--qn-space-3) var(--qn-space-4); border-bottom: 1px solid var(--qn-line); animation: qn-drawer 220ms var(--qn-ease-out); }
 @keyframes qn-drawer { from { opacity: 0; transform: translateY(6px); } }
-.quietnote-shell .recorder-drawer > * + * { margin-top: var(--qn-space-2); }
-.recorder-drawer-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--qn-space-1) var(--qn-space-4); font-size: 12px; }
-.recorder-consent { display: flex; align-items: center; gap: 6px; color: var(--qn-muted); }
-.quietnote-shell .recorder-consent .text-button { min-height: 22px; margin-left: var(--qn-space-1); padding: 0 var(--qn-space-1); font-size: 12px; }
-.recorder-meters { display: flex; flex-wrap: wrap; gap: var(--qn-space-1) var(--qn-space-6); }
-.meter { display: inline-flex; align-items: center; gap: 6px; color: var(--qn-muted); }
-.meter-name { color: var(--qn-ink); }
-.meter-source { color: var(--qn-muted); }
+.quietnote-shell .recorder-drawer .transcript-caption { margin: 0 0 var(--qn-space-2); font-size: 11px; text-align: center; color: var(--qn-faint); }
+.quietnote-shell .recorder-drawer .live-turns > .subtle { padding: var(--qn-space-4) 0; text-align: center; }
+.quietnote-shell .recorder-paused { margin-top: var(--qn-space-2); text-align: center; }
+.recorder-consent { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-top: var(--qn-space-3); padding: 4px var(--qn-space-3); border-radius: 8px; background: var(--qn-well); font-size: 12px; color: var(--qn-muted); }
+.quietnote-shell .recorder-consent .text-button { min-height: 22px; padding: 0 var(--qn-space-1); font-size: 12px; }
 .meter-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
 .meter-bars i { width: 3px; border-radius: 1px; background: var(--qn-edge); transition: background-color 80ms; }
 .meter-bars i:nth-child(1) { height: 4px; } .meter-bars i:nth-child(2) { height: 6px; } .meter-bars i:nth-child(3) { height: 8px; } .meter-bars i:nth-child(4) { height: 10px; } .meter-bars i:nth-child(5) { height: 12px; }
@@ -415,6 +420,8 @@
 .quietnote-shell .live-latest { position: absolute; bottom: var(--qn-space-1); left: 50%; transform: translateX(-50%); min-height: 26px; padding: 0 var(--qn-space-3); border: 1px solid var(--qn-line); border-radius: 13px; background: var(--qn-paper); box-shadow: 0 2px 8px #1820331a; font-size: 12px; }
 .quietnote-shell .recorder-intro { color: var(--qn-text); }
 .quietnote-shell .recorder-note { margin-top: var(--qn-space-1); font-size: 12px; color: var(--qn-muted); }
+.quietnote-shell .recorder-dock.wide > :is(.capture-alert, .recorder-note) { margin: 0 0 var(--qn-space-1); border-radius: 10px; }
+.quietnote-shell .recorder-dock.wide > .recorder-note { padding: 2px var(--qn-space-3); }
 .recorder-actions { display: flex; justify-content: flex-end; gap: var(--qn-space-2); margin-top: var(--qn-space-3); }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--qn-red); animation: qn-live 1.6s var(--qn-ease-in-out) infinite alternate; }
 @keyframes qn-live { to { opacity: .3; } }

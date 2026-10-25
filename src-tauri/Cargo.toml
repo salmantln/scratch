@@ -39,7 +39,7 @@ getrandom = "0.3"
 toml_edit = "0.25"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-foundation = { version = "0.3", features = ["NSUserDefaults", "NSString", "NSArray", "NSDictionary", "NSValue", "NSUUID", "NSDate", "NSError", "NSPredicate", "NSURL"] }
+objc2-foundation = { version = "0.3", features = ["NSUserDefaults", "NSString", "NSArray", "NSDictionary", "NSValue", "NSUUID", "NSDate", "NSError", "NSPredicate", "NSURL", "NSAppleEventManager", "NSAppleEventDescriptor"] }
 keyring = { version = "3", features = ["apple-native"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["objc2-core-graphics"] }
@@ -50,6 +50,7 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
 sherpa-onnx = "1.13"
 objc2-application-services = "0.3"
 objc2-event-kit = "0.3"
+objc2-service-management = { version = "0.3", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
 
 # Local recording and transcription (macOS and Windows only; Linux keeps the prototype capture).
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]

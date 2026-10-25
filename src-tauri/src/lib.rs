@@ -3873,6 +3873,10 @@ pub fn run() {
             if let Err(e) = tray::init(app.handle()) {
                 eprintln!("Failed to create the tray icon: {}", e);
             }
+            // ⌘Q closes to the menu bar; Quit QuietNote quits (macOS).
+            if let Err(e) = tray::app_menu(app.handle()) {
+                eprintln!("Failed to set the app menu: {}", e);
+            }
             // Offers to record when a call app starts using the microphone (macOS).
             calls::spawn(app.handle());
             // Opens QuietNote at login so it's there for calls, unless turned off in Settings (macOS).

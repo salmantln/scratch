@@ -65,7 +65,7 @@ function AddItem({ label, onAdd }: { label: string; onAdd: (text: string) => Pro
 }
 export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevious, onOpenPrevious, example, connections, live, cleanDefault, summarizer, template, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onMarkEnded, onDismissRecovered, onSend }: {
   meeting: Meeting; onRename: (title: string) => Promise<void>; onSpeaker: (from: string, to: string) => Promise<void>; previous: Meeting | null; onPrevious: (markdown: string) => Promise<void>; onOpenPrevious: () => void; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; summarizer: Summarizer | null; template?: string; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
-  armed: boolean; onUpdated: (meeting: Meeting) => void; onStartCapture: () => void; onCloseCapture: () => void; onRetry: () => void; onMarkEnded: () => void; onDismissRecovered: () => void;
+  armed: boolean | 'call'; onUpdated: (meeting: Meeting) => void; onStartCapture: () => void; onCloseCapture: () => void; onRetry: () => void; onMarkEnded: () => void; onDismissRecovered: () => void;
 }) {
   const { metadata: meta, markdown, transcript } = meeting;
   // One Hush per screen: a notice's Hush (transcribing, a problem) or a drafting one comes before an empty state's,

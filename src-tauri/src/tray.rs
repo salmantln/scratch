@@ -144,8 +144,39 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     Ok(menu)
 }
 
+/// ⌘Q (macOS): QuietNote's windows go and it keeps running in the menu bar, as Granola does, so a
+/// call is still noticed and a recording carries on. Quit QuietNote, below it, quits.
+pub fn app_menu(app: &AppHandle) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::menu::MenuItemKind;
+        // Without the menu bar icon there's nothing to close to (and nothing handling these items).
+        if app.tray_by_id(TRAY).is_none() { return Ok(()); }
+        let menu = Menu::default(app)?;
+        if let Some(MenuItemKind::Submenu(first)) = menu.items()?.into_iter().next() {
+            // Tauri's default app menu ends with the predefined Quit, which exits at once.
+            let items = first.items()?;
+            if let Some(MenuItemKind::Predefined(_)) = items.last() { first.remove_at(items.len() - 1)?; }
+            first.append(&MenuItem::with_id(app, "close", "Close to Menu Bar", true, Some("CmdOrCtrl+Q"))?)?;
+            first.append(&MenuItem::with_id(app, "quit", "Quit QuietNote", true, None::<&str>)?)?;
+        }
+        app.set_menu(menu)?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+    Ok(())
+}
+
+fn close_to_menu_bar(app: &AppHandle) {
+    for (label, window) in app.webview_windows() {
+        if label == "main" { let _ = window.hide(); } else if label != crate::calls::PANEL { let _ = window.close(); }
+    }
+    sync_dock(app, Some("main"));
+}
+
 fn on_menu(app: &AppHandle, id: &str) {
     if id == "quit" { return request_quit(app); }
+    if id == "close" { return close_to_menu_bar(app); }
     if id == "keep" { return capture::keep(app); }
     if matches!(id, "stop" | "pause" | "resume") {
         let (app, id) = (app.clone(), id.to_string());

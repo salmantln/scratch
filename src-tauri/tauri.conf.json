@@ -44,6 +44,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "copyright": "© 2026 Sarl Studio",
+    "resources": {
+      "../LICENSE": "LICENSE"
+    },
     "createUpdaterArtifacts": false,
     "fileAssociations": [
       {

@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Children, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Icon } from './Icon';
@@ -19,8 +19,9 @@ function CopyConsent() {
   }
   return <button className="text-button" title={consentMessage} onClick={() => void copy()}><Icon name="copy" size={14} />{copied ? 'Copied' : 'Copy message'}</button>;
 }
-/** `transcript`: whether the recorder shows the live transcript (not while the Transcript tab shows it already). */
-type Props = { meeting: Meeting; autoStart: boolean; live: storage.CaptureState; clean: boolean; transcript: boolean; onUpdated: (meeting: Meeting) => void; onClose: () => void };
+/** `transcript`: whether the recorder shows the live transcript (not while the Transcript tab shows it already).
+ * `autoStart` 'call': the call panel's Record, which starts even before the first-run explanation. */
+type Props = { meeting: Meeting; autoStart: boolean | 'call'; live: storage.CaptureState; clean: boolean; transcript: boolean; onUpdated: (meeting: Meeting) => void; onClose: () => void };
 /** The recorder is pinned to the bottom of the meeting, so notes and the transcript stay usable above it while it runs. */
 export function Capture(props: Props) { return props.live.available ? <Recorder {...props} /> : <Prototype {...props} />; }
 function useAutoStart(autoStart: boolean, start: () => Promise<void>) {
@@ -42,10 +43,6 @@ export const othersWaiting = 'waiting for others';
 /** Five bars from a peak sample (0–1), about 9 dB each from −50 dB. */
 const bars = (peak: number) => peak <= 0 ? 0 : Math.max(0, Math.min(5, Math.ceil((20 * Math.log10(peak) + 50) / 9)));
 const Bars = ({ peak }: { peak: number }) => { const lit = bars(peak); return <span className="meter-bars" aria-hidden="true">{[0, 1, 2, 3, 4].map(i => <i key={i} className={i < lit ? 'on' : undefined} />)}</span>; };
-function Meter({ name, peak, level, waiting, source }: { name: string; peak: number; level: storage.Level; waiting: string; source: string | null }) {
-  return <span className="meter"><span className="meter-name">{name}</span><Bars peak={peak} />
-    {level === 'heard' ? <><span className="sr-only">✓</span>{source && <span className="meter-source">{source}</span>}</> : <span>{level === 'silent' ? 'silent' : waiting}</span>}</span>;
-}
 /** Live levels from Rust (`quietnote://levels`, ten a second), so it's clear at once that both tracks are recording. */
 export function useLevels(running: boolean): [number, number] {
   const [levels, setLevels] = useState<[number, number]>([0, 0]);
@@ -139,18 +136,20 @@ function FirstRun() {
 function Alert({ title, children, action }: { title: string; children: string; action?: [string, () => void] }) {
   return <div className="capture-alert" role="alert"><strong>{title}</strong> <span>{children}</span>{action && <button className="text-button" onClick={action[1]}>{action[0]}</button>}</div>;
 }
-/** The bar at the bottom of a recording meeting: one line with the state, the time and the controls. Details open
- * above it, and anything that needs attention sits between the two. */
-function Dock({ label, paused, elapsed, lead, detail, actions, drawer, children }: { label: string; paused?: boolean; elapsed?: number; lead?: ReactNode; detail?: ReactNode; actions?: ReactNode; drawer?: ReactNode; children?: ReactNode }) {
-  return <section className={`recorder-dock ${paused ? 'paused' : ''}`} aria-label="Recorder">
+/** The bar at the bottom of a recording meeting, as in Granola: a small pill with the levels, the time and the
+ * controls. It widens into a card when details open above it or something needs attention. `quiet`: the levels
+ * already say it's recording, so the word is left to screen readers. */
+function Dock({ label, quiet, paused, elapsed, lead, detail, actions, drawer, children }: { label: string; quiet?: boolean; paused?: boolean; elapsed?: number; lead?: ReactNode; detail?: ReactNode; actions?: ReactNode; drawer?: ReactNode; children?: ReactNode }) {
+  const wide = Boolean(drawer) || Children.toArray(children).length > 0;
+  return <section className={`recorder-dock${paused ? ' paused' : ''}${wide ? ' wide' : ''}`} aria-label="Recorder">
     {drawer}
     {children}
     <div className="recorder-line">
       {lead}
-      <span className="recorder-state" role="status"><i className={paused ? 'paused-dot' : 'live-dot'} aria-hidden="true" />{label}</span>
+      <span className="recorder-state" role="status">{!lead && <i className={paused ? 'paused-dot' : 'live-dot'} aria-hidden="true" />}<span className={quiet ? 'sr-only' : undefined}>{label}</span></span>
       {elapsed !== undefined && <strong className="recorder-time" aria-label={`Recorded time ${clock(elapsed)}`}>{clock(elapsed)}</strong>}
-      {typeof detail === 'string' ? <span className="recorder-detail">{detail}</span> : detail}
       {actions && <span className="recorder-buttons">{actions}</span>}
+      {typeof detail === 'string' ? <span className="recorder-detail">{detail}</span> : detail}
     </div>
   </section>;
 }
@@ -166,6 +165,7 @@ function Recorder({ meeting, autoStart, live, clean, transcript, onUpdated, onCl
   const { id, status } = meeting.metadata;
   const [failure, setFailure] = useState<(storage.CaptureFailure & { title: string }) | null>(null);
   const [busy, setBusy] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [open, toggle] = useDrawer();
   const drawerId = useId();
   const recording = live.recording?.meetingId === id ? live.recording : null;
@@ -185,28 +185,29 @@ function Recorder({ meeting, autoStart, live, clean, transcript, onUpdated, onCl
     finally { setBusy(false); }
   }
   const start = () => run(async () => onUpdated({ ...meeting, metadata: await storage.captureStart(id) }), 'Recording didn’t start.');
-  const stop = () => run(async () => onUpdated({ ...meeting, metadata: await storage.captureStop() }), 'Recording didn’t stop.');
+  const stop = () => { setStopping(true); return run(async () => onUpdated({ ...meeting, metadata: await storage.captureStop() }), 'Recording didn’t stop.').finally(() => setStopping(false)); };
   const settings = (kind: 'microphone' | 'systemAudio'): [string, () => void] => [`Open ${settingsName}`, () => void storage.openPrivacySettings(kind).catch(() => { /* The message says where to go. */ })];
-  // The first recording waits for Start, so the explanation comes before macOS asks.
-  const auto = autoStart && (status === 'idle' || status === 'ready') && !firstRun && !denied && !other;
+  // The first recording waits for Start, so the explanation comes before macOS asks; the call panel's Record doesn't.
+  const call = autoStart === 'call';
+  const auto = Boolean(autoStart) && (status === 'idle' || status === 'ready') && (!firstRun || call) && !denied && !other;
   useAutoStart(auto, start);
   if (capturing) {
-    return <Dock label={paused ? 'Paused' : 'Recording'} paused={paused} elapsed={recording ? recorded(recording, now) : undefined}
+    return <Dock label={stopping ? 'Stopping…' : paused ? 'Paused' : 'Recording'} quiet={Boolean(recording) && !paused && !stopping} paused={paused} elapsed={recording ? recorded(recording, now) : undefined}
       lead={recording && <button className="level-button" aria-expanded={open} aria-controls={drawerId} title={open ? 'Hide details' : 'Show details'} onClick={toggle}>
         <Bars peak={Math.max(mic, system)} /><Icon name="chevron" size={14} style={open ? undefined : { transform: 'rotate(180deg)' }} /><span className="sr-only">Recording details</span></button>}
-      detail={recording && <MicPicker current={recording.micDevice} />}
+      // The microphone is chosen with the details open, as in Granola, so the folded bar stays small.
+      detail={recording && open && <MicPicker current={recording.micDevice} />}
       // Pause and Resume share a place and Stop keeps its own, so switching never moves a button under the pointer.
       actions={recording && <>
-        {paused ? <button className="primary" disabled={busy} onClick={() => void run(storage.captureResume, 'Recording didn’t resume.')}><Icon name="play" size={13} />Resume</button>
-          : <button className="secondary" disabled={busy} onClick={() => void run(storage.capturePause, 'Recording didn’t pause.')}><Icon name="pause" size={14} />Pause</button>}
-        <button className={`${paused ? 'secondary' : 'primary'} stop`} aria-label="Stop recording" title="Stop recording" disabled={busy} onClick={() => void stop()}><Icon name="stop" size={14} />{busy && !paused ? 'Stopping…' : 'Stop'}</button>
+        {paused ? <button className="primary resume" disabled={busy} onClick={() => void run(storage.captureResume, 'Recording didn’t resume.')}><Icon name="play" size={13} />Resume</button>
+          : <button className="icon-button" aria-label="Pause recording" title="Pause recording" disabled={busy} onClick={() => void run(storage.capturePause, 'Recording didn’t pause.')}><Icon name="pause" size={15} /></button>}
+        <button className="icon-button stop" aria-label="Stop recording" title="Stop recording" disabled={busy} onClick={() => void stop()}><Icon name="stop" size={14} /></button>
       </>}
       drawer={recording && open && <div className="recorder-drawer" id={drawerId}>
-        <div className="recorder-drawer-head"><p className="recorder-consent"><Icon name="info" size={14} />{consent}<CopyConsent /></p>
-          <p className="subtle">{liveText === 'on' ? `Live draft · the full transcript is made when you stop` : `Transcribed on this ${device} when you stop`}</p></div>
-        {transcript && liveText !== 'off' && <LiveTranscript meetingId={id} clean={clean} state={liveText} listening={paused ? undefined : speaking} />}
-        {paused ? <p className="subtle">Paused. The microphone and call audio aren’t being recorded until you resume.</p>
-        : <div className="recorder-meters"><Meter name="Mic" peak={mic} level={recording.mic} waiting="no sound yet" source={recording.micDevice} /><Meter name="Call audio" peak={system} level={recording.system} waiting={othersWaiting} source={recording.systemDevice} /></div>}
+        {transcript && liveText !== 'off' ? <LiveTranscript meetingId={id} clean={clean} state={liveText} listening={paused ? undefined : speaking} caption="Live draft · the full transcript is made when you stop" />
+          : <p className="subtle transcript-caption">{liveText === 'off' ? `Transcribed on this ${device} when you stop` : 'Live draft · the full transcript is made when you stop'}</p>}
+        {paused && <p className="subtle recorder-paused">Paused. The microphone and call audio aren’t being recorded until you resume.</p>}
+        <p className="recorder-consent"><Icon name="info" size={13} />{consent}<CopyConsent /></p>
       </div>}>
       {recording?.ending && <Alert title={recording.ending.reason} action={['Keep recording', () => void run(storage.captureKeep, 'Couldn’t keep recording.')]}>{stopsIn(recording.ending.stopsAt, now)}</Alert>}
       {recording?.problem && <Alert title="Needs attention.">{recording.problem}</Alert>}
@@ -216,7 +217,7 @@ function Recorder({ meeting, autoStart, live, clean, transcript, onUpdated, onCl
       {failure && <Alert title={failure.code === 'disk' ? 'Not enough disk space.' : failure.code === 'mic-denied' ? 'Microphone access is off.' : failure.title} action={failure.code === 'mic-denied' ? settings('microphone') : undefined}>{failure.message}</Alert>}
     </Dock>;
   }
-  if (!firstRun && (busy || (auto && !failure))) return <Dock label="Starting…" />;
+  if ((!firstRun || call) && (busy || (auto && !failure))) return <Dock label="Starting…" />;
   return <StartCard busy={busy} disabled={Boolean(other)} onStart={() => void start()} onCancel={onClose} label={busy ? 'Waiting for permission…' : denied || failure ? 'Try again' : 'Start recording'}>
     {firstRun && mac && !failure ? <FirstRun /> : <p className="recorder-intro">Records your microphone and the call audio on this {device}. Nothing joins the call. {consent}</p>}
     {live.model !== 'ready' && <Alert title="Transcription is unavailable.">{`The speech model is ${live.model} in this installation. You can still record; the audio is kept for when transcription works.`}</Alert>}

@@ -604,17 +604,13 @@ test('J: desktop recording runs in the background, then shows a clean transcript
   await expect(recorder.getByRole('status')).toContainText('Recording');
   expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
   await expect(recorder).not.toContainText('Prototype');
-  // Live meters show at once that both tracks record; call audio waits for the others, it isn't failing.
-  const mic = recorder.locator('.meter', { hasText: 'Mic' });
-  const others = recorder.locator('.meter', { hasText: 'Call audio' });
-  await expect(others).toContainText('waiting for others');
-  await expect(mic.locator('i.on')).toHaveCount(0);
+  // The levels show at once that it's recording, from whichever side is louder; the word is for screen readers.
+  const levels = recorder.getByRole('button', { name: 'Recording details' }).locator('i.on');
+  await expect(levels).toHaveCount(0);
   await qn(page, q => q.emit('quietnote://levels', [0.3, 0]));
-  await expect(mic.locator('i.on')).toHaveCount(5);
-  await expect(others.locator('i.on')).toHaveCount(0);
+  await expect(levels).toHaveCount(5);
   await qn(page, q => q.emit('quietnote://levels', [0.01, 0.05]));
-  await expect(mic.locator('i.on')).toHaveCount(2);
-  await expect(others.locator('i.on')).toHaveCount(3);
+  await expect(levels).toHaveCount(3);
   await expect(recorder.locator('.recorder-time')).toHaveText(/^00:0\d$/);
   // Recording opens Notes and nothing covers it. Here the strip is the recorder, so the window bar steps aside.
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -1141,6 +1137,17 @@ test('T: a detected call records from the panel in a meeting named after the app
   await expect.poll(() => qn(page, q => q.state.preferences.detectCalls)).toBe(false);
 });
 
+test('T2: Record in the call panel starts at once, even before the first-run explanation; macOS asks by itself', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Design review', 'Acme')], microphone: 'undetermined' });
+  await page.goto('/');
+  await expect(row(page, 'Design review')).toBeVisible();
+  await qn(page, q => q.emit('quietnote://record-call', 'Zoom'));
+  const recorder = page.getByRole('region', { name: 'Recorder' });
+  await expect(recorder.getByRole('status')).toContainText('Recording');
+  await expect(recorder).not.toContainText('Before your first recording');
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
+});
+
 test('U: the recorder stays at the bottom while notes grow, pauses and resumes, and the microphone can be chosen', async ({ page }) => {
   const recording = meetingWith('Acme onboarding', { status: 'recording' });
   await mockDesktop(page, { meetings: [recording], recording: recording.metadata.id, startedAgo: 65 });
@@ -1164,9 +1171,13 @@ test('U: the recorder stays at the bottom while notes grow, pauses and resumes, 
   const details = recorder.getByRole('button', { name: 'Recording details' });
   await details.click();
   await expect(details).toHaveAttribute('aria-expanded', 'false');
-  await expect(recorder.locator('.meter')).toHaveCount(0);
+  // Folded, it's a small pill: no consent line or microphone, only the levels, the time, Pause and Stop.
+  await expect(recorder.getByRole('button', { name: 'Copy message' })).toHaveCount(0);
+  await expect(recorder.getByLabel('Microphone')).toHaveCount(0);
+  expect((await recorder.boundingBox())!.width).toBeLessThan(300);
   await details.click();
-  await expect(recorder.locator('.meter')).toHaveCount(2);
+  await expect(recorder.getByRole('button', { name: 'Copy message' })).toBeVisible();
+  await expect(recorder.getByLabel('Microphone')).toBeVisible();
   // Pause: the clock stops, Resume is the one primary action, and Stop still ends the recording.
   await recorder.getByRole('button', { name: 'Pause' }).click();
   await expect(recorder.getByRole('status')).toHaveText('Paused');

@@ -79,8 +79,9 @@ function Shell() {
   const [query, setQuery] = useState('');
   const [indexedIds, setIndexedIds] = useState<string[]>([]);
   const [dialog, setDialog] = useState<'' | 'project' | 'meeting' | 'connections' | 'send'>('');
-  // The meeting whose recording was asked for: its recorder strip starts it (or explains first).
-  const [capture, setCapture] = useState<string | null>(null);
+  // The meeting whose recording was asked for: its recorder strip starts it (or explains first, unless the
+  // call panel's Record asked: that press is the start, as in Granola, and macOS asks for the microphone itself).
+  const [capture, setCapture] = useState<{ id: string; call: boolean } | null>(null);
   const [live, setLive] = useState<storage.CaptureState>(storage.noCapture);
   // New meeting asked for before any project existed: it opens once the project is created.
   const [meetingNext, setMeetingNext] = useState(false);
@@ -172,7 +173,7 @@ function Shell() {
   useEffect(() => {
     const previous = lastRecording.current; lastRecording.current = live.recording;
     if (live.recording) setStopped(null);
-    else if (previous) { setStopped({ id: previous.meetingId, title: previous.title }); setCapture(c => c === previous.meetingId ? null : c); }
+    else if (previous) { setStopped({ id: previous.meetingId, title: previous.title }); setCapture(c => c?.id === previous.meetingId ? null : c); }
   }, [live.recording]);
   const updateMetadata = useCallback((metadata: Meeting['metadata']) => {
     const existing = records.current.find(m => m.metadata.id === metadata.id);
@@ -255,7 +256,7 @@ function Shell() {
   }, []);
   useEffect(() => { if (view === 'meeting' && stopped?.id === selected) setStopped(null); }, [view, selected, stopped]);
   // A start that's still waiting (first-run explanation, a permission problem) is dropped on leaving its meeting.
-  useEffect(() => { setCapture(c => c && (view !== 'meeting' || selected !== c) ? null : c); }, [view, selected]);
+  useEffect(() => { setCapture(c => c && (view !== 'meeting' || selected !== c.id) ? null : c); }, [view, selected]);
   const sorted = useMemo(() => [...meetings].sort((a, b) => b.metadata.date.localeCompare(a.metadata.date)), [meetings]);
   const allProjects = useMemo(() => [...new Set([...projects, ...meetings.map(m => m.metadata.project)])].sort((a, b) => a.localeCompare(b)), [projects, meetings]);
   const current = meetings.find(m => m.metadata.id === selected);
@@ -306,14 +307,14 @@ function Shell() {
   useEffect(() => { if (compact && view !== 'meeting') setWindowCompact(false); }, [compact, view, setWindowCompact]);
   const blocked = Boolean(dialog);
   // Tray actions arrive after Rust has shown the window. An open dialog is never replaced.
-  // The call panel's Start recording: a meeting named after the app, recording at once (the first-run
-  // explanation still comes first). Without a project yet, New meeting asks for one.
+  // The call panel's Record: a meeting named after the app, recording at once. Without a project yet,
+  // New meeting asks for one.
   // With the calendar on, the meeting is named after the event the user is in, and knows who's invited.
   async function recordCall(app: string) {
     if (live.recording) { openMeeting(live.recording.meetingId, 'Notes'); setWindowCompact(true); return; }
     if (!allProjects.length) { newMeeting(); return; }
     const event = calendarOn ? await storage.calendarNow().catch(() => null) : null;
-    createMeeting(event?.title ?? `${app} call`, event ? projectOf(event) : fallbackProject, true, event).then(() => setWindowCompact(true)).catch(e => setProblem(`Couldn’t start recording. ${String(e)}`));
+    createMeeting(event?.title ?? `${app} call`, event ? projectOf(event) : fallbackProject, 'call', event).then(() => setWindowCompact(true)).catch(e => setProblem(`Couldn’t start recording. ${String(e)}`));
   }
   // The tray's next meeting opens New meeting for that event.
   function newMeetingFor(eventId?: string) {
@@ -372,11 +373,11 @@ function Shell() {
     await storage.createProject(name);
     setProjects(p => [...p, name]); setDialog(meetingNext ? 'meeting' : ''); setMeetingNext(false); go('project', name);
   }
-  async function createMeeting(title: string, meetingProject: string, record: boolean, event: CalendarEvent | null = null) {
+  async function createMeeting(title: string, meetingProject: string, record: boolean | 'call', event: CalendarEvent | null = null) {
     const meeting = makeMeeting(title, meetingProject, event);
     await storage.createMeeting(meeting);
     upsert(meeting); remember(lastProjectKey, meetingProject); setDialog(''); openMeeting(meeting.metadata.id, 'Notes');
-    if (record) setCapture(meeting.metadata.id);
+    if (record) setCapture({ id: meeting.metadata.id, call: record === 'call' });
   }
   async function addExamples() {
     setAddingExamples(true);
@@ -495,7 +496,7 @@ function Shell() {
       {problem && <div className="banner warning" role="alert"><div><strong>{problem}</strong></div><div className="banner-actions"><button className="text-button" onClick={() => setProblem('')}>Dismiss</button></div></div>}
       <main className="qn-main" ref={main}><HushYield.Provider value={bannerHush}>
         {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} connections={connections} summaryKey={summaryKey} onSummaryKey={setSummaryKey} section={settingsSection} onSection={setSettingsSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
-        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={markdown => persist(previous!.metadata.id, markdown)} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture === current.metadata.id} onUpdated={upsert} onStartCapture={() => { setCapture(current.metadata.id); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onMarkEnded={() => void markEnded(current)} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
+        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={markdown => persist(previous!.metadata.id, markdown)} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onMarkEnded={() => void markEnded(current)} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
           const latest = records.current.find(m => m.metadata.id === current.metadata.id)!;
           return persist(current.metadata.id, replaceSection(latest.markdown, 'Notes', notes));
         }} />
