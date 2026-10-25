@@ -13,6 +13,7 @@ import { MeetingDetail } from './MeetingDetail';
 import { People } from './People';
 import { ActionItems, Home, MeetingList } from './Library';
 import { Onboarding } from './Onboarding';
+import { accelerator, bound, label, type Action } from './shortcuts';
 import { actionItems, clock, linkAction, recorded, makeMeeting, openingTab, previousMeeting, projectFor, retitle, replaceSection, searchMeeting, searchTerms, section, shortDate, stopsIn, toggleAction, type CalendarEvent, type Meeting, type MeetingTab } from './model';
 import { demoMeetings, isExample } from './seeds';
 import * as storage from './storage';
@@ -316,6 +317,16 @@ function Shell() {
     const event = calendarOn ? await storage.calendarNow().catch(() => null) : null;
     createMeeting(event?.title ?? `${app} call`, event ? projectOf(event) : fallbackProject, 'call', event).then(() => setWindowCompact(true)).catch(e => setProblem(`Couldn’t start recording. ${String(e)}`));
   }
+  // Start recording without a dialog (Home, the tray, ⌘⇧R), in person or on a call, as Granola's New note does.
+  // The event happening now names it, and a meeting already prepared for that event records into it.
+  async function quickRecord() {
+    if (live.recording) { openMeeting(live.recording.meetingId, 'Notes'); return; }
+    if (!live.available || !allProjects.length) { newMeeting(); return; }
+    const event = calendarOn ? await storage.calendarNow().catch(() => null) : null;
+    const prepared = event && records.current.find(m => m.metadata.calendarEvent === event.id && m.metadata.status === 'idle');
+    if (prepared) { openMeeting(prepared.metadata.id, 'Notes'); setCapture({ id: prepared.metadata.id, call: false }); return; }
+    createMeeting(event?.title ?? 'Untitled meeting', event ? projectOf(event) : fallbackProject, true, event).catch(e => setProblem(`Couldn’t start recording. ${String(e)}`));
+  }
   // The tray's next meeting opens New meeting for that event.
   function newMeetingFor(eventId?: string) {
     if (!eventId) { newMeeting(); return; }
@@ -323,8 +334,8 @@ function Shell() {
     if (known) newMeeting(known);
     else storage.calendarEvents(1).then(list => newMeeting(list.find(e => e.id === eventId) ?? null)).catch(() => newMeeting());
   }
-  const trayActions = useRef({ blocked, newMeetingFor, openMeeting, go, recordCall });
-  trayActions.current = { blocked, newMeetingFor, openMeeting, go, recordCall };
+  const trayActions = useRef({ blocked, newMeetingFor, openMeeting, go, recordCall, quickRecord });
+  trayActions.current = { blocked, newMeetingFor, openMeeting, go, recordCall, quickRecord };
   useEffect(() => {
     if (!storage.desktop) return;
     let cancelled = false; const unlisten: (() => void)[] = [];
@@ -334,6 +345,7 @@ function Shell() {
     on<{ eventId?: string } | null>('quietnote://new-meeting', p => trayActions.current.newMeetingFor(p?.eventId));
     on('quietnote://open-settings', () => trayActions.current.go('settings'));
     on<string>('quietnote://record-call', app => trayActions.current.recordCall(app));
+    on('quietnote://record-now', () => void trayActions.current.quickRecord());
     // The call panel's "Don't notify" writes the preferences in Rust.
     listen('quietnote://preferences-changed', () => { storage.preferences().then(setPreferences).catch(() => { /* The next load reads them. */ }); }).then(fn => { if (cancelled) fn(); else unlisten.push(fn); });
     return () => { cancelled = true; unlisten.forEach(fn => fn()); };
@@ -346,20 +358,26 @@ function Shell() {
     return () => clearTimeout(timer);
   }, [loading, traySignature, contextProject]);
   useEffect(() => {
+    // The main actions' keys are the user's (Settings → Shortcuts); the others are fixed.
     const handler = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || blocked) return;
-      const key = event.key.toLowerCase();
-      if (key === 'k' && (event.target as HTMLElement | null)?.closest?.('.ProseMirror')) return;
-      if (key === 'k' || key === 'p' || (event.shiftKey && key === 'f')) { event.preventDefault(); setView('search'); searchInput.current?.select(); }
-      else if (key === 'n') { event.preventDefault(); newMeeting(); }
-      else if (event.shiftKey && key === 'm') { event.preventDefault(); window.dispatchEvent(new CustomEvent('toggle-source-mode')); }
-      else if (key === ',') { event.preventDefault(); setView('settings'); }
-      else if (key === '\\' || (event.shiftKey && key === 'enter')) { event.preventDefault(); setSidebarHidden(v => !v); }
-      else if (/^[1-9]$/.test(key) && !event.altKey && !event.shiftKey && allProjects[Number(key) - 1]) { event.preventDefault(); go('project', allProjects[Number(key) - 1]); }
+      const pressed = blocked ? null : accelerator(event);
+      if (!pressed) return;
+      const is = (action: Action) => pressed === bound(preferences, action);
+      // ⌘K in the editor adds a link.
+      if (pressed === 'CmdOrCtrl+K' && (event.target as HTMLElement | null)?.closest?.('.ProseMirror')) return;
+      const project = /^CmdOrCtrl\+([1-9])$/.exec(pressed);
+      if (is('search') || pressed === 'CmdOrCtrl+P' || pressed === 'CmdOrCtrl+Shift+F') { event.preventDefault(); setView('search'); searchInput.current?.select(); }
+      else if (is('newMeeting')) { event.preventDefault(); newMeeting(); }
+      else if (is('record')) { event.preventDefault(); void trayActions.current.quickRecord(); }
+      else if (pressed === 'CmdOrCtrl+Shift+M') { event.preventDefault(); window.dispatchEvent(new CustomEvent('toggle-source-mode')); }
+      else if (is('settings')) { event.preventDefault(); setView('settings'); }
+      else if (is('sidebar') || pressed === 'CmdOrCtrl+Shift+Enter') { event.preventDefault(); setSidebarHidden(v => !v); }
+      else if (project && allProjects[Number(project[1]) - 1]) { event.preventDefault(); go('project', allProjects[Number(project[1]) - 1]); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [blocked, newMeeting, allProjects, go]);
+  }, [blocked, newMeeting, allProjects, go, preferences]);
+  const keyLabel = (action: Action) => label(bound(preferences, action));
   // Shortcut hints only appear while ⌘ is held on its own, so the sidebar stays uncluttered.
   const [showKeys, setShowKeys] = useState(false);
   useEffect(() => {
@@ -450,7 +468,7 @@ function Shell() {
       onPointerDownCapture={e => { if (rail && onDivider(e)) e.stopPropagation(); }}>
       <div className="sidebar-drag" data-tauri-drag-region />
       <div className="sidebar-top">
-        <button className="primary new-meeting" title="New meeting (⌘N)" onClick={() => newMeeting()}><Icon name="plus" size={16} /><span className="label">New meeting</span><kbd aria-hidden="true">⌘N</kbd></button>
+        <button className="primary new-meeting" title={`New meeting (${keyLabel('newMeeting')})`} onClick={() => newMeeting()}><Icon name="plus" size={16} /><span className="label">New meeting</span><kbd aria-hidden="true">{keyLabel('newMeeting')}</kbd></button>
       </div>
       <nav className="sidebar-scroll" aria-label="Meetings and projects">
         <h2 className="sidebar-label">Meetings</h2>
@@ -462,9 +480,10 @@ function Shell() {
         {allProjects.map((p, i) => <div key={p}>{navItem(view === 'project' && project === p, 'folder', p, () => go('project', p), <><span className="initial" aria-hidden="true">{p.slice(0, 1).toUpperCase()}</span>{i < 9 && <kbd aria-hidden="true">⌘{i + 1}</kbd>}<span className="sidebar-count">{meetings.filter(m => m.metadata.project === p).length || ''}</span></>, 'project-item')}</div>)}
       </nav>
       <div className="sidebar-bottom">
+        {storage.canGiveFeedback && navItem(false, 'feedback', 'Give feedback', () => void storage.giveFeedback().catch(e => setProblem(`Couldn’t open your mail app. ${String(e)}`)))}
         {navItem(dialog === 'connections', 'plug', 'Connections', () => setDialog('connections'))}
-        {navItem(view === 'search', 'search', 'Search', () => setView('search'), <kbd aria-hidden="true">⌘K</kbd>)}
-        {navItem(view === 'settings', 'settings', 'Settings', () => setView('settings'), <kbd aria-hidden="true">⌘,</kbd>)}
+        {navItem(view === 'search', 'search', 'Search', () => setView('search'), <kbd aria-hidden="true">{keyLabel('search')}</kbd>)}
+        {navItem(view === 'settings', 'settings', 'Settings', () => setView('settings'), <kbd aria-hidden="true">{keyLabel('settings')}</kbd>)}
       </div>
       <SidebarResizeHandle />
     </aside>
@@ -512,7 +531,7 @@ function Shell() {
         </div>
         : view === 'people' ? <People meetings={meetings} selected={person} calendar={calendarOn} onSelect={setPerson} onOpen={openMeeting} onToggle={toggleItem} onSettings={() => go('settings')} />
         : view === 'actions' ? <ActionItems meetings={sorted} onOpen={openMeeting} onToggle={toggleItem} />
-        : view === 'home' ? <Home meetings={sorted} live={live} events={events} onPrepare={event => void (allProjects.length ? createMeeting(event.title, projectOf(event), false, event) : Promise.resolve(newMeeting(event))).catch(e => setProblem(`Couldn’t create the meeting. ${String(e)}`))} onOpen={openMeeting} onNewMeeting={() => newMeeting()} onSearch={text => { setQuery(text); setView('search'); }} onToggle={toggleItem} onAll={() => go('all')} onAllActions={() => go('actions')} />
+        : view === 'home' ? <Home meetings={sorted} live={live} events={events} onPrepare={event => void (allProjects.length ? createMeeting(event.title, projectOf(event), false, event) : Promise.resolve(newMeeting(event))).catch(e => setProblem(`Couldn’t create the meeting. ${String(e)}`))} onOpen={openMeeting} onNewMeeting={() => newMeeting()} onRecord={() => void quickRecord()} onSearch={text => { setQuery(text); setView('search'); }} onToggle={toggleItem} onAll={() => go('all')} onAllActions={() => go('actions')} />
         : <div className="page library-page">
           <header className="page-header"><div><h1>{view === 'project' ? project : 'All meetings'}</h1>{libraryMeetings.length > 0 && <p className="subtle">{count(libraryMeetings.length)}</p>}</div></header>
           {libraryMeetings.length ? <MeetingList meetings={libraryMeetings} showProject={view !== 'project'} onOpen={openMeeting} />

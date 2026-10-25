@@ -1,3 +1,4 @@
+import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { appDataDir, join } from '@tauri-apps/api/path';
 import { saveFileDirect } from '../services/files';
@@ -165,6 +166,8 @@ export async function setMcpAgent(id: string, on: boolean): Promise<Agent> { ret
 export async function openPrivacySettings(kind: 'microphone' | 'systemAudio' | 'accessibility' | 'calendars'): Promise<void> { if (desktop) await invoke('open_privacy_settings', { kind }); }
 /** Whether QuietNote may read browser window and tab titles (macOS Accessibility); `ask` shows macOS's prompt first. */
 export async function callAccessibility(ask: boolean): Promise<boolean> { return desktop ? invoke('call_accessibility', { ask }) : false; }
+/** Start recording from any app: Rust registers the accelerator ('' turns it off) and refuses one another app holds. */
+export async function setGlobalShortcut(accelerator: string): Promise<void> { if (desktop) await invoke('hotkey_set', { accelerator }); }
 export async function revealAudio(metadata: MeetingMetadata): Promise<void> {
   if (!desktop || !metadata.audioPath) return;
   // Explorer needs Windows separators; the archive's relative paths always use '/'.
@@ -193,6 +196,25 @@ export function appIcons(): Promise<Record<string, string>> { return desktop ? (
 export async function openLink(url: string): Promise<void> {
   if (desktop) await invoke('open_url_safe', { url }); else window.open(url, '_blank', 'noopener');
 }
+// Give feedback: a new message in the mail app to the address set at build time (VITE_QUIETNOTE_FEEDBACK), with only
+// the version and computer filled in; nothing is sent until the user sends it. Without the address there's no button.
+const feedbackTo = (import.meta.env.VITE_QUIETNOTE_FEEDBACK as string | undefined)?.match(/^(?:mailto:)?([^@\s?]+@[^@\s?]+)$/)?.[1];
+export const canGiveFeedback = !!feedbackTo;
+export async function giveFeedback(): Promise<void> {
+  const version = desktop ? await getVersion().catch(() => '') : '';
+  const body = `\n\n—\nQuietNote ${version || 'browser preview'} on ${device}`;
+  await openLink(`mailto:${feedbackTo}?subject=${encodeURIComponent('QuietNote feedback')}&body=${encodeURIComponent(body)}`);
+}
+// Licenses (macOS): an optional supporter or commercial license that unlocks nothing. Its key is checked once with
+// Lemon Squeezy, then kept in the Keychain. Checkout links are set at build time; without them the buy buttons are hidden.
+export type License = { kind: 'supporter' | 'commercial'; name: string; seats?: number; activatedAt: string; expiresAt?: string };
+export type LicenseStatus = { available: boolean; license: License | null };
+const link = (url: string | undefined) => url?.startsWith('https://') ? url : undefined;
+export const checkout = { supporter: link(import.meta.env.VITE_QUIETNOTE_CHECKOUT_SUPPORTER), commercial: link(import.meta.env.VITE_QUIETNOTE_CHECKOUT_COMMERCIAL) };
+export async function licenseStatus(): Promise<LicenseStatus> { return desktop ? invoke('license_status') : { available: false, license: null }; }
+export async function activateLicense(key: string): Promise<License> { return desktop ? invoke('license_activate', { key }) : desktopOnly(); }
+/** Resolves with a note when Lemon Squeezy couldn't be told; the license is removed from this computer either way. */
+export async function removeLicense(): Promise<string | null> { return desktop ? invoke('license_remove') : desktopOnly(); }
 // Summary suggestions (desktop): drafted from the transcript by Claude with the user's own key, or by a model in
 // Ollama on this computer. The key stays in the Keychain; nothing is written until the user accepts an item.
 export type SummaryProvider = 'anthropic' | 'ollama';

@@ -1,10 +1,10 @@
 //! Menu bar / system tray: a thin control surface over the main window and the meeting archive.
 //! Recent meetings and projects are read from disk, so the tray works while the window is hidden.
-//! While recording it shows the meeting, the elapsed time and Stop; it never starts a recording itself.
+//! While recording it shows the meeting, the elapsed time and Stop. It starts a recording only when its Start recording is clicked.
 use crate::{app_state::Shared, capture, meetings};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
@@ -13,10 +13,30 @@ use tauri::{AppHandle, Emitter, Manager, Wry};
 const TRAY: &str = "quietnote";
 /// The "Transcribing…" line, updated in place so the menu isn't rebuilt on every percent.
 static PROGRESS: Mutex<Option<MenuItem<Wry>>> = Mutex::new(None);
-/// What the icon shows: 0 idle, 1 recording, 2 paused.
-static STATE: AtomicU8 = AtomicU8::new(0);
-/// Hush in that state (Settings → Appearance → Show Hush), or the logo.
+/// The `Mood` the icon shows.
+static STATE: AtomicU8 = AtomicU8::new(Mood::Resting as u8);
+/// Hush in that mood (Settings → Appearance → Show Hush), or the logo.
 static HUSH: AtomicBool = AtomicBool::new(true);
+/// Until when Hush shows a transcript was just saved.
+static DONE: Mutex<Option<Instant>> = Mutex::new(None);
+const DONE_FOR: Duration = Duration::from_secs(4);
+
+/// What Hush's face in the menu bar says QuietNote is doing, as the window's Hush does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Mood { Resting, Listening, Paused, Winding, Attention, Transcribing, Done }
+const MOODS: [Mood; 7] = [Mood::Resting, Mood::Listening, Mood::Paused, Mood::Winding, Mood::Attention, Mood::Transcribing, Mood::Done];
+/// The recording first (about to stop by itself, then a problem, then paused), then transcription.
+fn mood(state: &capture::State, done: bool) -> Mood {
+    match &state.recording {
+        Some(live) if live.ending.is_some() => Mood::Winding,
+        Some(live) if live.problem.is_some() => Mood::Attention,
+        Some(live) if live.resumed_at.is_none() => Mood::Paused,
+        Some(_) => Mood::Listening,
+        None if state.transcribing.is_some() || !state.queued.is_empty() => Mood::Transcribing,
+        None if done => Mood::Done,
+        None => Mood::Resting,
+    }
+}
 
 pub fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -96,8 +116,8 @@ fn entries(state: &capture::State, listing: Option<&meetings::Listing>, project:
         out.push(item("stop", "Stop recording", true));
         out.push(item(format!("meeting:{}", live.meeting_id), "Open meeting", true));
     } else if state.available {
-        // New meeting's primary action is Start recording, so one entry opens it.
-        out.push(item("record", "Start recording…", true));
+        // Records at once into a new meeting (or one prepared for the event happening now); the window names it.
+        out.push(item("record", "Start recording", true));
         // Opens New meeting filled in from the event; it doesn't start recording.
         if let Some((event, text)) = next { out.push(item(format!("event:{event}"), label(&text), true)); }
     } else {
@@ -119,11 +139,11 @@ fn entries(state: &capture::State, listing: Option<&meetings::Listing>, project:
     out
 }
 
-fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+fn build_menu(app: &AppHandle, state: &capture::State) -> tauri::Result<Menu<Wry>> {
     let menu = Menu::new(app)?;
     let listing = meetings::tray_listing(app, 3).ok();
     let mut progress = None;
-    for entry in entries(&capture::snapshot(app), listing.as_ref(), app.state::<Shared>().project(), crate::calendar::next()) {
+    for entry in entries(state, listing.as_ref(), app.state::<Shared>().project(), crate::calendar::next()) {
         match entry {
             Entry::Item(id, text, enabled) => {
                 let item = MenuItem::with_id(app, &id, &text, enabled, None::<&str>)?;
@@ -189,8 +209,9 @@ fn on_menu(app: &AppHandle, id: &str) {
     }
     show_main(app);
     let _ = match id {
-        // Opens New meeting; recording starts only from its Start recording button.
-        "new" | "record" => app.emit_to("main", "quietnote://new-meeting", ()),
+        "new" => app.emit_to("main", "quietnote://new-meeting", ()),
+        // The user's click starts the recording; the window makes the meeting and starts it.
+        "record" => app.emit_to("main", "quietnote://record-now", ()),
         "settings" => app.emit_to("main", "quietnote://open-settings", ()),
         _ => match (id.strip_prefix("meeting:"), id.strip_prefix("project:"), id.strip_prefix("event:")) {
             (Some(meeting), _, _) => app.emit_to("main", "quietnote://open-meeting", meeting),
@@ -201,26 +222,49 @@ fn on_menu(app: &AppHandle, id: &str) {
     };
 }
 
+/// Rebuilds the menu and sets Hush's mood from the capture state.
 pub fn refresh(app: &AppHandle) -> tauri::Result<()> {
-    if let Some(tray) = app.tray_by_id(TRAY) { tray.set_menu(Some(build_menu(app)?))?; }
+    let Some(tray) = app.tray_by_id(TRAY) else { return Ok(()) };
+    let state = capture::snapshot(app);
+    tray.set_menu(Some(build_menu(app, &state)?))?;
+    show(&tray, &state);
     Ok(())
 }
+fn show(tray: &TrayIcon, state: &capture::State) {
+    let done = DONE.lock().ok().and_then(|d| *d).is_some_and(|until| Instant::now() < until);
+    let mood = mood(state, done) as u8;
+    if STATE.swap(mood, Ordering::Relaxed) != mood { draw(tray); }
+}
+/// A transcript was just saved: Hush looks pleased for a moment, then rests.
+pub fn transcribed(app: &AppHandle) {
+    if let Ok(mut done) = DONE.lock() { *done = Some(Instant::now() + DONE_FOR); }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(DONE_FOR);
+        if let Some(tray) = app.tray_by_id(TRAY) { show(&tray, &capture::snapshot(&app)); }
+    });
+}
 
-fn icon(state: u8, hush: bool) -> tauri::Result<Image<'static>> {
+fn icon(mood: Mood, hush: bool) -> tauri::Result<Image<'static>> {
+    let busy = matches!(mood, Mood::Listening | Mood::Paused | Mood::Winding | Mood::Attention);
     #[cfg(target_os = "macos")]
-    let bytes: &[u8] = match (hush, state) {
-        (true, 0) => include_bytes!("../icons/tray-template.png"),
-        (true, 1) => include_bytes!("../icons/tray-recording-template.png"),
-        (true, _) => include_bytes!("../icons/tray-paused-template.png"),
-        (false, 0) => include_bytes!("../icons/tray-logo-template.png"),
-        (false, _) => include_bytes!("../icons/tray-logo-recording-template.png"),
+    let bytes: &[u8] = match (hush, mood) {
+        (true, Mood::Resting) => include_bytes!("../icons/tray-template.png"),
+        (true, Mood::Listening) => include_bytes!("../icons/tray-recording-template.png"),
+        (true, Mood::Paused) => include_bytes!("../icons/tray-paused-template.png"),
+        (true, Mood::Winding) => include_bytes!("../icons/tray-winding-template.png"),
+        (true, Mood::Attention) => include_bytes!("../icons/tray-attention-template.png"),
+        (true, Mood::Transcribing) => include_bytes!("../icons/tray-transcribing-template.png"),
+        (true, Mood::Done) => include_bytes!("../icons/tray-done-template.png"),
+        (false, _) if busy => include_bytes!("../icons/tray-logo-recording-template.png"),
+        (false, _) => include_bytes!("../icons/tray-logo-template.png"),
     };
     #[cfg(not(target_os = "macos"))]
-    let bytes: &[u8] = { let _ = hush; if state == 0 { include_bytes!("../icons/32x32.png") } else { include_bytes!("../icons/tray-recording.png") } };
+    let bytes: &[u8] = { let _ = hush; if busy { include_bytes!("../icons/tray-recording.png") } else { include_bytes!("../icons/32x32.png") } };
     Image::from_bytes(bytes)
 }
 fn draw(tray: &TrayIcon) {
-    if let Ok(image) = icon(STATE.load(Ordering::Relaxed), HUSH.load(Ordering::Relaxed)) { let _ = tray.set_icon(Some(image)); }
+    if let Ok(image) = icon(MOODS[STATE.load(Ordering::Relaxed) as usize], HUSH.load(Ordering::Relaxed)) { let _ = tray.set_icon(Some(image)); }
     #[cfg(target_os = "macos")]
     let _ = tray.set_icon_as_template(true);
 }
@@ -230,12 +274,10 @@ pub fn restyle(app: &AppHandle) {
     let hush = shows_hush(app);
     if HUSH.swap(hush, Ordering::Relaxed) != hush { if let Some(tray) = app.tray_by_id(TRAY) { draw(&tray); } }
 }
-/// Shows the recorded time (next to the menu bar icon on macOS, in the tooltip elsewhere), whether
-/// it's paused, and the icon for that; `None` restores the idle tray.
+/// Shows the recorded time (next to the menu bar icon on macOS, in the tooltip elsewhere) and whether
+/// it's paused; `None` clears it. Hush's face follows `refresh`.
 pub fn recording_tick(app: &AppHandle, clock: Option<(Duration, bool)>) {
     let Some(tray) = app.tray_by_id(TRAY) else { return };
-    let state = match clock { None => 0, Some((_, false)) => 1, Some((_, true)) => 2 };
-    if STATE.swap(state, Ordering::Relaxed) != state { draw(&tray); }
     let time = |e: Duration| { let s = e.as_secs(); if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{:02}:{:02}", s / 60, s % 60) } };
     #[cfg(target_os = "macos")]
     let _ = tray.set_title(clock.map(|(e, paused)| if paused { format!("❙❙ {}", time(e)) } else { time(e) }).as_deref());
@@ -253,10 +295,10 @@ pub fn progress(app: &AppHandle, text: Option<&str>) {
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
     let builder = TrayIconBuilder::with_id(TRAY)
         .tooltip("QuietNote")
-        .menu(&build_menu(app)?)
+        .menu(&build_menu(app, &capture::snapshot(app))?)
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()));
     #[cfg(target_os = "macos")]
-    let builder = { HUSH.store(shows_hush(app), Ordering::Relaxed); builder.icon(icon(0, HUSH.load(Ordering::Relaxed))?).icon_as_template(true) };
+    let builder = { HUSH.store(shows_hush(app), Ordering::Relaxed); builder.icon(icon(Mood::Resting, HUSH.load(Ordering::Relaxed))?).icon_as_template(true) };
     // Windows convention: left click restores the app, right click opens the menu.
     #[cfg(not(target_os = "macos"))]
     let builder = {
@@ -297,10 +339,10 @@ mod tests {
     fn menu_says_what_the_window_says() {
         let listing: meetings::Listing = (vec!["Acme".into()], vec![("m1".into(), "Acme onboarding".into())]);
         let idle = entries(&state(false, false, None), Some(&listing), Some("Acme".into()), None);
-        assert_eq!(texts(&idle), ["Start recording…", "Recent", "Acme onboarding", "Open QuietNote", "Settings…", "Quit QuietNote"]);
+        assert_eq!(texts(&idle), ["Start recording", "Recent", "Acme onboarding", "Open QuietNote", "Settings…", "Quit QuietNote"]);
         // The calendar's next meeting sits under Start recording, and opens New meeting for that event.
         let next = entries(&state(false, false, None), Some(&listing), None, Some(("ev1@0".into(), "Next: Weekly sync · 14:00".into())));
-        assert_eq!(&texts(&next)[..2], ["Start recording…", "Next: Weekly sync · 14:00"]);
+        assert_eq!(&texts(&next)[..2], ["Start recording", "Next: Weekly sync · 14:00"]);
         assert!(next.contains(&Entry::Item("event:ev1@0".into(), "Next: Weekly sync · 14:00".into(), true)));
         // Not while recording: the menu is the recording's controls.
         assert!(!texts(&entries(&state(true, false, None), Some(&listing), None, Some(("e".into(), "Now: Sync".into())))).contains(&"Now: Sync"));
@@ -324,5 +366,24 @@ mod tests {
         assert_eq!(&lines[2..4], ["Resume recording", "Stop recording"]);
         let broken = entries(&state(true, false, None), None, None, None);
         assert_eq!(texts(&broken), ["QuietNote needs attention.", "Open QuietNote", "Stop recording and quit"]);
+    }
+    #[test]
+    fn hush_shows_what_is_happening() {
+        assert_eq!(mood(&state(false, false, None), false), Mood::Resting);
+        assert_eq!(mood(&state(false, false, None), true), Mood::Done);
+        assert_eq!(mood(&state(true, true, None), true), Mood::Listening);
+        assert_eq!(mood(&state(true, false, Some("Microphone disconnected.")), false), Mood::Attention);
+        let mut paused = state(true, false, None);
+        if let Some(live) = paused.recording.as_mut() { live.resumed_at = None; }
+        assert_eq!(mood(&paused, false), Mood::Paused);
+        let mut ending = state(true, false, Some("Disk space is low."));
+        if let Some(live) = ending.recording.as_mut() { live.ending = Some(capture::EndingView { reason: "The call ended.".into(), stops_at: "2026-09-29T11:00:00.000Z".into() }); }
+        assert_eq!(mood(&ending, false), Mood::Winding);
+        // From Stop until the transcript is saved, queued before the worker picks it up too.
+        assert_eq!(mood(&state(false, true, None), true), Mood::Transcribing);
+        let mut queued = state(false, false, None);
+        queued.queued = vec!["m1".into()];
+        assert_eq!(mood(&queued, false), Mood::Transcribing);
+        assert!(MOODS.iter().enumerate().all(|(i, m)| *m as usize == i));
     }
 }

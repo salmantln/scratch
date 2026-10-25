@@ -1,12 +1,66 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Icon } from './Icon';
 import { Hush } from './Hush';
 import { serviceName } from './catalog';
-import { appearance, calendarAccess, callAccessibility, cliSetupCommand, desktop, mcpAgents, mcpConfig, ollamaModels, openPrivacySettings, removeSummaryKey, saveSummaryKey, setMcpAgent, type Agent, type Connections, type PrivacyPreferences, type Service } from './storage';
-export type SettingsSection = 'Privacy' | 'Appearance' | 'Local archive' | 'About';
+import { getVersion } from '@tauri-apps/api/app';
+import { dateLabel } from './model';
+import { accelerator, actions, bound, globalDefault, globalRecord, label, problem } from './shortcuts';
+import { activateLicense, appearance, calendarAccess, callAccessibility, checkout, cliSetupCommand, desktop, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openLink, openPrivacySettings, removeLicense, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type Connections, type LicenseStatus, type PrivacyPreferences, type Service } from './storage';
+export type SettingsSection = 'Privacy' | 'Appearance' | 'Shortcuts' | 'Local archive' | 'About';
 const mac = /Mac/.test(navigator.userAgent);
-const sections: [SettingsSection, 'privacy' | 'appearance' | 'archive' | 'info'][] = [['Privacy', 'privacy'], ['Appearance', 'appearance'], ['Local archive', 'archive'], ['About', 'info']];
+const sections: [SettingsSection, 'privacy' | 'appearance' | 'keyboard' | 'archive' | 'info'][] = [['Privacy', 'privacy'], ['Appearance', 'appearance'], ['Shortcuts', 'keyboard'], ['Local archive', 'archive'], ['About', 'info']];
+/** One shortcut: click, then press the keys (Esc cancels). `optional` adds a switch, for the one that works from any app. */
+function KeyRow({ name, description, value, fallback, check, onSet, optional }: {
+  name: string; description?: string; value: string; fallback: string; check: (accel: string) => string; onSet: (accel: string) => Promise<void> | void;
+  optional?: { on: boolean; onToggle: (on: boolean) => Promise<void> };
+}) {
+  const [listening, setListening] = useState(false);
+  const [error, setError] = useState('');
+  async function set(accel: string) {
+    const why = check(accel);
+    if (why) { setError(why); return; }
+    setListening(false); setError('');
+    try { await onSet(accel); } catch (e) { setError(String(e).replace(/^Error: /, '')); }
+  }
+  function keyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    // Tab still leaves, and stops listening on the way out.
+    if (!listening || (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey)) return;
+    // Kept from the window's own shortcuts while a new one is pressed.
+    event.preventDefault(); event.stopPropagation();
+    if (event.key === 'Escape') { setListening(false); setError(''); return; }
+    const accel = accelerator(event.nativeEvent);
+    if (accel) void set(accel);
+  }
+  async function toggle(on: boolean) {
+    setError('');
+    try { await optional!.onToggle(on); } catch (e) { setError(String(e).replace(/^Error: /, '')); }
+  }
+  const on = optional ? optional.on : true;
+  return <div className="setting-row"><div><div className="setting-title">{name}</div>{description && <p>{description}</p>}{error && <p className="field-error" role="alert">{error}</p>}</div>
+    <div className="key-controls">
+      {on && value !== fallback && <button className="text-button" onClick={() => void set(fallback)}>Reset</button>}
+      {on && <button type="button" className={`key-field ${listening ? 'listening' : ''}`} aria-label={`${name} shortcut`} onClick={() => { setListening(l => !l); setError(''); }} onBlur={() => setListening(false)} onKeyDown={keyDown}>{listening ? 'Press keys…' : label(value)}</button>}
+      {optional && <button type="button" className={`toggle ${on ? 'on' : ''}`} role="switch" aria-checked={on} aria-label={name} onClick={() => void toggle(!on)}><span /></button>}
+    </div></div>;
+}
+/** The main actions' keys, and Start recording from any app (registered by Rust where recording is real). */
+function Shortcuts({ values, onChange, anyApp }: { values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; anyApp: boolean }) {
+  const global = globalRecord(values);
+  async function setGlobal(accel: string) { await setGlobalShortcut(accel); onChange('globalRecord', accel); }
+  return <>
+    <h1>Shortcuts</h1>
+    <p className="lede">Click a shortcut, then press the keys you want. Esc cancels.</p>
+    <section><h2>In QuietNote</h2>
+      {actions.map(a => <KeyRow key={a.key} name={a.name} value={bound(values, a.action)} fallback={a.fallback} check={accel => problem(accel, a.action, values)} onSet={accel => onChange(a.key, accel)} />)}
+      <p className="group-note">Always: {label('CmdOrCtrl+P')} and {label('CmdOrCtrl+Shift+F')} search, {label('CmdOrCtrl+Shift+Enter')} shows or hides the sidebar, and {label('CmdOrCtrl+1')}–{label('CmdOrCtrl+9').slice(-1)} open your first nine projects.</p>
+    </section>
+    {anyApp && <section><h2>From any app</h2>
+      <KeyRow name="Start recording from any app" description="Works while QuietNote is in the background or hidden, for example during a Zoom call. It records only when you press it." value={global || globalDefault} fallback={globalDefault}
+        check={accel => problem(accel, 'global', values)} onSet={setGlobal} optional={{ on: Boolean(global), onToggle: on => setGlobal(on ? globalDefault : '') }} />
+    </section>}
+  </>;
+}
 /** Who drafts summary suggestions. The Anthropic key is checked, then kept in the Keychain; Ollama runs on this computer. */
 function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; summaryKey: boolean; onSummaryKey: (saved: boolean) => void }) {
   const provider = values.summaryProvider === 'anthropic' || values.summaryProvider === 'ollama' ? values.summaryProvider : '';
@@ -45,6 +99,53 @@ function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { value
         <select aria-label="Ollama model" value={model} onChange={e => onChange('ollamaModel', e.target.value)}><option value="" disabled>Choose a model</option>{models.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
       : <div className="setting-row"><div><div className="setting-title">{error ? 'Ollama isn’t running' : 'No models in Ollama'}</div><p>{error ? 'Install Ollama from ollama.com and open it' : 'Pull a model in Ollama'}, then check again.</p></div><button className="text-button" onClick={() => setCheck(c => c + 1)}>Check again</button></div>)}
     {error && provider === 'anthropic' && <p className="field-error setting-error" role="alert">{error}</p>}
+  </section>;
+}
+/** An optional license, in About. It unlocks nothing: it shows a supporter's thank-you, or who a team license is for. */
+function Support() {
+  const [status, setStatus] = useState<LicenseStatus | null>(null);
+  const [entering, setEntering] = useState(false);
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [note, setNote] = useState('');
+  const message = (e: unknown) => String(e).replace(/^Error: /, '');
+  useEffect(() => {
+    let cancelled = false;
+    licenseStatus().then(s => { if (!cancelled) setStatus(s); }).catch(e => { if (!cancelled) setError(message(e)); });
+    return () => { cancelled = true; };
+  }, []);
+  async function activate() {
+    setBusy(true); setError(''); setNote('');
+    try { const license = await activateLicense(key); setStatus({ available: true, license }); setKey(''); setEntering(false); } catch (e) { setError(message(e)); }
+    setBusy(false);
+  }
+  async function remove() {
+    setBusy(true); setError('');
+    try { setNote(await removeLicense() ?? ''); setStatus({ available: true, license: null }); } catch (e) { setError(message(e)); }
+    setBusy(false);
+  }
+  if (!status?.available) return error ? <p className="field-error" role="alert">{error}</p> : null;
+  const license = status.license;
+  const expired = Boolean(license?.expiresAt && Date.parse(license.expiresAt) < Date.now());
+  const terms = license && [license.seats && `${license.seats} ${license.seats === 1 ? 'seat' : 'seats'}`, license.expiresAt && `${expired ? 'Expired' : 'Renews'} ${dateLabel(license.expiresAt)}`].filter(Boolean).join(' · ');
+  return <section><h2>Support QuietNote</h2>
+    {license ? <div className="setting-row"><div>
+        <div className="setting-title">{license.kind === 'supporter' ? `Supporter${license.name ? ` · thank you, ${license.name}` : ''}` : `Licensed to ${license.name || 'your team'}`}</div>
+        <p>{license.kind === 'supporter' ? `Since ${dateLabel(license.activatedAt)}. Thank you for paying for QuietNote’s development.` : terms || 'Commercial license.'}</p></div>
+      <button className="text-button" disabled={busy} onClick={() => void remove()}>{busy ? 'Removing…' : 'Remove license'}</button></div>
+    : <>
+      <p className="group-note">QuietNote is free, with nothing held back. A license pays for its development; it doesn’t unlock anything.</p>
+      {checkout.supporter && <div className="setting-row"><div><div className="setting-title">Supporter</div><p>Pay once. You get a thank-you here, and early builds once they’re available.</p></div><button className="secondary" onClick={() => void openLink(checkout.supporter!)}>Become a supporter</button></div>}
+      {checkout.commercial && <div className="setting-row"><div><div className="setting-title">Commercial</div><p>For teams using QuietNote at work, per person, per year. It’s optional: QuietNote is free for work too.</p></div><button className="secondary" onClick={() => void openLink(checkout.commercial!)}>Buy for your team</button></div>}
+      {entering
+        ? <form className="setting-row key-row" onSubmit={e => { e.preventDefault(); if (key.trim()) void activate(); }}><div className="setting-title">License key</div><p>It’s checked once with Lemon Squeezy, then kept in your macOS Keychain. Only the key and the name “QuietNote for Mac” are sent.</p>
+          <div className="token-field"><input aria-label="License key" placeholder="Paste your key" value={key} autoComplete="off" spellCheck={false} aria-invalid={Boolean(error)} onChange={e => { setKey(e.target.value); setError(''); }} />
+          <button className="primary" type="submit" disabled={busy || !key.trim()}>{busy ? 'Checking…' : 'Activate'}</button></div></form>
+        : <div className="setting-row"><div><div className="setting-title">Already have a license?</div><p>Enter the key from your receipt email.</p></div><button className="text-button" onClick={() => { setEntering(true); setNote(''); }}>Enter license key</button></div>}
+    </>}
+    {error && <p className="field-error setting-error" role="alert">{error}</p>}
+    {note && <p className="subtle">{note}</p>}
   </section>;
 }
 /** The AI apps on this computer that can read the archive through `quietnote mcp`, each added or removed in its own settings file. */
@@ -91,6 +192,8 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
   onOpenArchive: () => void; onReload: () => void; onWorkspace: () => void; onExamples: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [version, setVersion] = useState('');
+  useEffect(() => { if (desktop) getVersion().then(setVersion).catch(() => setVersion('')); }, []);
   const [cli, setCli] = useState<'idle' | 'copied' | 'failed'>('idle');
   // The Calendar permission, checked while the calendar is on (and on coming back from System Settings).
   const [calendar, setCalendar] = useState('');
@@ -185,6 +288,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
           <div className="setting-row hush-setting"><Hush mood="ready" size={56} /><div><div className="setting-title">Show Hush</div><p>His face shows what QuietNote is doing, on the Home card{detectsCalls ? ', the call panel' : ''}{desktop && mac ? ' and in the menu bar' : ''}. He never joins a call. Turned off, the status dot and the logo come back.</p></div>
           <button type="button" className={`toggle ${flag('showHush', true) ? 'on' : ''}`} role="switch" aria-checked={flag('showHush', true)} aria-label="Show Hush" onClick={() => onChange('showHush', !flag('showHush', true))}><span /></button></div></section>
       </>}
+      {section === 'Shortcuts' && <Shortcuts values={values} onChange={onChange} anyApp={recording && desktop} />}
       {section === 'Local archive' && <>
         <h1>Local archive</h1>
         <p className="lede">{desktop ? 'QuietNote stores meeting files in a local archive that you control. Each meeting is a folder of Markdown files you can open in any editor.' : 'This browser preview keeps meetings in this browser only. The desktop app stores them as Markdown files on your device.'}</p>
@@ -199,8 +303,10 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
       </>}
       {section === 'About' && <>
         <h1>About</h1>
-        <p className="lede">QuietNote 0.1.0 <span className="badge">Prototype</span></p>
+        <p className="lede">QuietNote{version ? ` ${version}` : ''} <span className="badge">Prototype</span></p>
         <p className="body-copy">Made by Sarl Studio · <a href="https://x.com/salmantln" target="_blank" rel="noreferrer">@salmantln</a></p>
+        <p className="body-copy">QuietNote is open source under the GNU Affero General Public License, version 3. The code it takes from Scratch stays under the MIT license.</p>
+        {desktop && <Support />}
         {recording && <p className="body-copy">Transcription uses <a href="https://github.com/ggml-org/whisper.cpp" target="_blank" rel="noreferrer">whisper.cpp</a> (MIT) with OpenAI’s Whisper large-v3-turbo model (MIT) and the Silero voice activity detector (MIT), all running on this device. Echo cancellation is WebRTC’s AEC3, through <a href="https://github.com/dignifiedquire/sonora" target="_blank" rel="noreferrer">Sonora</a> (BSD-3-Clause).</p>}
         {recording && mac && <p className="body-copy">Voices are told apart, and English live transcripts are made, with <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noreferrer">sherpa-onnx</a> (Apache-2.0) and ONNX Runtime (MIT), using pyannote segmentation 3.0 (MIT), 3D-Speaker ERes2Net (Apache-2.0) and NVIDIA’s Parakeet TDT 110M (CC BY 4.0).</p>}
         <p className="body-copy">Service logos in Connections come from Iconify “logos” (CC0), vscode-icons (MIT) and Simple Icons (CC0). Trademarks belong to their owners. Apple and Things icons are read from apps installed on this Mac.</p>

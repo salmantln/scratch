@@ -2,6 +2,7 @@
 name = "quietnote"
 version = "0.1.0"
 description = "A local-first, bot-free meeting workspace"
+license = "AGPL-3.0-only"
 authors = ["QuietNote contributors", "Eric Li (Scratch)"]
 edition = "2021"
 
@@ -60,6 +61,8 @@ rubato = "5"
 fs4 = "0.8"
 sonora = "0.2"
 sonora-aec3 = "0.2"
+# Start recording from any app (hotkey.rs).
+tauri-plugin-global-shortcut = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies.whisper-rs]
 version = "0.16"

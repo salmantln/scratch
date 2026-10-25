@@ -29,7 +29,7 @@ export function MeetingList({ meetings, showProject, onOpen }: { meetings: Meeti
 }
 const settingsName = storage.device === 'Mac' ? 'System Settings' : 'Settings';
 /** Answers "can I record right now?" from what this device reports, with the fix beside the problem. */
-function CaptureCard({ live, onNewMeeting, onOpen }: { live: storage.CaptureState; onNewMeeting: () => void; onOpen: (id: string, tab?: MeetingTab) => void }) {
+function CaptureCard({ live, onNewMeeting, onRecord, onOpen }: { live: storage.CaptureState; onNewMeeting: () => void; onRecord: () => void; onOpen: (id: string, tab?: MeetingTab) => void }) {
   const { recording, transcribing, queued } = live;
   const denied = live.available && !recording && live.microphone === 'denied';
   const attention = denied || Boolean(recording?.problem) || (live.available && live.model !== 'ready');
@@ -63,7 +63,7 @@ function CaptureCard({ live, onNewMeeting, onOpen }: { live: storage.CaptureStat
     </div>
     <div className="notice-actions">
       {recording ? <button className="text-button" onClick={() => onOpen(recording.meetingId, 'Notes')}>Open meeting</button>
-      : live.available ? <>{denied && <button className="text-button" onClick={() => void storage.openPrivacySettings('microphone').catch(() => { /* The message says where to go. */ })}>Open {settingsName}</button>}<button className="primary" onClick={onNewMeeting}><i className="record-dot" aria-hidden="true" />Start recording</button></>
+      : live.available ? <>{denied && <button className="text-button" onClick={() => void storage.openPrivacySettings('microphone').catch(() => { /* The message says where to go. */ })}>Open {settingsName}</button>}<button className="primary" onClick={onRecord}><i className="record-dot" aria-hidden="true" />Start recording</button></>
       : <button className="secondary" onClick={onNewMeeting}><Icon name="plus" size={15} />New meeting</button>}
     </div>
   </section>;
@@ -89,13 +89,13 @@ function UpNext({ events, meetings, onOpen, onPrepare }: { events: CalendarEvent
   </section>;
 }
 type HomeProps = {
-  meetings: Meeting[]; live: storage.CaptureState; events: CalendarEvent[]; onPrepare: (event: CalendarEvent) => void; onOpen: (id: string, tab?: MeetingTab) => void; onNewMeeting: () => void;
+  meetings: Meeting[]; live: storage.CaptureState; events: CalendarEvent[]; onPrepare: (event: CalendarEvent) => void; onOpen: (id: string, tab?: MeetingTab) => void; onNewMeeting: () => void; onRecord: () => void;
   onSearch: (text: string) => void; onToggle: (id: string, index: number) => Promise<void>; onAll: () => void; onAllActions: () => void;
 };
 const recentCount = 10;
 const itemCount = 6;
 /** Home: whether you can record, what you owe people, and what happened lately. Sections with nothing to show are left out. */
-export function Home({ meetings, live, events, onPrepare, onOpen, onNewMeeting, onSearch, onToggle, onAll, onAllActions }: HomeProps) {
+export function Home({ meetings, live, events, onPrepare, onOpen, onNewMeeting, onRecord, onSearch, onToggle, onAll, onAllActions }: HomeProps) {
   // Items ticked here stay listed (struck through) until you leave, so a mistaken tick is easy to undo.
   const [ticked, setTicked] = useState<string[]>([]);
   const items = useMemo(() => meetings.flatMap(({ metadata, markdown }) => actionItems(markdown)
@@ -107,7 +107,7 @@ export function Home({ meetings, live, events, onPrepare, onOpen, onNewMeeting, 
   return <div className="page home-page">
     <header className="page-header"><h1>{today}</h1></header>
     <UpNext events={events} meetings={meetings} onOpen={onOpen} onPrepare={onPrepare} />
-    <CaptureCard live={live} onNewMeeting={onNewMeeting} onOpen={onOpen} />
+    <CaptureCard live={live} onNewMeeting={onNewMeeting} onRecord={onRecord} onOpen={onOpen} />
     {meetings.length > 0 && <label className="search-field home-search"><Icon name="search" size={18} /><input type="search" aria-label="Search meetings" placeholder="Search meetings, notes and transcripts…" value="" onChange={e => onSearch(e.target.value)} /><kbd aria-hidden="true">⌘K</kbd></label>}
     {items.length > 0 && <section className="home-section" aria-labelledby="home-actions">
       <h2 id="home-actions">Open action items<span className="home-count">{open}</span></h2>

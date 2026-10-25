@@ -75,7 +75,10 @@ Use a signed build (`npm run tauri build`) for anything involving permissions. D
 |---|---|
 | While recording, the window shows the recording bar (title, elapsed time, Stop) in every view, and the tray shows ● Recording, "Started … by you · No bot joined", and Stop | ✓ auto (window, tray menu model) ☐ (real tray) |
 | The tray timer and window timer agree, including after hiding and reopening the window | ☐ |
-| Start from the tray: New meeting opens with "Start recording"; nothing records until it's pressed | ✓ auto |
+| One press records: Home's Start recording, the tray's Start recording and ⌘⇧R open an "Untitled meeting" on Notes and record it, with no dialog; never over an open dialog | ✓ auto ☐ (real tray) |
+| In person, with no call app running: one press records the microphone, and the transcript has only You | ☐ |
+| ⌃⌥R with Zoom (or any other app) in front, QuietNote hidden: the window comes forward and records. A key changed in Settings → Shortcuts works at once; one another app holds is refused | ✓ auto (Settings) ☐ (real key) |
+| With the calendar on, during an event: one press names the meeting after it, or records into the meeting made with Prepare notes | ✓ auto ☐ (real calendar) |
 | Stop from the tray with the window hidden; reopen and see Transcribing, then the transcript | ☐ |
 | A second meeting can't start while one records (the button is disabled with a reason) | ✓ auto |
 | Only one window, one tray icon | ☐ |

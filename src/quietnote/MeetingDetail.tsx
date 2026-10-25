@@ -1,10 +1,11 @@
 import { Component, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Capture, LiveTranscript } from './Capture';
 import { Icon } from './Icon';
 import { Hush, HushYield } from './Hush';
 import { SuggestPanel, type Summarizer } from './Suggestions';
 import { serviceName } from './catalog';
-import { device, openLink, revealAudio, transcriptData, type CaptureState, type Connections, type Service, type TranscriptTurn } from './storage';
+import { desktop, device, openLink, revealAudio, transcriptData, type CaptureState, type Connections, type Service, type TranscriptTurn } from './storage';
 import { actionItems, appendAction, clock, dateLabel, durationLabel, enhancedNotes, openingTab, section, statusLabel, summaryBlocks, timeLabel, toggleAction, transcriptTurns, type Meeting, type MeetingTab } from './model';
 const Editor = lazy(() => import('../components/editor/Editor').then(module => ({ default: module.Editor })));
 /** A failure in the notes editor stays in the Notes tab instead of blanking the window. A failed import is cached
@@ -62,6 +63,16 @@ function AddItem({ label, onAdd }: { label: string; onAdd: (text: string) => Pro
     <Icon name="plus" size={15} /><input aria-label={label} placeholder={label} value={text} maxLength={300} onChange={e => setText(e.target.value)} />
     {text.trim() && <button type="submit" className="text-button">Add</button>}
   </form>;
+}
+/** Copies the whole transcript as shown (Clean or Verbatim, never filtered by Find) to paste into another app. */
+function CopyTranscript({ title, turns, voices }: { title: string; turns: { time: string; speaker: string; text: string }[]; voices: number }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    const text = `${title}\n\n${turns.map(t => `[${t.time}] ${voices > 1 ? `${t.speaker}: ` : ''}${t.text}`).join('\n')}\n`;
+    try { if (desktop) await writeText(text); else await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1500); }
+    catch { setCopied(false); }
+  }
+  return <button className="text-button" onClick={() => void copy()}><Icon name={copied ? 'check' : 'copy'} size={15} />{copied ? 'Copied' : 'Copy transcript'}</button>;
 }
 export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevious, onOpenPrevious, example, connections, live, cleanDefault, summarizer, template, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onMarkEnded, onDismissRecovered, onSend }: {
   meeting: Meeting; onRename: (title: string) => Promise<void>; onSpeaker: (from: string, to: string) => Promise<void>; previous: Meeting | null; onPrevious: (markdown: string) => Promise<void>; onOpenPrevious: () => void; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; summarizer: Summarizer | null; template?: string; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
@@ -198,6 +209,7 @@ export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevio
         {turns.length > 0 && <>
           <div className="transcript-tools">{example && <span className="subtle">Example transcript · illustrative, not a recording</span>}
             {raw && <div className="segmented" role="group" aria-label="Transcript view"><button aria-pressed={!verbatim} onClick={() => setVerbatim(false)}>Clean</button><button aria-pressed={verbatim} onClick={() => setVerbatim(true)}>Verbatim</button></div>}
+            <CopyTranscript title={meta.title} turns={turns} voices={voices} />
             {recorded && meta.audioPath && <button className="text-button" onClick={() => void revealAudio(meta)}><Icon name="open" size={15} />Show audio</button>}
             <label className="inline-search"><Icon name="search" size={15} /><input placeholder="Find in transcript" aria-label="Find in transcript" value={transcriptQuery} onChange={e => setTranscriptQuery(e.target.value)} /></label></div>
           {raw && <p className="subtle transcript-caption">Clean removes simple filler words and repeated stutters. Verbatim keeps the original transcription.</p>}

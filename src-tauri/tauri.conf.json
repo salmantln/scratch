@@ -46,7 +46,8 @@
     "targets": "all",
     "copyright": "© 2026 Sarl Studio",
     "resources": {
-      "../LICENSE": "LICENSE"
+      "../LICENSE": "LICENSE",
+      "../NOTICE": "NOTICE"
     },
     "createUpdaterArtifacts": false,
     "fileAssociations": [
@@ -67,7 +68,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "14.6",
+      "minimumSystemVersion": "14.2",
+      "signingIdentity": "-",
       "entitlements": "Entitlements.plist"
     },
     "windows": {

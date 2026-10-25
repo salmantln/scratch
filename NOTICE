@@ -1,14 +1,46 @@
+QuietNote
+Copyright (c) 2026 Sarl Studio
+
+QuietNote is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License as published by the Free Software
+Foundation, version 3. It is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See LICENSE for the full text.
+
 QuietNote is derived from Scratch by Eric Li and contributors:
 https://github.com/erictli/scratch
 Audited upstream commit: 9126a5adf78abbabd111302ca0b659ca9278d43a
 
 The upstream README declares the project MIT licensed. That checkout did not
 contain a LICENSE file or a separate copyright notice. The original README is
-preserved verbatim in docs/UPSTREAM-README.md. LICENSE supplies the standard MIT
+preserved verbatim in docs/UPSTREAM-README.md. The code that comes from Scratch
+remains available under the MIT license below, which supplies the standard MIT
 text and explicit upstream attribution; it is not represented as a verbatim
 license file recovered from upstream. Original source authorship is retained in
 git history and Cargo metadata. Scratch is acknowledged as the upstream project,
 not used as QuietNote product branding.
+
+  MIT License
+
+  Copyright (c) Eric Li and Scratch contributors
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
 
 Third-party service logos in src/quietnote/brands/ come from the Iconify "logos"
 set (CC0-1.0), vscode-icons (MIT, the Outlook mark) and Simple Icons (CC0-1.0,

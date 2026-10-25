@@ -31,6 +31,8 @@ mod compact;
 mod connectors;
 mod oauth;
 mod git;
+mod hotkey;
+mod license;
 #[cfg(target_os = "macos")]
 mod live;
 mod login;
@@ -3883,6 +3885,8 @@ pub fn run() {
             login::sync(app.handle());
             // The tray's next meeting, while the calendar is on (macOS).
             calendar::spawn(app.handle());
+            // Start recording from any app (macOS, Windows).
+            hotkey::init(app.handle());
 
             Ok(())
         })
@@ -3967,6 +3971,10 @@ pub fn run() {
             connectors::connector_targets,
             connectors::connector_send,
             connectors::connector_app_icons,
+            hotkey::hotkey_set,
+            license::license_status,
+            license::license_activate,
+            license::license_remove,
             summarize::summary_key_status,
             summarize::summary_set_key,
             summarize::summary_remove_key,

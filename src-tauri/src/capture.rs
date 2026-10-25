@@ -511,6 +511,8 @@ fn spawn_ticker(app: AppHandle, id: String) {
             let capture = app.state::<Capture>();
             let Some(clock) = capture.session.lock().ok().and_then(|s| s.as_ref().filter(|s| s.meeting_id == id).map(|s| (s.elapsed(), s.paused))) else { break };
             tray::recording_tick(&app, Some(clock));
+            // Stopped while this tick was drawn: Stop has already cleared the time, so this tick's mustn't stay.
+            if !recording(&app) { tray::recording_tick(&app, None); break; }
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             count_down(&app, &id);
             if checked.elapsed() >= Duration::from_secs(30) {
@@ -567,6 +569,7 @@ fn work(app: AppHandle) {
         if let Ok(mut jobs) = capture.jobs.lock() { jobs.current = None; }
         // The full transcript (or the failure notice) replaces the live draft.
         if let Ok(mut draft) = capture.draft.lock() { if draft.as_ref().is_some_and(|d| d.meeting_id == id) { *draft = None; } }
+        if matches!(outcome, Ok(Some(_))) { tray::transcribed(&app); }
         tray::progress(&app, None);
         match outcome {
             Ok(Some((metadata, markdown))) => changed(&app, &metadata, Some(markdown), None),

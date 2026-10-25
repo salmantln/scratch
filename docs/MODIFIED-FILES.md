@@ -49,7 +49,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/main.tsx`
 - `vite.config.ts`
 
-## Added files (91)
+## Added files (92)
 
 - `docs/MODIFIED-FILES.md`
 - `docs/PERFORMANCE.md`
@@ -98,6 +98,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src-tauri/src/cli.rs`
 - `src-tauri/src/compact.rs`
 - `src-tauri/src/connectors.rs`
+- `src-tauri/src/license.rs`
 - `src-tauri/src/live.rs`
 - `src-tauri/src/login.rs`
 - `src-tauri/src/mcp.rs`

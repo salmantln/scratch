@@ -10,7 +10,6 @@ async function examples(page: Page) {
 async function firstProject(page: Page, name: string) {
   await page.goto('/');
   await page.getByRole('button', { name: 'Get started' }).click();
-  await page.getByRole('button', { name: 'Skip' }).click();
   await page.getByLabel('Project name').fill(name);
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
@@ -162,18 +161,17 @@ test('sent action items keep their issue link in Markdown, and only the item lea
 
 test('A: first launch creates a project, then a meeting', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Keep the useful part of every meeting.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Meeting notes, without a bot.' })).toBeVisible();
   // The preview can't record, so the first screen doesn't promise it, and there's no permission to ask for.
-  await expect(page.locator('.onboarding')).not.toContainText('records');
-  await expect(page.locator('.ob-hush')).toContainText('This is Hush.');
+  await expect(page.locator('.onboarding')).not.toContainText('Recorded');
+  await expect(page.locator('.onboarding .hush')).toBeVisible();
   await page.screenshot({ path: 'docs/screenshots/00-welcome.png', animations: 'disabled' });
   await page.getByRole('button', { name: 'Get started' }).click();
   await expect(page.getByRole('heading', { name: 'What meetings do you have most?' })).toBeVisible();
   await page.getByRole('button', { name: 'Back' }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the useful part of every meeting.' })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Meeting notes, without a bot.' })).toBeFocused();
   await page.getByRole('button', { name: 'Get started' }).click();
-  // The one question can be skipped; skipped, the project is just “Work”.
-  await page.getByRole('button', { name: 'Skip' }).click();
+  // The one question can be left unanswered; then the project is just “Work”.
   await expect(page.getByLabel('Project name')).toHaveValue('Work');
   await page.getByLabel('Project name').fill('../Acme');
   await page.getByRole('button', { name: 'Create project' }).click();
@@ -495,6 +493,12 @@ async function mockDesktop(page: Page, fixture: Fixture) {
       accessibility: false,
       // The AI apps on this computer, as `mcp_agents` lists them; `mcp_agent_set` turns one on or off.
       agents: [] as { id: string; name: string; state: string; path: string; problem: string | null }[],
+      // The license `license_status` reads; `license_activate` answers `licenseAnswer`, a license or an error to throw.
+      license: { available: true, license: null as unknown },
+      licenseAnswer: null as unknown,
+      // Start recording from any app, as Rust registered it (`hotkey_set`; '' is off), and keys another app holds.
+      hotkey: 'Control+Alt+R',
+      hotkeyTaken: [] as string[],
     };
     const emit = (event: string, payload: unknown) => (listeners[event] ?? []).forEach(id => callbacks.get(id)?.({ event, id: 0, payload }));
     const update = (id: string, change: Partial<Meta>) => { const m = find(id); m.metadata = { ...m.metadata, ...change }; return m.metadata; };
@@ -553,11 +557,15 @@ async function mockDesktop(page: Page, fixture: Fixture) {
           case 'transcribe_meeting': return update(args.meetingId, { status: 'processing', error: null });
           case 'transcript_data': return state.transcriptData;
           case 'save_file_direct': state.saved = args.content; return { path: args.path, content: args.content, title: '', modified: 0 };
+          case 'license_status': return state.license;
+          case 'license_activate': if (typeof state.licenseAnswer === 'string') throw state.licenseAnswer; state.license = { available: true, license: state.licenseAnswer }; return state.licenseAnswer;
+          case 'license_remove': state.license = { available: true, license: null }; return null;
           case 'summary_key_status': return state.summaryKey;
           case 'summary_set_key': state.summaryKey = true; return null;
           case 'summary_suggest': return state.suggestions;
           case 'plugin:clipboard-manager|write_text': state.clipboard = args.text; return null;
           case 'call_accessibility': return state.accessibility;
+          case 'hotkey_set': if (state.hotkeyTaken.includes(args.accelerator)) throw 'Another app already uses this shortcut. Choose another.'; state.hotkey = args.accelerator; return null;
           case 'mcp_agents': return state.agents;
           case 'mcp_agent_set': { const a = state.agents.find(x => x.id === args.id)!; a.state = args.on ? 'on' : 'off'; return { ...a }; }
           case 'note_templates': return state.templates;
@@ -660,6 +668,11 @@ test('J: desktop recording runs in the background, then shows a clean transcript
   // Switching views only changes what's shown: nothing is written.
   expect((await qn(page, q => q.state.calls)).slice(before).filter(c => writes.includes(c))).toEqual([]);
   await expect(page.getByRole('button', { name: 'Show audio' })).toBeVisible();
+  // Copy transcript copies every turn in the view shown, even while Find narrows the list.
+  await page.getByLabel('Find in transcript').fill('Friday');
+  await page.getByRole('button', { name: 'Copy transcript' }).click();
+  await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
+  expect(await qn(page, q => q.state.clipboard)).toBe('Design review\n\n[00:00] You: So, we should ship on Friday.\n[00:05] Others: Sounds good.\n');
 });
 
 test('K: New meeting records with one press, or creates without recording; recording starts only from its button', async ({ page }) => {
@@ -790,7 +803,7 @@ test('N: one recording at a time, and device problems show everywhere', async ({
 test('O: a first recording from the tray carries through project creation, and a tray stop says where it went', async ({ page }) => {
   await mockDesktop(page, { meetings: [] });
   await page.goto('/');
-  await expect(page.locator('.onboarding')).toContainText('No bot joins the call, and nothing records until you press Start.');
+  await expect(page.locator('.onboarding')).toContainText('Recorded and transcribed on this Mac.');
   await qn(page, q => q.emit('quietnote://new-meeting', { record: true }));
   await page.getByLabel('Project name').fill('Acme');
   await page.getByRole('button', { name: 'Create project' }).click();
@@ -943,10 +956,92 @@ test('R: Home says whether recording is ready, and a recording never gets a seco
   await expect(card).toContainText('Transcription is unavailable: the speech model is missing. You can still record.');
   await card.getByRole('button', { name: /^Open (System )?Settings$/ }).click();
   expect(await qn(page, q => q.state.calls.includes('open_privacy_settings'))).toBe(true);
-  // Start recording opens New meeting; only its own Start recording button records.
+  // Start recording needs no dialog: one press makes an untitled meeting in the project and records it, on Notes.
+  await qn(page, q => { q.state.capture = { ...q.state.capture, recording: null, transcribing: null, queued: [], microphone: 'granted', model: 'ready' }; q.emit('quietnote://capture-state', q.state.capture); });
   await card.getByRole('button', { name: 'Start recording' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 1, name: 'Untitled meeting' })).toBeVisible();
+  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('region', { name: 'Recorder' }).getByRole('status')).toContainText('Recording');
+  expect(await qn(page, q => q.meetings.filter(m => m.metadata.title === 'Untitled meeting').map(m => m.metadata.project))).toEqual(['Acme']);
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
+});
+
+test('R1: the tray and ⌘⇧R record at once, never over an open dialog, and the first recording still explains itself first', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Design review', 'Acme')], microphone: 'undetermined' });
+  await page.goto('/');
+  await expect(row(page, 'Design review')).toBeVisible();
+  // With a dialog open, the tray's Start recording doesn't replace it.
+  await page.keyboard.press('ControlOrMeta+n');
+  await qn(page, q => q.emit('quietnote://record-now', null));
   await expect(page.getByRole('dialog', { name: 'New meeting' })).toBeVisible();
+  expect(await qn(page, q => q.state.calls.includes('create_meeting_bundle'))).toBe(false);
+  await page.keyboard.press('Escape');
+  // Before the first recording the explanation comes first, then macOS asks.
+  await qn(page, q => q.emit('quietnote://record-now', null));
+  await expect(page.getByRole('heading', { level: 1, name: 'Untitled meeting' })).toBeVisible();
+  const recorder = page.getByRole('region', { name: 'Recorder' });
+  await expect(recorder).toContainText('Before your first recording');
   expect(await qn(page, q => q.state.calls.includes('capture_start'))).toBe(false);
+  await recorder.getByRole('button', { name: 'Start recording' }).click();
+  await expect(recorder.getByRole('status')).toContainText('Recording');
+  // While recording, ⌘⇧R opens the recording meeting rather than starting another.
+  await home(page).click();
+  await page.keyboard.press('ControlOrMeta+Shift+r');
+  await expect(page.getByRole('heading', { level: 1, name: 'Untitled meeting' })).toBeVisible();
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
+  expect(await qn(page, q => q.meetings.filter(m => m.metadata.title === 'Untitled meeting').length)).toBe(1);
+});
+
+test('R1b: shortcuts can be changed in Settings, never to one that clashes, and Start recording works from any app', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Design review', 'Acme')] });
+  await page.goto('/');
+  await expect(row(page, 'Design review')).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+,');
+  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Shortcuts' }).click();
+  const record = page.getByRole('button', { name: 'Start recording shortcut' });
+  await expect(record).toHaveText(/^(⇧⌘R|Ctrl\+Shift\+R)$/);
+  // A key another action has, or one without ⌘/Ctrl, is refused with the reason; Esc keeps the old one.
+  await record.click();
+  await expect(record).toHaveText('Press keys…');
+  await page.keyboard.press('ControlOrMeta+n');
+  await expect(page.getByRole('alert').filter({ hasText: 'is already the shortcut for New meeting.' })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.keyboard.press('Shift+e');
+  await expect(page.getByRole('alert').filter({ hasText: /^Include/ })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(record).toHaveText(/^(⇧⌘R|Ctrl\+Shift\+R)$/);
+  // A new key is saved, and it records; the old one does nothing now.
+  await record.click();
+  await page.keyboard.press('ControlOrMeta+Shift+e');
+  await expect(record).toHaveText(/^(⇧⌘E|Ctrl\+Shift\+E)$/);
+  await expect.poll(() => qn(page, q => q.state.preferences.keyRecord)).toBe('CmdOrCtrl+Shift+E');
+  await page.keyboard.press('ControlOrMeta+Shift+r');
+  expect(await qn(page, q => q.state.calls.includes('create_meeting_bundle'))).toBe(false);
+  await page.keyboard.press('ControlOrMeta+Shift+e');
+  await expect(page.getByRole('heading', { level: 1, name: 'Untitled meeting' })).toBeVisible();
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  // Reset brings the default back.
+  await page.keyboard.press('ControlOrMeta+,');
+  await page.getByRole('button', { name: 'Reset' }).click();
+  await expect(record).toHaveText(/^(⇧⌘R|Ctrl\+Shift\+R)$/);
+  // From any app: ⌃⌥R by default, registered by Rust; a key another app holds is refused and the old one kept.
+  const anyApp = page.getByRole('button', { name: 'Start recording from any app shortcut' });
+  await expect(anyApp).toHaveText(/^(⌃⌥R|Ctrl\+Alt\+R)$/);
+  await qn(page, q => { q.state.hotkeyTaken = ['Control+Alt+Shift+R', 'CmdOrCtrl+Alt+Shift+R']; });
+  await anyApp.click();
+  await page.keyboard.press('Control+Alt+Shift+r');
+  await expect(page.getByRole('alert').filter({ hasText: 'Another app already uses this shortcut.' })).toBeVisible();
+  expect(await qn(page, q => q.state.hotkey)).toBe('Control+Alt+R');
+  await page.getByRole('switch', { name: 'Start recording from any app' }).click();
+  await expect.poll(() => qn(page, q => q.state.preferences.globalRecord)).toBe('');
+  expect(await qn(page, q => q.state.hotkey)).toBe('');
+  await expect(anyApp).toHaveCount(0);
+  // Pressed in another app, Rust shows the window and asks it to record, as the tray does.
+  await qn(page, q => q.emit('quietnote://record-now', null));
+  await expect.poll(() => qn(page, q => q.meetings.filter(m => m.metadata.title === 'Untitled meeting').length)).toBe(2);
+  await expect(page.getByRole('region', { name: 'Recorder' }).getByRole('status')).toContainText('Recording');
 });
 
 test('R2: Hush on the Home card shows the real capture state, looks at whoever is talking, and holds still with Reduce motion', async ({ page }) => {
@@ -1437,7 +1532,7 @@ test('X2: enhancing notes says what leaves the device, picks a template, and wri
   await expect(page.locator('.transcript-turn[data-time="01:05"]')).toHaveClass(/cited/);
 });
 
-test('AA: the calendar names meetings and says who is invited, and never starts recording', async ({ page }) => {
+test('AA: the calendar names meetings and says who is invited, and never starts recording by itself', async ({ page }) => {
   const earlier = meetingWith('Weekly sync', { date: new Date(Date.now() - 7 * 86_400_000).toISOString(), status: 'ready', project: 'Beta', calendarSeries: 'series-1' });
   await mockDesktop(page, { meetings: [earlier, makeMeeting('Design review', 'Acme')] });
   await page.addInitScript(() => {
@@ -1478,6 +1573,12 @@ test('AA: the calendar names meetings and says who is invited, and never starts 
   await dialog.getByRole('button', { name: 'Don’t use' }).click();
   await expect(dialog.getByLabel('Meeting title')).toHaveValue('');
   await page.keyboard.press('Escape');
+  // ⌘⇧R records into the meeting already prepared for the event happening now.
+  await page.keyboard.press('ControlOrMeta+Shift+r');
+  await expect(page.getByRole('region', { name: 'Recorder' }).getByRole('status')).toContainText('Recording');
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
+  expect(await qn(page, q => q.meetings.filter(m => m.metadata.title === 'Weekly sync').length)).toBe(2);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
   // A call recorded from the panel is named after the event.
   await qn(page, q => q.emit('quietnote://record-call', 'Chrome'));
   await expect.poll(() => qn(page, q => q.meetings.filter(m => m.metadata.title === 'Weekly sync').length)).toBe(3);
@@ -1564,37 +1665,32 @@ test('AC: with one other person invited, the other voice can be named from the i
   expect(await qn(page, q => q.state.calls.includes('meeting_names'))).toBe(false);
 });
 
-test('AD: first launch on a Mac explains each permission before asking, asks one skippable question, and records nothing', async ({ page }) => {
+test('AD: first launch on a Mac explains both permissions on one screen before asking, asks one optional question, and records nothing', async ({ page }) => {
   await mockDesktop(page, { meetings: [], microphone: 'undetermined' });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Keep the useful part of every meeting.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Meeting notes, without a bot.' })).toBeVisible();
   await page.getByRole('button', { name: 'Get started' }).click();
-  await expect(page.getByRole('heading', { name: 'No bot joins your call.' })).toBeFocused();
-  await page.getByRole('button', { name: 'Continue' }).click();
-  // The reason comes first; macOS is asked only on Allow, and that never starts a recording.
-  await expect(page.getByRole('heading', { name: 'Allow the microphone.' })).toBeVisible();
-  await expect(page.locator('.onboarding')).toContainText('also asks for system audio recording');
+  // The reasons come first; macOS is asked only on Allow, and that never starts a recording.
+  await expect(page.getByRole('heading', { name: 'Allow access.' })).toBeFocused();
+  await expect(page.locator('.onboarding')).toContainText('Hears your side, only while you record.');
   expect(await qn(page, q => q.state.calls.includes('capture_allow_microphone'))).toBe(false);
   await page.screenshot({ path: 'docs/screenshots/00-onboarding-microphone.png', animations: 'disabled' });
   await page.getByRole('button', { name: 'Allow microphone' }).click();
-  // Granted, it moves on by itself.
-  await expect(page.getByRole('heading', { name: 'Name meetings after your calendar.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Back' }).click();
-  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
-  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.locator('.ob-allowed')).toHaveCount(1);
   await page.getByRole('button', { name: 'Use my calendar' }).click();
-  await expect(page.getByRole('heading', { name: 'What meetings do you have most?' })).toBeVisible();
+  await expect(page.locator('.ob-allowed')).toHaveCount(2);
   await expect.poll(() => qn(page, q => q.state.preferences.calendar)).toBe(true);
-  // Each kind shows the headings its notes template uses.
-  await expect(page.getByRole('radio', { name: /User interviews/ })).toContainText('About them · What they said');
-  await page.getByRole('radio', { name: /User interviews/ }).click();
-  await page.screenshot({ path: 'docs/screenshots/00-onboarding-kind.png', animations: 'disabled' });
   await page.getByRole('button', { name: 'Continue' }).click();
-  await expect.poll(() => qn(page, q => q.state.preferences.noteTemplate)).toBe('User interview');
+  await expect(page.getByRole('heading', { name: 'What meetings do you have most?' })).toBeVisible();
+  await page.getByRole('radio', { name: 'User interviews' }).click();
   await expect(page.getByLabel('Project name')).toHaveValue('Research');
+  // In person too: one press of Start recording makes the meeting.
+  await expect(page.locator('.onboarding')).toContainText(/In person or on a call, press Start recording \((⇧⌘R|Ctrl\+Shift\+R)\) and the meeting is made for you\./);
   await expect(page.locator('.onboarding')).toContainText('It never starts by itself.');
+  await page.screenshot({ path: 'docs/screenshots/00-onboarding-kind.png', animations: 'disabled' });
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Research' })).toBeVisible();
+  await expect.poll(() => qn(page, q => q.state.preferences.noteTemplate)).toBe('User interview');
   expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(0);
   // The microphone is allowed now, so the first recording starts without the explainer.
   expect(await qn(page, q => q.state.capture.microphone)).toBe('granted');
@@ -1605,18 +1701,14 @@ test('AE: a refused microphone shows where to allow it, and skipping it keeps th
   await page.addInitScript(() => { (window as unknown as { __qn: { state: { micAnswer: string } } }).__qn.state.micAnswer = 'denied'; });
   await page.goto('/');
   await page.getByRole('button', { name: 'Get started' }).click();
-  await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Allow microphone' }).click();
   await expect(page.getByRole('alert')).toContainText('Microphone access is off.');
   await expect(page.getByRole('button', { name: 'Open System Settings' })).toBeVisible();
   await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByRole('heading', { name: 'Name meetings after your calendar.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Skip' }).click();
   expect(await qn(page, q => q.state.preferences.calendar)).toBeUndefined();
-  await page.getByRole('button', { name: 'Skip' }).click();
-  expect(await qn(page, q => q.state.preferences.noteTemplate)).toBeUndefined();
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Work' })).toBeVisible();
+  expect(await qn(page, q => q.state.preferences.noteTemplate)).toBeUndefined();
 });
 
 test('AF: Linear and GitHub sign in through the browser, with a way out of every step', async ({ page }) => {
@@ -1699,4 +1791,37 @@ test('AH: AI apps on this computer are added to QuietNote in one click, and file
   await expect(page.getByRole('switch', { name: 'Use with VS Code' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Copy configuration' }).click();
   await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
+});
+
+test('AI: a license is optional, unlocks nothing, and is entered and removed in About', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')] });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'About' }).click();
+  await expect(page.getByRole('heading', { name: 'Support QuietNote' })).toBeVisible();
+  await expect(page.getByText('it doesn’t unlock anything', { exact: false })).toBeVisible();
+  // This build has no checkout links, so there's nothing to buy.
+  await expect(page.getByRole('button', { name: 'Become a supporter' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Buy for your team' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Enter license key' }).click();
+  await qn(page, q => { (q.state as unknown as Record<string, unknown>).licenseAnswer = 'This key isn’t for QuietNote.'; });
+  await page.getByLabel('License key').fill('not-ours');
+  await page.getByRole('button', { name: 'Activate' }).click();
+  await expect(page.getByRole('alert')).toHaveText('This key isn’t for QuietNote.');
+  await qn(page, q => { (q.state as unknown as Record<string, unknown>).licenseAnswer = { kind: 'commercial', name: 'Acme BV', seats: 12, activatedAt: '2026-10-25T10:00:00Z', expiresAt: '2027-10-25T10:00:00Z' }; });
+  await page.getByLabel('License key').fill('QN-ACME');
+  await page.getByRole('button', { name: 'Activate' }).click();
+  await expect(page.getByText('Licensed to Acme BV')).toBeVisible();
+  await expect(page.getByText('12 seats · Renews 25 Oct 2027')).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Remove license' }).click();
+  await expect(page.getByRole('button', { name: 'Enter license key' })).toBeVisible();
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'license_activate' || c === 'license_remove'))).toEqual(['license_activate', 'license_activate', 'license_remove']);
+});
+
+test('AJ: without a feedback address built in, the sidebar has no Give feedback', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')] });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Give feedback' })).toHaveCount(0);
 });
