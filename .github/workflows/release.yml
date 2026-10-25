@@ -84,8 +84,6 @@ jobs:
           QUIETNOTE_LS_COMMERCIAL: ${{ vars.QUIETNOTE_LS_COMMERCIAL }}
           VITE_QUIETNOTE_CHECKOUT_SUPPORTER: ${{ vars.VITE_QUIETNOTE_CHECKOUT_SUPPORTER }}
           VITE_QUIETNOTE_CHECKOUT_COMMERCIAL: ${{ vars.VITE_QUIETNOTE_CHECKOUT_COMMERCIAL }}
-          # Where Give feedback writes to (an email address). Left unset, the sidebar has no Give feedback.
-          VITE_QUIETNOTE_FEEDBACK: ${{ vars.VITE_QUIETNOTE_FEEDBACK }}
         with:
           tagName: v__VERSION__
           releaseName: "QuietNote v__VERSION__"

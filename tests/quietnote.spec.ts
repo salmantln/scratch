@@ -1819,9 +1819,9 @@ test('AI: a license is optional, unlocks nothing, and is entered and removed in 
   expect(await qn(page, q => q.state.calls.filter(c => c === 'license_activate' || c === 'license_remove'))).toEqual(['license_activate', 'license_activate', 'license_remove']);
 });
 
-test('AJ: without a feedback address built in, the sidebar has no Give feedback', async ({ page }) => {
+test('AJ: Give feedback opens a new email with only the version filled in', async ({ page }) => {
   await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')] });
   await page.goto('/');
-  await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Give feedback' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Give feedback' }).click();
+  await expect.poll(() => qn(page, q => q.state.opened.at(-1))).toMatch(/^mailto:sarl\.the\.developer@gmail\.com\?subject=QuietNote%20feedback&body=/);
 });

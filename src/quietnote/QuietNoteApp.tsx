@@ -480,7 +480,7 @@ function Shell() {
         {allProjects.map((p, i) => <div key={p}>{navItem(view === 'project' && project === p, 'folder', p, () => go('project', p), <><span className="initial" aria-hidden="true">{p.slice(0, 1).toUpperCase()}</span>{i < 9 && <kbd aria-hidden="true">⌘{i + 1}</kbd>}<span className="sidebar-count">{meetings.filter(m => m.metadata.project === p).length || ''}</span></>, 'project-item')}</div>)}
       </nav>
       <div className="sidebar-bottom">
-        {storage.canGiveFeedback && navItem(false, 'feedback', 'Give feedback', () => void storage.giveFeedback().catch(e => setProblem(`Couldn’t open your mail app. ${String(e)}`)))}
+        {navItem(false, 'feedback', 'Give feedback', () => void storage.giveFeedback().catch(e => setProblem(`Couldn’t open your mail app. ${String(e)}`)))}
         {navItem(dialog === 'connections', 'plug', 'Connections', () => setDialog('connections'))}
         {navItem(view === 'search', 'search', 'Search', () => setView('search'), <kbd aria-hidden="true">{keyLabel('search')}</kbd>)}
         {navItem(view === 'settings', 'settings', 'Settings', () => setView('settings'), <kbd aria-hidden="true">{keyLabel('settings')}</kbd>)}

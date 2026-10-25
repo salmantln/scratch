@@ -196,10 +196,9 @@ export function appIcons(): Promise<Record<string, string>> { return desktop ? (
 export async function openLink(url: string): Promise<void> {
   if (desktop) await invoke('open_url_safe', { url }); else window.open(url, '_blank', 'noopener');
 }
-// Give feedback: a new message in the mail app to the address set at build time (VITE_QUIETNOTE_FEEDBACK), with only
-// the version and computer filled in; nothing is sent until the user sends it. Without the address there's no button.
-const feedbackTo = (import.meta.env.VITE_QUIETNOTE_FEEDBACK as string | undefined)?.match(/^(?:mailto:)?([^@\s?]+@[^@\s?]+)$/)?.[1];
-export const canGiveFeedback = !!feedbackTo;
+// Give feedback: a new message in the mail app with only the version and computer filled in; nothing is sent until the
+// user sends it.
+const feedbackTo = 'sarl.the.developer@gmail.com';
 export async function giveFeedback(): Promise<void> {
   const version = desktop ? await getVersion().catch(() => '') : '';
   const body = `\n\n—\nQuietNote ${version || 'browser preview'} on ${device}`;
