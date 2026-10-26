@@ -2,11 +2,12 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState, useSyncEx
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { ThemeProvider, useTheme } from '../context/ThemeContext';
-import { TooltipProvider, Toaster } from '../components/ui';
+import { Toaster, toast } from 'sonner';
+import { TooltipProvider } from '../components/ui';
 import { SidebarResizeHandle } from '../components/layout/SidebarResizeHandle';
 import { Folder, Icon } from './Icon';
 import { Hush, HushYield, showHush } from './Hush';
-import { NewMeetingDialog, NewProjectDialog } from './Dialogs';
+import { DeleteMeetingDialog, NewMeetingDialog, NewProjectDialog } from './Dialogs';
 import { ConnectionsDialog, SendDialog, type IssueLink } from './Connectors';
 import { Settings, type SettingsSection } from './Settings';
 import { MeetingDetail } from './MeetingDetail';
@@ -79,7 +80,7 @@ function Shell() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(initial.section ?? 'Privacy');
   const [query, setQuery] = useState('');
   const [indexedIds, setIndexedIds] = useState<string[]>([]);
-  const [dialog, setDialog] = useState<'' | 'project' | 'meeting' | 'connections' | 'send'>('');
+  const [dialog, setDialog] = useState<'' | 'project' | 'meeting' | 'connections' | 'send' | 'delete'>('');
   // The meeting whose recording was asked for: its recorder strip starts it (or explains first, unless the
   // call panel's Record asked: that press is the start, as in Granola, and macOS asks for the microphone itself).
   const [capture, setCapture] = useState<{ id: string; call: boolean } | null>(null);
@@ -94,6 +95,9 @@ function Shell() {
   useEffect(() => { remember(railKey, rail); }, [rail]);
   const narrow = useSyncExternalStore(watchNarrow, () => narrowWindow.matches);
   const [addingExamples, setAddingExamples] = useState(false);
+  // Development only: VITE_QUIETNOTE_ONBOARDING=1 (or ?onboarding in the browser preview) opens onboarding over an
+  // archive that already has meetings, until it's finished.
+  const [replay, setReplay] = useState(() => import.meta.env.DEV && (import.meta.env.VITE_QUIETNOTE_ONBOARDING === '1' || new URLSearchParams(location.search).has('onboarding')));
   const [preferences, setPreferences] = useState<storage.PrivacyPreferences>({});
   useEffect(() => showHush(preferences.showHush !== false), [preferences.showHush]);
   // The theme is Scratch's own light and dark (the `.dark` class, which its editor follows too), set once the
@@ -182,6 +186,10 @@ function Shell() {
   }, [upsert]);
   async function captureAction(action: () => Promise<Meeting['metadata']>, failure: string) {
     try { updateMetadata(await action()); } catch (e) { setProblem(`${failure} ${String(e).replace(/^Error: /, '')}`); }
+  }
+  async function exportAudio(meeting: Meeting) {
+    try { const folder = await storage.exportAudio(meeting.metadata); if (folder) toast(`Exported the audio to “${folder.split(/[\\/]/).filter(Boolean).pop() ?? folder}”`); }
+    catch (e) { setProblem(`Couldn’t export the audio. ${String(e).replace(/^Error: /, '')}`); }
   }
   async function dismissRecovered(meeting: Meeting) {
     const next = { ...meeting, metadata: { ...meeting.metadata, interrupted: false } };
@@ -419,6 +427,17 @@ function Shell() {
     const latest = records.current.find(m => m.metadata.id === id);
     if (latest) upsert({ ...latest, transcript });
   }
+  /** Deleting waits for pending saves, so none recreates the meeting's file after its folder has gone; its draft goes with it. */
+  async function deleteMeeting(meeting: Meeting) {
+    const id = meeting.metadata.id;
+    await queue.current;
+    await storage.trashMeeting(meeting.metadata);
+    dirty.current.delete(id); localStorage.removeItem(`quietnote.draft.${id}`);
+    if (!dirty.current.size) { setSaveState('saved'); setUnsaved(''); }
+    setRecords(records.current.filter(m => m.metadata.id !== id));
+    setDialog(''); go('project', meeting.metadata.project);
+    toast(storage.desktop ? `Moved “${meeting.metadata.title}” to the ${storage.bin}` : `Deleted “${meeting.metadata.title}”`);
+  }
   async function markEnded(meeting: Meeting) {
     const next: Meeting = { ...meeting, metadata: { ...meeting.metadata, status: 'ready', captureEndedAt: meeting.metadata.captureEndedAt ?? new Date().toISOString() } };
     try { await storage.saveMetadata(next.metadata); upsert(next); }
@@ -436,6 +455,7 @@ function Shell() {
     {dialog === 'project' && <NewProjectDialog existing={allProjects} onCreate={createProject} onClose={() => { setDialog(''); setMeetingNext(false); }} />}
     {dialog === 'meeting' && <NewMeetingDialog projects={allProjects} project={contextProject} canRecord={live.available} event={meetingEvent} projectFor={projectOf} onCreate={createMeeting} onClose={() => setDialog('')} />}
     {dialog === 'connections' && <ConnectionsDialog detectsCalls={live.detectsCalls} connections={connections} onChange={setConnections} onClose={() => setDialog('')} />}
+    {dialog === 'delete' && current && <DeleteMeetingDialog title={current.metadata.title} audio={Boolean(current.metadata.audioPath)} onDelete={() => deleteMeeting(current)} onClose={() => setDialog('')} />}
     {dialog === 'send' && current && <SendDialog meeting={current} connections={connections} lastTargets={{ linear: String(preferences['send.linear'] ?? ''), github: String(preferences['send.github'] ?? '') }} onSent={(service, target, links) => sent(current.metadata.id, service, target, links)} onClose={() => setDialog('')} />}
   </>;
   if (loading && !meetings.length) return <div className="quietnote-shell centered" data-tauri-drag-region><p className="subtle" role="status">Opening your meetings…</p></div>;
@@ -449,11 +469,21 @@ function Shell() {
   // The "Recording saved" / "Transcript ready" banner has the screen's Hush, outside Home (where the card has it).
   const saved = stopped ? meetings.find(m => m.metadata.id === stopped.id) : undefined;
   const bannerHush = Boolean(saved && saved.metadata.status !== 'error' && view !== 'home');
-  if (!allProjects.length && !meetings.length) return <div className="quietnote-shell centered"><Onboarding live={live} preferences={preferences} busy={addingExamples} onPreference={changePreference} onCreate={createProject} onExamples={() => void addExamples()} />{problem && <p className="field-error floating" role="alert">{problem}</p>}{dialogs}</div>;
+  if (replay || (!allProjects.length && !meetings.length)) return <div className="quietnote-shell centered"><Onboarding live={live} preferences={preferences} busy={addingExamples} onPreference={changePreference} onCreate={async name => { if (allProjects.includes(name)) go('project', name); else await createProject(name); setReplay(false); }} onExamples={() => void addExamples().then(() => setReplay(false))} />{problem && <p className="field-error floating" role="alert">{problem}</p>}{dialogs}</div>;
   // A transcript hit opens the transcript filtered to the search, so the passage is on screen.
   const openResult = (id: string, hitTab: MeetingTab) => openMeeting(id, hitTab, hitTab === 'Transcript' ? query.trim() : '');
   const libraryMeetings = view === 'project' ? sorted.filter(m => m.metadata.project === project) : sorted;
-  const toggleItem = (id: string, index: number) => { const latest = records.current.find(m => m.metadata.id === id); return latest ? persist(id, toggleAction(latest.markdown, index)) : Promise.resolve(); };
+  const itemOf = (id: string, index: number) => { const latest = records.current.find(m => m.metadata.id === id); return latest && { latest, item: actionItems(latest.markdown).find(a => a.index === index) }; };
+  // Undo puts the item back as it was, whatever happened to it since.
+  const setItem = (id: string, index: number, done: boolean) => { const found = itemOf(id, index); return found?.item && found.item.done !== done ? persist(id, toggleAction(found.latest.markdown, index)) : Promise.resolve(); };
+  // Every tick says so in a toast with Undo; ticking the same item again replaces its toast.
+  const toggleItem = (id: string, index: number) => {
+    const found = itemOf(id, index);
+    if (!found?.item) return Promise.resolve();
+    const was = found.item.done;
+    toast(was ? 'Reopened' : 'Marked done', { id: `action:${id}:${index}`, duration: 5000, action: { label: 'Undo', onClick: () => void setItem(id, index, was) } });
+    return persist(id, toggleAction(found.latest.markdown, index));
+  };
   const count = (n: number) => `${n} ${n === 1 ? 'meeting' : 'meetings'}`;
   const openItems = meetings.reduce((n, m) => n + actionItems(m.markdown).filter(a => !a.done).length, 0);
   const saveText = saveState === 'saving' ? 'Saving…' : saveState === 'unsaved' ? 'Not saved' : storage.desktop ? 'Saved' : 'Saved in this browser';
@@ -515,8 +545,10 @@ function Shell() {
       {problem && <div className="banner warning" role="alert"><div><strong>{problem}</strong></div><div className="banner-actions"><button className="text-button" onClick={() => setProblem('')}>Dismiss</button></div></div>}
       <main className="qn-main" ref={main}><HushYield.Provider value={bannerHush}>
         {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} connections={connections} summaryKey={summaryKey} onSummaryKey={setSummaryKey} section={settingsSection} onSection={setSettingsSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
-        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={markdown => persist(previous!.metadata.id, markdown)} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onMarkEnded={() => void markEnded(current)} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
-          const latest = records.current.find(m => m.metadata.id === current.metadata.id)!;
+        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={index => toggleItem(previous!.metadata.id, index)} onToggle={index => toggleItem(current.metadata.id, index)} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onExportAudio={() => void exportAudio(current)} onMarkEnded={() => void markEnded(current)} onDelete={() => setDialog('delete')} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
+          const latest = records.current.find(m => m.metadata.id === current.metadata.id);
+          // The editor can save once more as it closes, after its meeting was deleted.
+          if (!latest) return Promise.resolve();
           return persist(current.metadata.id, replaceSection(latest.markdown, 'Notes', notes));
         }} />
         : view === 'search' ? <div className="page search-page">
@@ -558,4 +590,7 @@ class Crashed extends Component<{ children: ReactNode }, { error: Error | null }
     </div></div>;
   }
 }
-export default function QuietNoteApp() { return <ThemeProvider><TooltipProvider><Crashed><Shell /></Crashed><Toaster /></TooltipProvider></ThemeProvider>; }
+// The editor's toasts (Copied as Markdown, …) as QuietNote's dark pill instead of Scratch's card.
+const Toasts = () => <Toaster position="bottom-center" offset={24} toastOptions={{ unstyled: true, classNames: { toast: 'qn-toast' } }} />;
+
+export default function QuietNoteApp() { return <ThemeProvider><TooltipProvider><Crashed><Shell /></Crashed><Toasts /></TooltipProvider></ThemeProvider>; }

@@ -166,7 +166,7 @@ mod tests {
         let loading = std::time::Instant::now();
         let (detector, engine) = (Detector::open(&models.join(VAD)).unwrap(), Engine::open(&models.join(MODEL)).unwrap());
         println!("model loaded in {:?}", loading.elapsed());
-        let tracks = crate::recorder::TRACKS.map(|t| samples(&audio.join(t)).unwrap_or_default());
+        let tracks = crate::sealed::TRACKS.map(|t| crate::sealed::path(&audio, t).and_then(|p| samples(&p).ok()).unwrap_or_default());
         let length = tracks.iter().map(Vec::len).max().unwrap_or(0);
         let mut follower = Follower { detector, words: Words::Whisper(engine), tracks: Default::default(), language: None };
         let parakeet = std::env::var("QUIETNOTE_TEST_PARAKEET").is_ok();

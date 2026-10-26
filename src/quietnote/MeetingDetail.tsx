@@ -5,8 +5,8 @@ import { Icon } from './Icon';
 import { Hush, HushYield } from './Hush';
 import { SuggestPanel, type Summarizer } from './Suggestions';
 import { serviceName } from './catalog';
-import { desktop, device, openLink, revealAudio, transcriptData, type CaptureState, type Connections, type Service, type TranscriptTurn } from './storage';
-import { actionItems, appendAction, clock, dateLabel, durationLabel, enhancedNotes, openingTab, section, statusLabel, summaryBlocks, timeLabel, toggleAction, transcriptTurns, type Meeting, type MeetingTab } from './model';
+import { desktop, device, openLink, transcriptData, type CaptureState, type Connections, type Service, type TranscriptTurn } from './storage';
+import { actionItems, appendAction, clock, dateLabel, durationLabel, enhancedNotes, openingTab, section, statusLabel, summaryBlocks, timeLabel, transcriptTurns, type Meeting, type MeetingTab } from './model';
 const Editor = lazy(() => import('../components/editor/Editor').then(module => ({ default: module.Editor })));
 /** A failure in the notes editor stays in the Notes tab instead of blanking the window. A failed import is cached
  * by the webview, so recovering means reloading; drafts and the open tab are restored. */
@@ -44,15 +44,15 @@ function Title({ title, editable, onRename }: { title: string; editable: boolean
 }
 /** What the meeting before this one left open, above the notes while this one is about to happen or recording:
  * its open action items (ticking one ticks it in that meeting). */
-function LastTime({ meeting, onMarkdown, onOpen }: { meeting: Meeting; onMarkdown: (markdown: string) => Promise<void>; onOpen: () => void }) {
+function LastTime({ meeting, onToggle, onOpen }: { meeting: Meeting; onToggle: (index: number) => Promise<void>; onOpen: () => void }) {
   const { metadata: meta, markdown } = meeting;
-  // A ticked item stays, struck through, until the meeting is left (as on Home).
+  // A ticked item stays, struck through, until the meeting is left (as on Home); its toast can undo it.
   const [ticked, setTicked] = useState<number[]>([]);
   const open = actionItems(markdown).filter(a => !a.done || ticked.includes(a.index));
   return <details className="last-time" open>
     <summary><Icon name="recent" size={15} />Last time<span className="subtle">{meta.title} · {dateLabel(meta.date)}</span></summary>
-    {open.length > 0 && <div className="action-list">{open.map(a => <label className={`action-row ${ticked.includes(a.index) ? 'complete' : ''}`} key={a.index}>
-      <input type="checkbox" checked={ticked.includes(a.index)} disabled={ticked.includes(a.index)} onChange={() => { setTicked(t => [...t, a.index]); void onMarkdown(toggleAction(markdown, a.index)).catch(() => setTicked(t => t.filter(i => i !== a.index))); }} />
+    {open.length > 0 && <div className="action-list">{open.map(a => <label className={`action-row ${a.done ? 'complete' : ''}`} key={a.index}>
+      <input type="checkbox" checked={a.done} onChange={() => { setTicked(t => t.includes(a.index) ? t : [...t, a.index]); void onToggle(a.index); }} />
       <span><span className="action-text">{a.text}</span>{a.owner && <span className="action-owner">{a.owner}</span>}</span></label>)}</div>}
     <button className="text-button" onClick={onOpen}>Open {meta.title}<Icon name="arrow" size={14} /></button>
   </details>;
@@ -72,17 +72,22 @@ function CopyTranscript({ title, turns, voices }: { title: string; turns: { time
     try { if (desktop) await writeText(text); else await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1500); }
     catch { setCopied(false); }
   }
-  return <button className="text-button" onClick={() => void copy()}><Icon name={copied ? 'check' : 'copy'} size={15} />{copied ? 'Copied' : 'Copy transcript'}</button>;
+  // Both faces share one cell and crossfade through a slight blur; the hidden one is left out of the button's name.
+  return <button className="text-button swap" onClick={() => void copy()}>
+    <span aria-hidden={copied}><Icon name="copy" size={15} />Copy transcript</span>
+    <span aria-hidden={!copied}><Icon name="check" size={15} />Copied</span>
+  </button>;
 }
-export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevious, onOpenPrevious, example, connections, live, cleanDefault, summarizer, template, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onMarkEnded, onDismissRecovered, onSend }: {
-  meeting: Meeting; onRename: (title: string) => Promise<void>; onSpeaker: (from: string, to: string) => Promise<void>; previous: Meeting | null; onPrevious: (markdown: string) => Promise<void>; onOpenPrevious: () => void; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; summarizer: Summarizer | null; template?: string; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
-  armed: boolean | 'call'; onUpdated: (meeting: Meeting) => void; onStartCapture: () => void; onCloseCapture: () => void; onRetry: () => void; onMarkEnded: () => void; onDismissRecovered: () => void;
+export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevious, onToggle, onOpenPrevious, example, connections, live, cleanDefault, summarizer, template, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onExportAudio, onMarkEnded, onDismissRecovered, onSend, onDelete }: {
+  meeting: Meeting; onRename: (title: string) => Promise<void>; onSpeaker: (from: string, to: string) => Promise<void>; previous: Meeting | null; onPrevious: (index: number) => Promise<void>; onToggle: (index: number) => Promise<void>; onOpenPrevious: () => void; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; summarizer: Summarizer | null; template?: string; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
+  armed: boolean | 'call'; onUpdated: (meeting: Meeting) => void; onStartCapture: () => void; onCloseCapture: () => void; onRetry: () => void; onExportAudio: () => void; onMarkEnded: () => void; onDismissRecovered: () => void; onDelete: () => void;
 }) {
   const { metadata: meta, markdown, transcript } = meeting;
   // One Hush per screen: a notice's Hush (transcribing, a problem) or a drafting one comes before an empty state's,
   // which rests only when nothing is happening.
   const yielded = useContext(HushYield);
   const [drafting, setDrafting] = useState(false);
+  const [fresh, setFresh] = useState<number | null>(null);
   const calm = meta.status !== 'recording' && !drafting;
   const [transcriptQuery, setTranscriptQuery] = useState(find);
   // Both views of a recorded transcript. Switching only changes what's shown; the raw words stay.
@@ -142,11 +147,13 @@ export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevio
   if (tab !== 'Transcript' && tab !== notesView) setNotesView(tab);
   const shownTab = tab === 'Transcript' ? 'Transcript' : 'Notes';
   const tabIds = (t: string) => ({ tab: `tab-${t}`, panel: `panel-${t}` });
-  const renderAction = (a: typeof actions[number]) => <label className={`action-row ${a.done ? 'complete' : ''}`} key={a.index}>
-    <input type="checkbox" checked={a.done} onChange={() => void onMarkdown(toggleAction(markdown, a.index))} />
+  const renderAction = (a: typeof actions[number]) => <label className={`action-row ${a.done ? 'complete' : ''} ${a.index === fresh ? 'fresh' : ''}`} key={a.index}>
+    <input type="checkbox" checked={a.done} onChange={() => void onToggle(a.index)} />
     <span><span className="action-text">{a.text}</span>{a.owner && <span className="action-owner">{a.owner}</span>}</span>
     {a.link && <button className="action-link" title={a.link.url} onClick={e => { e.preventDefault(); void openLink(a.link!.url); }}>{a.link.label}</button>}
   </label>;
+  // Rust owns a meeting while it records, waits to be transcribed or is transcribed, so it can't be deleted then.
+  const owned = meta.status === 'recording' || meta.status === 'processing' || live.queued.includes(meta.id);
   const docked = armed || live.recording?.meetingId === meta.id || (!live.available && meta.status === 'recording');
   return <article className={`meeting-detail ${docked ? 'docked' : ''}`}>
     <header className="meeting-header">
@@ -155,8 +162,11 @@ export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevio
           <h1><Title title={meta.title} editable={meta.status !== 'recording' && meta.status !== 'processing'} onRename={onRename} />{example && <span className="badge example">Example</span>}</h1>
           <p className="meeting-meta"><span>{meta.project}</span><span>{dateLabel(meta.date)}, {timeLabel(meta.date)}</span>{duration && <span>{duration}</span>}{status && <span className={`status ${paused ? 'paused' : meta.status}`}><i aria-hidden="true" />{status}</span>}{meta.participants.length > 0 && <Participants names={meta.participants} />}</p>
         </div>
-        {meta.status === 'idle' && !armed && <button className={live.available ? 'primary' : 'secondary'} disabled={Boolean(other)} title={other ? `“${other.title}” is recording. Stop it first.` : undefined} onClick={onStartCapture}>{live.available ? <><i className="record-dot" aria-hidden="true" />Start recording</> : 'Start capture'}</button>}
-        {recorded && !armed && <button className="secondary" disabled={Boolean(other)} title={other ? `“${other.title}” is recording. Stop it first.` : 'Record more of this meeting. The new part is added to its transcript.'} onClick={onStartCapture}><i className="record-dot" aria-hidden="true" />Resume recording</button>}
+        <div className="meeting-actions">
+          {meta.status === 'idle' && !armed && <button className={live.available ? 'primary' : 'secondary'} disabled={Boolean(other)} title={other ? `“${other.title}” is recording. Stop it first.` : undefined} onClick={onStartCapture}>{live.available ? <><i className="record-dot" aria-hidden="true" />Start recording</> : 'Start capture'}</button>}
+          {recorded && !armed && <button className="secondary" disabled={Boolean(other)} title={other ? `“${other.title}” is recording. Stop it first.` : 'Record more of this meeting. The new part is added to its transcript.'} onClick={onStartCapture}><i className="record-dot" aria-hidden="true" />Resume recording</button>}
+          {!armed && <button className="icon-button" aria-label="Delete meeting" disabled={owned} title={owned ? (meta.status === 'recording' ? 'Stop recording before deleting this meeting.' : 'Wait until it’s transcribed to delete it.') : 'Delete meeting'} onClick={onDelete}><Icon name="trash" size={16} /></button>}
+        </div>
       </div>
       <div className="meeting-tabs" role="tablist" aria-label="Meeting sections" onKeyDown={e => {
         if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
@@ -172,7 +182,7 @@ export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevio
         {meta.status === 'error' && details}
       </div><div className="notice-actions">{meta.status === 'error' && audioKept && <button className="text-button" onClick={onRetry}>Retry transcription</button>}{meta.status !== 'processing' && <button className="text-button" onClick={onDismissRecovered}>Dismiss</button>}</div></div>
     : meta.status === 'processing' ? <div className="notice" role="status"><Hush mood="transcribing" size={44} progress={live.transcribing?.meetingId === meta.id ? live.transcribing.percent / 100 : undefined} fallback={<Icon name="recent" size={16} />} /><div><strong>{transcribing}</strong><p>This runs on this {device}. You can keep working or close the window. The audio is kept until the transcript is saved.</p></div></div>
-    : meta.status === 'error' && audioKept ? <div className="notice attention" role="status"><Hush mood="attention" size={44} fallback={<Icon name="info" size={16} />} /><div><strong>Transcription couldn’t finish.</strong><p>Your recording is still saved{meta.duration > 0 ? ` (${durationLabel(meta.duration)})` : ''}, so you can retry.</p>{details}</div><div className="notice-actions"><button className="text-button" onClick={() => void revealAudio(meta)}>Show audio</button><button className="text-button" onClick={onRetry}>Retry transcription</button></div></div>
+    : meta.status === 'error' && audioKept ? <div className="notice attention" role="status"><Hush mood="attention" size={44} fallback={<Icon name="info" size={16} />} /><div><strong>Transcription couldn’t finish.</strong><p>Your recording is still saved{meta.duration > 0 ? ` (${durationLabel(meta.duration)})` : ''}, so you can retry.</p>{details}</div><div className="notice-actions"><button className="text-button" onClick={onExportAudio}>Export audio…</button><button className="text-button" onClick={onRetry}>Retry transcription</button></div></div>
     : meta.status === 'error' && <div className="notice attention" role="status"><Hush mood="attention" size={44} fallback={<Icon name="info" size={16} />} /><div><strong>This meeting was interrupted before it finished.</strong><p>{meta.error ?? (live.available ? 'QuietNote closed while it was recording, and no audio was saved.' : 'QuietNote closed while capture was running. No audio was recorded.')} Anything you wrote in Notes is kept.</p></div><div className="notice-actions"><button className="text-button" onClick={() => onTab('Notes')}>Add notes</button><button className="text-button" onClick={onMarkEnded}>Mark as ended</button></div></div>}
     <HushYield.Provider value={yielded || meta.status === 'processing' || meta.status === 'error'}><div className="meeting-content" role="tabpanel" id={tabIds(shownTab).panel} aria-labelledby={tabIds(shownTab).tab}>
       {shownTab === 'Notes' && <div className="segmented notes-view" role="group" aria-label="Notes view"><button aria-pressed={tab === 'Enhanced'} onClick={() => onTab('Enhanced')}>Enhanced notes</button><button aria-pressed={tab === 'Notes'} onClick={() => onTab('Notes')}>My notes</button></div>}
@@ -185,7 +195,7 @@ export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevio
           <AddItem label="Add an action item" onAdd={text => onMarkdown(appendAction(markdown, text))} />
         </section>;
         return <>
-          {recorded && summarizer && <SuggestPanel meeting={meeting} summarizer={summarizer} template={template} onWorking={setDrafting} onMarkdown={onMarkdown} onRename={onRename} onSpeaker={onSpeaker} onCite={atMs => cite(clock(atMs / 1000))} />}
+          {recorded && summarizer && <SuggestPanel meeting={meeting} summarizer={summarizer} template={template} onWorking={setDrafting} onAdded={setFresh} onMarkdown={onMarkdown} onRename={onRename} onSpeaker={onSpeaker} onCite={atMs => cite(clock(atMs / 1000))} />}
           {actions.length > 0 && todo}
           {notes ? <div className="summary-text">{actions.length > 0 && summaryBlocks(notes)[0].kind !== 'heading' && <h3>Summary</h3>}{summaryBlocks(notes).map((b, i) => b.kind === 'heading' ? <h3 key={i}>{b.text}</h3> : b.kind === 'paragraph' ? <p key={i}>{b.text}</p>
             // A point with a transcript time was added from the transcript; the rest came from the notes.
@@ -194,7 +204,7 @@ export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevio
           {!actions.length && todo}
         </>;
       })()}
-      {tab === 'Notes' && previous && (meta.status === 'idle' || meta.status === 'recording') && <LastTime meeting={previous} onMarkdown={onPrevious} onOpen={onOpenPrevious} />}
+      {tab === 'Notes' && previous && (meta.status === 'idle' || meta.status === 'recording') && <LastTime meeting={previous} onToggle={onPrevious} onOpen={onOpenPrevious} />}
       {tab === 'Notes' && <div className="quiet-editor"><NotesBoundary><Suspense fallback={<p className="subtle">Opening notes…</p>}><Editor onDraftChange={onDraft} key={meta.id} previewMode={{ content: section(markdown, 'Notes'), title: 'Notes', filePath: meta.meetingPath, modified: 0, hasExternalChanges: false, reloadVersion: 0, save, reload: async () => {} }} /></Suspense></NotesBoundary></div>}
       {tab === 'Transcript' && <section>
         {inviteGuess && <div className="notice" role="status"><Icon name="people" size={16} /><div><strong>Is “{inviteGuess.from}” {inviteGuess.to}?</strong><p>{inviteGuess.to} was the only other person invited.</p></div>
@@ -210,7 +220,7 @@ export function MeetingDetail({ meeting, onRename, onSpeaker, previous, onPrevio
           <div className="transcript-tools">{example && <span className="subtle">Example transcript · illustrative, not a recording</span>}
             {raw && <div className="segmented" role="group" aria-label="Transcript view"><button aria-pressed={!verbatim} onClick={() => setVerbatim(false)}>Clean</button><button aria-pressed={verbatim} onClick={() => setVerbatim(true)}>Verbatim</button></div>}
             <CopyTranscript title={meta.title} turns={turns} voices={voices} />
-            {recorded && meta.audioPath && <button className="text-button" onClick={() => void revealAudio(meta)}><Icon name="open" size={15} />Show audio</button>}
+            {recorded && meta.audioPath && <button className="text-button" onClick={onExportAudio}><Icon name="folder" size={15} />Export audio…</button>}
             <label className="inline-search"><Icon name="search" size={15} /><input placeholder="Find in transcript" aria-label="Find in transcript" value={transcriptQuery} onChange={e => setTranscriptQuery(e.target.value)} /></label></div>
           {raw && <p className="subtle transcript-caption">Clean removes simple filler words and repeated stutters. Verbatim keeps the original transcription.</p>}
           {shownTurns.map((t, i) => <div className="transcript-turn" data-time={t.time} key={i}><h3>{voices > 1 && t.speaker !== shownTurns[i - 1]?.speaker && (canName ? <button className="speaker-name" title={`Name ${t.speaker}`} onClick={() => setNaming({ from: t.speaker, to: '', error: '' })}>{t.speaker}</button> : <span>{t.speaker}</span>)}<span className="timestamp">{t.time}</span></h3><p>{t.text}</p></div>)}

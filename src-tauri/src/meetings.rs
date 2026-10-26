@@ -219,14 +219,37 @@ pub async fn save_meeting_metadata(app: AppHandle, metadata: Metadata) -> Result
     if !dir.join("metadata.json").exists() { return Err("Meeting does not exist".into()); }
     write_metadata(&dir, &metadata)
 }
+/// Moves a meeting's folder (notes, transcript, audio) to the Trash, or the Recycle Bin, where it can be put back until emptied.
+fn trash_bundle(root: &Path, id: &str) -> Result<(), String> {
+    let (_, dir) = find(root, id)?;
+    // Through NSFileManager: the crate's default asks Finder, which needs Automation permission and plays a sound.
+    #[cfg(target_os = "macos")]
+    let trash = {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        let mut trash = trash::TrashContext::default();
+        trash.set_delete_method(DeleteMethod::NsFileManager);
+        trash
+    };
+    #[cfg(not(target_os = "macos"))]
+    let trash = trash::TrashContext::default();
+    trash.delete(&dir).map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn trash_meeting(app: AppHandle, id: String) -> Result<(), String> {
+    if app.state::<crate::capture::Capture>().owns(&id) { return Err("This meeting is recording or being transcribed".into()); }
+    tauri::async_runtime::spawn_blocking(move || trash_bundle(&root(&app)?, &id))
+        .await.map_err(|e| e.to_string())?
+}
 #[tauri::command]
 pub async fn quietnote_preferences(app: AppHandle, value: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
     let path = root(&app)?.join(".privacy.json");
     if let Some(value) = value {
         atomic_write(&path, &serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?)?;
-        // Show Hush also changes the menu bar and the call panel; Open at login, the login item; the shortcut from any app.
+        // Show Hush also changes the menu bar and the call panel; Open at login, the login item; the shortcut from any app;
+        // Back up recordings, the audio folders.
         crate::tray::restyle(&app);
         crate::login::sync(&app);
+        crate::protect::sync(&app);
         crate::hotkey::sync(&app);
         let _ = app.emit_to("call", "quietnote://preferences-changed", ());
         return Ok(value);

@@ -4166,6 +4166,7 @@ dependencies = [
  "open",
  "regex",
  "reqwest",
+ "ring",
  "rubato",
  "serde",
  "serde_json",
@@ -4185,6 +4186,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "toml_edit 0.25.10+spec-1.1.0",
+ "trash",
  "url",
  "urlencoding",
  "walkdir",
@@ -6041,7 +6043,7 @@ dependencies = [
  "serde_with",
  "swift-rs",
  "thiserror 2.0.18",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "url",
  "urlpattern",
  "uuid",
@@ -6436,6 +6438,24 @@ checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
 dependencies = [
  "num-integer",
  "strength_reduce",
+]
+
+[[package]]
+name = "trash"
+version = "5.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be89b3fe156965d29ac4f8522f3a640c655affdd9f21cb4f36857f0c92c00317"
+dependencies = [
+ "chrono",
+ "libc",
+ "log",
+ "objc2",
+ "objc2-foundation",
+ "once_cell",
+ "percent-encoding",
+ "scopeguard",
+ "urlencoding",
+ "windows 0.62.2",
 ]
 
 [[package]]

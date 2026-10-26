@@ -3,14 +3,16 @@
 //! tap on macOS (the "System Audio Recording" permission) and WASAPI loopback on Windows. Nothing
 //! joins the call; this only hears what the Mac or PC plays. On speakers the microphone hears the
 //! call too, so the call audio is cancelled out of the mic track before it's written (`Canceller`).
+//! With a key, new tracks are encrypted as they're written (`sealed`).
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
+use crate::sealed::{self, Key, TRACKS};
 use rubato::{Fft, FixedSync, Resampler};
 use sonora_aec3::block::Block;
 use sonora_aec3::block_processor::BlockProcessor;
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -18,7 +20,6 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 pub const RATE: u32 = 16_000;
-pub const TRACKS: [&str; 2] = ["mic.wav", "system.wav"];
 const MIC: usize = 0;
 const SYSTEM: usize = 1;
 /// Frames per resampler call at the device rate.
@@ -172,15 +173,16 @@ fn fallback_note(health: &Health, name: &str) -> String {
 /// Starts recording into `dir`. Fails if the microphone can't be used; a missing system audio
 /// stream is reported through `Health` and leaves a silent system track while it's retried.
 /// `append` continues the tracks already there (after a pause), from the same moment on both.
-/// `cancel_echo` removes the call audio the microphone picks up from speakers.
-pub fn start(dir: &Path, health: Arc<Health>, append: bool, cancel_echo: bool) -> Result<Recording, String> {
+/// `cancel_echo` removes the call audio the microphone picks up from speakers. With `key`, new tracks
+/// are encrypted; tracks already there are continued as they were recorded.
+pub fn start(dir: &Path, health: Arc<Health>, append: bool, cancel_echo: bool, key: Option<Arc<Key>>) -> Result<Recording, String> {
     #[cfg(target_os = "macos")]
     mac::ensure_mic_access()?;
-    if append { even_tracks(dir, &health)?; }
+    if append { even_tracks(dir, &health, key.as_ref())?; }
     let played = Arc::new(Played::default());
     let (mic_echo, system_echo) = if cancel_echo { (Echo::Cancel(played.clone()), Echo::Share(played)) } else { (Echo::Off, Echo::Off) };
-    let mic = writer(dir.join(TRACKS[MIC]), health.clone(), MIC, append, mic_echo)?;
-    let system = writer(dir.join(TRACKS[SYSTEM]), health.clone(), SYSTEM, append, system_echo)?;
+    let mic = writer(open_track(dir, TRACKS[MIC], append, key.as_ref())?, health.clone(), MIC, mic_echo)?;
+    let system = writer(open_track(dir, TRACKS[SYSTEM], append, key.as_ref())?, health.clone(), SYSTEM, system_echo)?;
     let (stop, stopped) = mpsc::channel();
     let (ready_tx, ready) = mpsc::channel();
     let shared = health;
@@ -370,19 +372,38 @@ impl Converter {
 }
 
 const SPEC: hound::WavSpec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
-type Wav = hound::WavWriter<std::io::BufWriter<std::fs::File>>;
-fn open_wav(path: &Path, append: bool) -> Result<Wav, String> {
-    if append && path.exists() { hound::WavWriter::append(path) } else { hound::WavWriter::create(path, SPEC) }.map_err(|e| format!("Couldn’t write {}: {e}", path.display()))
+/// A track's file: encrypted (`sealed`), or a WAV.
+enum Track { Wav(hound::WavWriter<std::io::BufWriter<std::fs::File>>), Sealed(sealed::Writer) }
+impl Track {
+    fn write_sample(&mut self, sample: i16) -> Result<(), String> {
+        match self { Track::Wav(w) => w.write_sample(sample).map_err(|e| e.to_string()), Track::Sealed(w) => w.write_sample(sample).map_err(|e| e.to_string()) }
+    }
+    fn flush(&mut self) -> Result<(), String> { match self { Track::Wav(w) => w.flush().map_err(|e| e.to_string()), Track::Sealed(w) => w.flush().map_err(|e| e.to_string()) } }
+    fn finalize(self) -> Result<(), String> { match self { Track::Wav(w) => w.finalize().map_err(|e| e.to_string()), Track::Sealed(w) => w.finalize().map_err(|e| e.to_string()) } }
+}
+/// Opens track `name` in `dir`: with `append`, the file already there, as it was recorded; otherwise a
+/// new one, encrypted when there's a key.
+fn open_track(dir: &Path, name: &str, append: bool, key: Option<&Arc<Key>>) -> Result<Track, String> {
+    let kept = sealed::path(dir, name).filter(|_| append);
+    let path = kept.clone().unwrap_or_else(|| dir.join(format!("{name}.{}", if key.is_some() { sealed::EXT } else { "wav" })));
+    let fail = |e: &dyn std::fmt::Display| format!("Couldn’t write {}: {e}", path.display());
+    if !sealed::encrypted(&path) {
+        return if kept.is_some() { hound::WavWriter::append(&path) } else { hound::WavWriter::create(&path, SPEC) }.map(Track::Wav).map_err(|e| fail(&e));
+    }
+    let key = key.ok_or(sealed::MISSING_KEY)?.clone();
+    if kept.is_some() { sealed::Writer::append(&path, key) } else { sealed::Writer::create(&path, key, RATE) }.map(Track::Sealed).map_err(|e| fail(&e))
+}
+fn length(path: &Path) -> u64 {
+    if sealed::encrypted(path) { sealed::length(path).unwrap_or(0) } else { hound::WavReader::open(path).map_or(0, |r| r.duration() as u64) }
 }
 /// Pads the shorter track with silence, so a resumed recording continues both tracks from the same moment.
-fn even_tracks(dir: &Path, health: &Health) -> Result<(), String> {
-    let paths = TRACKS.map(|t| dir.join(t));
-    let lengths = paths.each_ref().map(|p| hound::WavReader::open(p).map(|r| r.duration()).unwrap_or(0));
+fn even_tracks(dir: &Path, health: &Health, key: Option<&Arc<Key>>) -> Result<(), String> {
+    let lengths = TRACKS.map(|t| sealed::path(dir, t).map_or(0, |p| length(&p)));
     let longest = lengths.iter().copied().max().unwrap_or(0);
-    for (track, (path, length)) in paths.iter().zip(lengths).enumerate().filter(|(_, (_, l))| *l < longest) {
-        let mut wav = open_wav(path, true)?;
-        for _ in length..longest { wav.write_sample(0i16).map_err(|e| e.to_string())?; }
-        wav.finalize().map_err(|e| e.to_string())?;
+    for (track, (name, length)) in TRACKS.iter().zip(lengths).enumerate().filter(|(_, (_, l))| *l < longest) {
+        let mut file = open_track(dir, name, true, key)?;
+        for _ in length..longest { file.write_sample(0)?; }
+        file.finalize()?;
         health.feed(track, &vec![0.0; (longest - length) as usize]);
     }
     Ok(())
@@ -470,15 +491,14 @@ enum Echo { Share(Arc<Played>), Cancel(Arc<Played>), Off }
 
 /// A track's sample channel and the thread writing it to disk.
 type Writer = (Sender<Chunk>, JoinHandle<Result<(), String>>);
-fn writer(path: PathBuf, health: Arc<Health>, track: usize, append: bool, echo: Echo) -> Result<Writer, String> {
-    let wav = open_wav(&path, append)?;
+fn writer(file: Track, health: Arc<Health>, track: usize, echo: Echo) -> Result<Writer, String> {
     let (tx, rx) = mpsc::channel::<Chunk>();
     let handle = thread::Builder::new().name(format!("quietnote-{}", TRACKS[track])).spawn(move || {
-        write(wav, rx, &health, track, echo).inspect_err(|e| health.set_problem(track, Some(format!("Recording stopped saving audio: {e}"))))
+        write(file, rx, &health, track, echo).inspect_err(|e| health.set_problem(track, Some(format!("Recording stopped saving audio: {e}"))))
     }).map_err(|e| e.to_string())?;
     Ok((tx, handle))
 }
-fn write(mut wav: Wav, rx: Receiver<Chunk>, health: &Health, track: usize, echo: Echo) -> Result<(), String> {
+fn write(mut wav: Track, rx: Receiver<Chunk>, health: &Health, track: usize, echo: Echo) -> Result<(), String> {
     let started = Instant::now();
     let mut converter = Converter { rate: 0, resampler: None, pending: Vec::new() };
     // The track's position: everything handed on, including mic audio the canceller still holds.
@@ -491,14 +511,14 @@ fn write(mut wav: Wav, rx: Receiver<Chunk>, health: &Health, track: usize, echo:
         Echo::Off => (None, None),
     };
     let mut cleaned = Vec::new();
-    let mut put = |wav: &mut hound::WavWriter<_>, samples: &[f32], written: &mut u64, all: bool| -> Result<(), String> {
+    let mut put = |wav: &mut Track, samples: &[f32], written: &mut u64, all: bool| -> Result<(), String> {
         *written += samples.len() as u64;
         if let Some(played) = &shared { played.push(samples); }
         let samples = match canceller.as_mut() {
             Some(canceller) => { cleaned.clear(); canceller.push(samples, &mut cleaned, all); &cleaned[..] }
             None => samples,
         };
-        for s in samples { wav.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).map_err(|e| e.to_string())?; }
+        for s in samples { wav.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?; }
         health.feed(track, samples);
         Ok(())
     };
@@ -523,17 +543,18 @@ fn write(mut wav: Wav, rx: Receiver<Chunk>, health: &Health, track: usize, echo:
             }
             Err(RecvTimeoutError::Disconnected) => break,
         }
-        // Rewrites the header, so the file stays readable if QuietNote is closed abruptly.
-        if flushed.elapsed() >= Duration::from_secs(1) { wav.flush().map_err(|e| e.to_string())?; flushed = Instant::now(); }
+        // Rewrites the WAV header, or seals the second as a frame, so the file stays readable if QuietNote is closed abruptly.
+        if flushed.elapsed() >= Duration::from_secs(1) { wav.flush()?; flushed = Instant::now(); }
     }
     converter.flush(&mut out)?;
     put(&mut wav, &out, &mut written, true)?;
-    wav.finalize().map_err(|e| e.to_string())
+    wav.finalize()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     #[test]
     fn resamples_any_device_rate_to_16k() {
         for rate in [48_000u32, 44_100, 16_000] {
@@ -550,44 +571,72 @@ mod tests {
     }
     #[test]
     fn pads_silence_while_a_track_is_quiet() {
-        let path = std::env::temp_dir().join(format!("quietnote-pad-{}.wav", std::process::id()));
-        let (tx, handle) = writer(path.clone(), Arc::new(Health::default()), SYSTEM, false, Echo::Off).unwrap();
+        let dir = std::env::temp_dir().join(format!("quietnote-pad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (tx, handle) = writer(open_track(&dir, "system", false, None).unwrap(), Arc::new(Health::default()), SYSTEM, Echo::Off).unwrap();
         tx.send(Chunk { rate: RATE, channels: 2, samples: vec![0.25; 3200] }).unwrap();
         thread::sleep(Duration::from_millis(1300));
         drop(tx);
         handle.join().unwrap().unwrap();
-        let reader = hound::WavReader::open(&path).unwrap();
+        let reader = hound::WavReader::open(dir.join("system.wav")).unwrap();
         assert_eq!((reader.spec().channels, reader.spec().sample_rate), (1, RATE));
         let samples: Vec<i16> = reader.into_samples().map(Result::unwrap).collect();
         assert!(samples[..1600].iter().all(|s| (*s - 8191).abs() <= 1));
         assert!((8_000..20_000).contains(&samples.len()), "{} samples", samples.len());
-        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn a_resumed_recording_continues_both_tracks_from_the_same_moment() {
         let dir = std::env::temp_dir().join(format!("quietnote-resume-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for (track, length) in TRACKS.iter().zip([16_000, 12_000]) {
-            let mut wav = open_wav(&dir.join(track), false).unwrap();
+            let mut wav = open_track(&dir, track, false, None).unwrap();
             for _ in 0..length { wav.write_sample(100i16).unwrap(); }
             wav.finalize().unwrap();
         }
         let health = Health::default();
         health.follow(true);
-        even_tracks(&dir, &health).unwrap();
+        // A key now (encryption turned on since) doesn't change tracks recorded without one.
+        let key = Arc::new(Key::new(&[5; 32]));
+        even_tracks(&dir, &health, Some(&key)).unwrap();
         // The live transcript hears the padding too, so it stays on the file's clock.
         assert_eq!(health.take_feed().map(|f| f.len()), [0, 4_000]);
-        let (tx, handle) = writer(dir.join(TRACKS[SYSTEM]), Arc::new(Health::default()), SYSTEM, true, Echo::Off).unwrap();
+        let (tx, handle) = writer(open_track(&dir, TRACKS[SYSTEM], true, Some(&key)).unwrap(), Arc::new(Health::default()), SYSTEM, Echo::Off).unwrap();
         tx.send(Chunk { rate: RATE, channels: 1, samples: vec![0.25; 1600] }).unwrap();
         drop(tx);
         handle.join().unwrap().unwrap();
-        let samples = |track: &str| hound::WavReader::open(dir.join(track)).unwrap().into_samples::<i16>().map(Result::unwrap).collect::<Vec<_>>();
+        assert!(!dir.join("system.qna").exists());
+        let samples = |track: &str| hound::WavReader::open(dir.join(format!("{track}.wav"))).unwrap().into_samples::<i16>().map(Result::unwrap).collect::<Vec<_>>();
         assert_eq!(samples(TRACKS[MIC]).len(), 16_000);
         let system = samples(TRACKS[SYSTEM]);
         // The earlier audio, silence up to where the mic track ended, then the resumed audio.
         assert_eq!(system.len(), 17_600);
         assert!(system[..12_000].iter().all(|s| *s == 100) && system[12_000..16_000].iter().all(|s| *s == 0));
         assert!(system[16_000..].iter().all(|s| (*s - 8191).abs() <= 1));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn records_encrypted_tracks_with_a_key_and_continues_them() {
+        let dir = std::env::temp_dir().join(format!("quietnote-sealed-tracks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = Arc::new(Key::new(&[6; 32]));
+        let record = |samples: usize, append: bool| {
+            let (tx, handle) = writer(open_track(&dir, TRACKS[SYSTEM], append, Some(&key)).unwrap(), Arc::new(Health::default()), SYSTEM, Echo::Off).unwrap();
+            tx.send(Chunk { rate: RATE, channels: 1, samples: vec![0.25; samples] }).unwrap();
+            drop(tx);
+            handle.join().unwrap().unwrap();
+        };
+        record(3200, false);
+        assert!(dir.join("system.qna").exists() && !dir.join("system.wav").exists());
+        assert_eq!(length(&dir.join("system.qna")), 3200);
+        // The mic track never started: resuming pads it, encrypted too, to the system track's length.
+        even_tracks(&dir, &Health::default(), Some(&key)).unwrap();
+        assert_eq!(length(&dir.join("mic.qna")), 3200);
+        record(1600, true);
+        assert_eq!(length(&dir.join("system.qna")), 4800);
+        // Without the key, an encrypted track can't be continued.
+        assert_eq!(open_track(&dir, TRACKS[SYSTEM], true, None).err().as_deref(), Some(sealed::MISSING_KEY));
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -679,7 +728,7 @@ mod tests {
     fn cancels_echo_in_a_recording() {
         let audio = PathBuf::from(std::env::var("QUIETNOTE_TEST_AUDIO").expect("QUIETNOTE_TEST_AUDIO"));
         let out = PathBuf::from(std::env::var("QUIETNOTE_TEST_OUT").expect("QUIETNOTE_TEST_OUT"));
-        let [mic, call] = TRACKS.map(|t| crate::transcribe::samples(&audio.join(t)).unwrap());
+        let [mic, call] = TRACKS.map(|t| crate::transcribe::samples(&sealed::path(&audio, t).expect("a track")).unwrap());
         let started = Instant::now();
         let cancelled = cancel(&mic, &call, 0);
         println!("{:.0}s of audio in {:?}", mic.len() as f64 / RATE as f64, started.elapsed());
@@ -692,8 +741,8 @@ mod tests {
         }
         println!("mic level while the call played: {:.1} dB lower", 10.0 * (before / after.max(1e-12)).log10());
         std::fs::create_dir_all(&out).unwrap();
-        std::fs::copy(audio.join(TRACKS[SYSTEM]), out.join(TRACKS[SYSTEM])).unwrap();
-        let mut wav = open_wav(&out.join(TRACKS[MIC]), false).unwrap();
+        std::fs::copy(audio.join("system.wav"), out.join("system.wav")).unwrap();
+        let mut wav = open_track(&out, TRACKS[MIC], false, None).unwrap();
         for s in cancelled { wav.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).unwrap(); }
         wav.finalize().unwrap();
     }
@@ -713,7 +762,7 @@ mod tests {
         let before = rss();
         let started = Instant::now();
         let health = Arc::new(Health::default());
-        let recording = start(&dir, health.clone(), false, true).unwrap();
+        let recording = start(&dir, health.clone(), false, true, None).unwrap();
         let mut peak = 0;
         while started.elapsed() < Duration::from_secs(seconds) {
             thread::sleep(Duration::from_secs(10).min(Duration::from_secs(seconds).saturating_sub(started.elapsed())));
@@ -724,7 +773,7 @@ mod tests {
         let wall = started.elapsed().as_secs_f64();
         recording.stop().unwrap();
         let lengths: Vec<f64> = TRACKS.iter().map(|t| {
-            let reader = hound::WavReader::open(dir.join(t)).unwrap();
+            let reader = hound::WavReader::open(dir.join(format!("{t}.wav"))).unwrap();
             reader.len() as f64 / RATE as f64
         }).collect();
         println!("wall {wall:.1}s  tracks {lengths:?}s  rss before {before} MB, peak {peak} MB  folder {}", dir.display());

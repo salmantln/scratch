@@ -1,7 +1,7 @@
 import { Children, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { Icon } from './Icon';
+import { Icon, MorphIcon } from './Icon';
 import { clock, recorded, stopsIn, type Meeting } from './model';
 import * as storage from './storage';
 const mac = /Mac/.test(navigator.userAgent);
@@ -197,10 +197,10 @@ function Recorder({ meeting, autoStart, live, clean, transcript, onUpdated, onCl
         <Bars peak={Math.max(mic, system)} /><Icon name="chevron" size={14} style={open ? undefined : { transform: 'rotate(180deg)' }} /><span className="sr-only">Recording details</span></button>}
       // The microphone is chosen with the details open, as in Granola, so the folded bar stays small.
       detail={recording && open && <MicPicker current={recording.micDevice} />}
-      // Pause and Resume share a place and Stop keeps its own, so switching never moves a button under the pointer.
+      // Pause and Resume are one button whose icon morphs, and Stop keeps its own, so switching never moves a button
+      // under the pointer.
       actions={recording && <>
-        {paused ? <button className="primary resume" disabled={busy} onClick={() => void run(storage.captureResume, 'Recording didn’t resume.')}><Icon name="play" size={13} />Resume</button>
-          : <button className="icon-button" aria-label="Pause recording" title="Pause recording" disabled={busy} onClick={() => void run(storage.capturePause, 'Recording didn’t pause.')}><Icon name="pause" size={15} /></button>}
+        <button className={paused ? 'primary resume' : 'icon-button'} aria-label={paused ? undefined : 'Pause recording'} title={paused ? undefined : 'Pause recording'} disabled={busy} onClick={() => void (paused ? run(storage.captureResume, 'Recording didn’t resume.') : run(storage.capturePause, 'Recording didn’t pause.'))}><MorphIcon name={paused ? 'play' : 'pause'} size={14} />{paused && 'Resume'}</button>
         <button className="icon-button stop" aria-label="Stop recording" title="Stop recording" disabled={busy} onClick={() => void stop()}><Icon name="stop" size={14} /></button>
       </>}
       drawer={recording && open && <div className="recorder-drawer" id={drawerId}>

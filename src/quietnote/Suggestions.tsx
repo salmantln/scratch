@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { Hush } from './Hush';
 import { device, desktop, enhanceNotes, meetingNames, noteTemplates, openTemplates, suggestSummary, type Cited, type Enhanced, type Names, type NoteTemplate, type Suggestions } from './storage';
-import { appendAction, clock, madeUp, notesMarkdown, replaceSection, section, templateFor, transcriptTurns, type Meeting } from './model';
+import { actionItems, appendAction, clock, madeUp, notesMarkdown, replaceSection, section, templateFor, transcriptTurns, type Meeting } from './model';
 /** Who drafts suggestions: Claude with the user's own key, or a model in Ollama on this computer. */
 export type Summarizer = { local: boolean; label: string };
 // Words, not Markdown marks ("-", "##").
@@ -10,9 +10,11 @@ const count = (text: string) => text.split(/\s+/).filter(w => /[\p{L}\p{N}]/u.te
 /** Suggestions drafted from a recorded transcript, and enhanced notes drafted from the user's notes and the
  * transcript under a template. Nothing is written until the user accepts, each line shows what it came
  * from, and asking first says exactly what leaves the device. */
-export function SuggestPanel({ meeting, summarizer, template: preferred = '', onMarkdown, onRename, onSpeaker, onCite, onWorking }: {
+export function SuggestPanel({ meeting, summarizer, template: preferred = '', onMarkdown, onRename, onSpeaker, onCite, onWorking, onAdded }: {
   meeting: Meeting; summarizer: Summarizer; template?: string; onMarkdown: (markdown: string) => Promise<void>; onRename: (title: string) => Promise<void>;
   onSpeaker: (from: string, to: string) => Promise<void>; onCite: (atMs: number) => void; onWorking?: (working: boolean) => void;
+  /** The index of an action item just added from a suggestion, so the list can show where it went. */
+  onAdded?: (index: number) => void;
 }) {
   const [phase, setPhase] = useState<'idle' | 'confirm' | 'confirm-notes' | 'confirm-names' | 'working' | 'working-notes' | 'working-names'>('idle');
   // While a request is out, its notice has the meeting's Hush.
@@ -67,7 +69,9 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
   const useName = (run: Promise<void>, done: (n: Names) => Names) => run.then(() => setNames(n => { const next = n && done(n); return next && (next.title || next.speakers.length) ? next : null; })).catch(e => setError(String(e)));
   const drop = (item: Cited) => setFound(f => f && { ...f, actions: f.actions.filter(i => i !== item) });
   const accept = async (item: Cited) => {
+    const index = actionItems(markdown).length;
     await onMarkdown(appendAction(markdown, item.owner ? `${item.owner} — ${item.text}` : item.text));
+    onAdded?.(index);
     drop(item);
   };
   const cite = (atMs: number, quote: string) => <button className="citation" title="Show this line in the transcript" onClick={() => onCite(atMs)}><span className="timestamp">{clock(atMs / 1000)}</span>“{quote}”</button>;

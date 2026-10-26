@@ -105,6 +105,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src-tauri/src/meetings.rs`
 - `src-tauri/src/oauth.rs`
 - `src-tauri/src/parakeet.rs`
+- `src-tauri/src/protect.rs`
 - `src-tauri/src/recorder.rs`
 - `src-tauri/src/speakers.rs`
 - `src-tauri/src/summarize.rs`

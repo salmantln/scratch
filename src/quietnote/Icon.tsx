@@ -19,6 +19,7 @@ const paths = {
   play: 'M7 5l12 7-12 7z',
   expand: 'M14 4h6v6 M10 20H4v-6 M20 4l-7 7 M4 20l7-7',
   mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z M5 11a7 7 0 0 0 14 0 M12 18v3',
+  trash: 'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v5 M14 11v5',
   archive: 'M3 13h18v7H3z M3 13l3-8h12l3 8 M7 16.5h.01',
   privacy: 'M3 3l18 18 M10.6 5.1A10 10 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3 3.6 M6.6 6.6C3.9 8.4 2 12 2 12s4 7 10 7c1.9 0 3.6-.6 5-1.5 M9.9 9.9a3 3 0 0 0 4.2 4.2',
   appearance: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M12 3v18 M12 7.5h5.5 M12 12h9 M12 16.5h5.5',
@@ -33,6 +34,18 @@ const paths = {
 };
 export function Icon({ name, size = 18, style }: { name: keyof typeof paths; size?: number; style?: CSSProperties }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={style}><path d={paths[name]} /></svg>;
+}
+/** Icons that morph into each other (as in benji.org/morphing-icons-with-claude): three 14-unit strokes each, placed
+ * by centre, angle and scale, so CSS moves them from one icon to the next; a stroke an icon doesn't use shrinks to the
+ * centre. Every transform has the same functions, so each number interpolates on its own. */
+const strokes = {
+  play: [[7, 12, 90, 1], [13, 8.5, 30.3, 1], [13, 15.5, -30.3, 1]],
+  pause: [[8, 12, 90, 1], [16, 12, 90, 1], [12, 12, -30.3, 0]],
+} satisfies Record<string, [number, number, number, number][]>;
+export function MorphIcon({ name, size = 18 }: { name: keyof typeof strokes; size?: number }) {
+  return <svg className="morph-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+    {strokes[name].map(([x, y, angle, scale], i) => <path key={i} d="M-7 0h14" style={{ transform: `translate(${x}px, ${y}px) rotate(${angle}deg) scale(${scale})`, opacity: scale }} />)}
+  </svg>;
 }
 export function Logo({ size = 28 }: { size?: number }) {
   return <svg className="brand-logo" width={size * 155 / 168} height={size} viewBox="0 0 155 168" fill="none" aria-hidden="true">

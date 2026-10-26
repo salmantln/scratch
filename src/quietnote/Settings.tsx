@@ -6,7 +6,7 @@ import { serviceName } from './catalog';
 import { getVersion } from '@tauri-apps/api/app';
 import { dateLabel } from './model';
 import { accelerator, actions, bound, globalDefault, globalRecord, label, problem } from './shortcuts';
-import { activateLicense, appearance, calendarAccess, callAccessibility, checkout, cliSetupCommand, desktop, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openLink, openPrivacySettings, removeLicense, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type Connections, type LicenseStatus, type PrivacyPreferences, type Service } from './storage';
+import { activateLicense, appearance, calendarAccess, callAccessibility, checkout, cliSetupCommand, desktop, diskEncryption, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openLink, openPrivacySettings, removeLicense, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type Connections, type LicenseStatus, type PrivacyPreferences, type Service } from './storage';
 export type SettingsSection = 'Privacy' | 'Appearance' | 'Shortcuts' | 'Local archive' | 'About';
 const mac = /Mac/.test(navigator.userAgent);
 const sections: [SettingsSection, 'privacy' | 'appearance' | 'keyboard' | 'archive' | 'info'][] = [['Privacy', 'privacy'], ['Appearance', 'appearance'], ['Shortcuts', 'keyboard'], ['Local archive', 'archive'], ['About', 'info']];
@@ -218,6 +218,16 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
     window.addEventListener('focus', check);
     return () => { cancelled = true; window.removeEventListener('focus', check); };
   }, [confirming]);
+  // Whether FileVault encrypts the disk, checked again on coming back from System Settings.
+  const [disk, setDisk] = useState('');
+  useEffect(() => {
+    if (!desktop || !mac) return;
+    let cancelled = false;
+    const check = () => { diskEncryption().then(d => { if (!cancelled) setDisk(d); }).catch(() => { if (!cancelled) setDisk('unknown'); }); };
+    check();
+    window.addEventListener('focus', check);
+    return () => { cancelled = true; window.removeEventListener('focus', check); };
+  }, []);
   const connected = (Object.keys(connections) as Service[]).map(s => `${serviceName(s)} (as ${connections[s]!.account})`);
   const flag = (key: string, fallback: boolean) => typeof values[key] === 'boolean' ? values[key] as boolean : fallback;
   const theme = appearance(values);
@@ -245,6 +255,9 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
           {desktop ? fact('Stored on this device', `Meeting files live in a local archive on this computer. QuietNote uploads nothing unless you send action items to a service you connected${recording && values.summaryProvider === 'anthropic' ? ', or ask Claude for summary suggestions' : ''}.`) : fact('Stored in this browser', 'This browser preview keeps meetings in this browser’s local storage. Nothing is uploaded.')}
           {recording ? fact('Recording starts only when you choose', 'Nothing records automatically. QuietNote hears your microphone and what this computer plays, only while you record.') : fact('Capture starts only when you choose', 'Nothing begins capturing automatically.')}
           {recording && fact('Transcribed on this device', 'Audio and transcripts are made and kept on this computer with a bundled speech model. Nothing is uploaded.')}
+          {disk === 'on' && fact('Encrypted by FileVault', `macOS encrypts this Mac’s disk, ${recording ? 'recordings, transcripts and notes' : 'meetings'} included, so no one can read them from the disk without your password.`)}
+          {disk === 'encrypting' && fact('FileVault is encrypting this disk', 'Once it’s done, no one can read your meetings from this Mac’s disk without your password.')}
+          {(disk === 'off' || disk === 'decrypting') && <div className="setting-row"><div><div className="setting-title">{disk === 'off' ? 'FileVault is off' : 'FileVault is being turned off'}</div><p>{`Anyone with this Mac’s disk could read your ${recording ? 'recordings, transcripts and notes' : 'meetings'}. FileVault encrypts the whole disk with your login password. Turn it on under Privacy & Security → FileVault.`}</p></div><button className="text-button" onClick={() => void openPrivacySettings('fileVault').catch(() => { /* The text says where to go. */ })}>Open System Settings</button></div>}
           {fact('No meeting bot', 'QuietNote never joins a call or adds an attendee.')}
           {fact('No account required', 'There is no sign-in and no cloud sync.')}
           {desktop && fact(connected.length ? `Connected to ${connected.join(' and ')}` : 'No connections', connected.length ? 'Action items are sent only when you choose Send. Keys are kept in your macOS Keychain.' : 'Connect Linear or GitHub from Connections in the sidebar to send action items as issues.')}
@@ -269,6 +282,8 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
           {recording && mac && toggle('pauseMedia', 'Pause music when recording starts', 'Music or a video playing on this Mac would be recorded too, so it’s paused when you start or resume recording. Nothing is started again afterwards.', true)}
           {recording && toggle('cleanTranscript', 'Remove filler words', 'Transcripts open in Clean view, without “um”, “uh” and repeated stutters. It changes how the transcript is shown, not what was recorded: Verbatim keeps the original transcription.', true)}
           {recording && toggle('deleteAudio', 'Delete audio after transcribing', 'Audio is deleted only after its transcript is saved, for meetings transcribed after you turn this on. Audio you already have is kept. If transcription fails, the audio is kept so you can retry. Deleted audio can’t be transcribed again.', false)}
+          {recording && mac && toggle('encryptAudio', 'Encrypt recordings', 'Recordings are encrypted with a key kept in your macOS Keychain, so other apps and copies of the archive can’t play them. QuietNote still transcribes them, and Export audio on a meeting saves a playable copy where you choose. Applies to recordings you start after changing it; transcripts and notes stay readable files.', true)}
+          {recording && mac && toggle('backupAudio', 'Back up recordings with Time Machine', 'Recordings are left out of Time Machine, so a backup drive never holds the audio of your meetings. Transcripts and notes are backed up as usual. Turn this on to back up recordings too.', false)}
         </section>
         {recording && desktop && <SummarySettings values={values} onChange={onChange} summaryKey={summaryKey} onSummaryKey={onSummaryKey} />}
         {!recording && <section className="planned-group"><h2>Planned <span className="badge">Not active yet</span></h2>

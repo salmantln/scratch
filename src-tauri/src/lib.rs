@@ -40,8 +40,12 @@ mod mcp;
 mod meetings;
 #[cfg(target_os = "macos")]
 mod parakeet;
+mod protect;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod recorder;
+// Where nothing records, only reading and exporting are used.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+mod sealed;
 #[cfg(target_os = "macos")]
 mod speakers;
 mod summarize;
@@ -3883,6 +3887,8 @@ pub fn run() {
             calls::spawn(app.handle());
             // Opens QuietNote at login so it's there for calls, unless turned off in Settings (macOS).
             login::sync(app.handle());
+            // Recordings stay out of Time Machine unless Settings says to back them up (macOS).
+            protect::sync(app.handle());
             // The tray's next meeting, while the calendar is on (macOS).
             calendar::spawn(app.handle());
             // Start recording from any app (macOS, Windows).
@@ -3927,6 +3933,7 @@ pub fn run() {
             meetings::create_project,
             meetings::create_meeting_bundle,
             meetings::save_meeting_metadata,
+            meetings::trash_meeting,
             meetings::quietnote_preferences,
             tray::tray_sync,
             tray::quietnote_quit,
@@ -3941,9 +3948,11 @@ pub fn run() {
             capture::capture_live_transcript,
             compact::window_compact,
             capture::transcribe_meeting,
+            capture::audio_export,
             capture::transcript_data,
             capture::render_transcripts,
             capture::open_privacy_settings,
+            protect::disk_encryption,
             capture::capture_keep,
             capture::transcript_rename_speaker,
             cli::cli_setup_command,

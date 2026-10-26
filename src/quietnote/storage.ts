@@ -1,6 +1,7 @@
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { appDataDir, join } from '@tauri-apps/api/path';
+import { open as pick } from '@tauri-apps/plugin-dialog';
 import { saveFileDirect } from '../services/files';
 import { getNotesFolder, setNotesFolder, searchNotes, startFileWatcher } from '../services/notes';
 import type { CalendarEvent, Meeting, MeetingMetadata } from './model';
@@ -73,6 +74,14 @@ export async function saveMarkdown(metadata: MeetingMetadata, markdown: string):
 export async function saveMetadata(metadata: MeetingMetadata): Promise<void> {
   if (desktop) await invoke('save_meeting_metadata', { metadata });
   else writeBrowser(browserMeetings().map(m => m.metadata.id === metadata.id ? { ...m, metadata } : m));
+}
+/** Where a deleted meeting goes on desktop: its folder can be put back from there until it's emptied. */
+export const bin = /Win/.test(navigator.userAgent) ? 'Recycle Bin' : 'Trash';
+/** Deletes a meeting: on desktop its whole folder moves to the Trash (Rust refuses while it records or transcribes);
+ * the browser preview forgets it. */
+export async function trashMeeting(metadata: MeetingMetadata): Promise<void> {
+  if (desktop) { noteWrite(metadata.meetingPath, metadata.transcriptPath); await invoke('trash_meeting', { id: metadata.id }); }
+  else writeBrowser(browserMeetings().filter(m => m.metadata.id !== metadata.id));
 }
 export async function indexedSearch(query: string): Promise<string[]> {
   if (!desktop) return [];
@@ -163,16 +172,20 @@ export type Agent = { id: string; name: string; state: 'on' | 'off' | 'other' | 
 export async function mcpAgents(): Promise<Agent[]> { return desktop ? invoke('mcp_agents') : []; }
 /** Adds QuietNote to (or removes it from) that app's MCP settings file. */
 export async function setMcpAgent(id: string, on: boolean): Promise<Agent> { return invoke('mcp_agent_set', { id, on }); }
-export async function openPrivacySettings(kind: 'microphone' | 'systemAudio' | 'accessibility' | 'calendars'): Promise<void> { if (desktop) await invoke('open_privacy_settings', { kind }); }
+export async function openPrivacySettings(kind: 'microphone' | 'systemAudio' | 'accessibility' | 'calendars' | 'fileVault'): Promise<void> { if (desktop) await invoke('open_privacy_settings', { kind }); }
+/** Whether FileVault encrypts this Mac's disk: on, off, encrypting, decrypting, unknown or unavailable. */
+export async function diskEncryption(): Promise<string> { return desktop ? invoke('disk_encryption') : 'unavailable'; }
 /** Whether QuietNote may read browser window and tab titles (macOS Accessibility); `ask` shows macOS's prompt first. */
 export async function callAccessibility(ask: boolean): Promise<boolean> { return desktop ? invoke('call_accessibility', { ask }) : false; }
 /** Start recording from any app: Rust registers the accelerator ('' turns it off) and refuses one another app holds. */
 export async function setGlobalShortcut(accelerator: string): Promise<void> { if (desktop) await invoke('hotkey_set', { accelerator }); }
-export async function revealAudio(metadata: MeetingMetadata): Promise<void> {
-  if (!desktop || !metadata.audioPath) return;
-  // Explorer needs Windows separators; the archive's relative paths always use '/'.
-  const path = `${archiveRoot}/${metadata.audioPath}`;
-  await invoke('open_in_file_manager', { path: archiveRoot.includes('\\') ? path.replace(/\//g, '\\') : path });
+/** Saves a playable copy of a meeting's audio, a WAV per track, in a folder the user picks each time (recordings are kept encrypted). The folder, or null if they cancel. */
+export async function exportAudio(metadata: MeetingMetadata): Promise<string | null> {
+  if (!desktop || !metadata.audioPath) return null;
+  const folder = await pick({ directory: true, multiple: false, canCreateDirectories: true, title: 'Export audio' });
+  if (typeof folder !== 'string') return null;
+  await invoke('audio_export', { meetingId: metadata.id, folder });
+  return folder;
 }
 // Connections: keys stay in the macOS Keychain on the Rust side. The browser preview can't connect.
 export type Service = 'linear' | 'github';

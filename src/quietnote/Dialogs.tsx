@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { timeLabel, validProjectName, type CalendarEvent } from './model';
+import { bin, desktop } from './storage';
 export function Modal({ title, onEscape, children, className = '' }: { title: ReactNode; onEscape?: () => void; children: ReactNode; className?: string }) {
   const panel = useRef<HTMLDivElement>(null);
   const heading = useId();
@@ -46,6 +47,21 @@ export function NewProjectDialog({ existing, onCreate, onClose }: { existing: st
       {error && <p className="field-error" id="project-error" role="alert">{error}</p>}
       <div className="modal-actions"><button type="button" className="secondary" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="primary" disabled={busy}>{busy ? 'Creating…' : 'Create project'}</button></div>
     </form>
+  </Modal>;
+}
+/** Deleting a meeting asks first, with Cancel focused. On desktop its folder moves to the Trash, so it can be put back. */
+export function DeleteMeetingDialog({ title, audio, onDelete, onClose }: { title: string; audio: boolean; onDelete: () => Promise<void>; onClose: () => void }) {
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function confirm() {
+    setBusy(true);
+    try { await onDelete(); }
+    catch (e) { setError(`Couldn’t delete the meeting. ${String(e).replace(/^Error: /, '')}`); setBusy(false); }
+  }
+  return <Modal title={`Delete “${title}”?`} onEscape={busy ? undefined : onClose}>
+    <p className="subtle">{desktop ? `Its notes, transcript${audio ? ' and recording' : ''} move to the ${bin}. You can put them back from there until it’s emptied.` : 'Its notes and transcript are removed from this browser. This can’t be undone.'}</p>
+    {error && <p className="field-error" role="alert">{error}</p>}
+    <div className="modal-actions"><button type="button" className="secondary" disabled={busy} onClick={onClose}>Cancel</button><button type="button" className="secondary danger" disabled={busy} onClick={() => void confirm()}>{busy ? 'Deleting…' : desktop ? `Move to ${bin}` : 'Delete meeting'}</button></div>
   </Modal>;
 }
 /** With `canRecord`, the primary action creates the meeting and starts recording it: that press is the explicit start.

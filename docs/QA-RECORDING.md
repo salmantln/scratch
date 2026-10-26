@@ -111,6 +111,11 @@ Use a signed build (`npm run tauri build`) for anything involving permissions. D
 | A long stretch of talking reads as paragraphs of about 15 s, each with its own time; with only one side speaking there are no speaker labels | ✓ auto |
 | Transcription failure (e.g. remove the model from the app bundle): "Transcription couldn't finish. Your recording is still saved", reason under Details, audio kept, Retry transcription | ✓ auto (UI, logic) ☐ (real) |
 | Delete audio after transcribing on: audio is gone after success; after a failure it's still there | ✓ auto |
+| Encrypt recordings on (the default): a new recording's `audio/` folder holds `mic.qna` and `system.qna`, no WAV; it transcribes and tells voices apart as before | ✓ auto (format, recorder) ☐ (real) |
+| The first encrypted recording adds an `audio` item to Keychain Access (`app.quietnote.desktop.connectors`); a release build doesn't ask for the Keychain password | ☐ |
+| Force-quit while recording encrypted: the next launch recovers the audio up to about the last second and transcribes it | ✓ auto (logic) ☐ (real) |
+| Export audio… asks for a folder every time and writes playable WAVs there (`<meeting> mic.wav`, `… 2.wav` beside an earlier export); cancelling writes nothing | ✓ auto (UI, files) ☐ (real) |
+| Encrypt recordings off: new recordings are WAV; recording more of a meeting recorded encrypted keeps it encrypted; WAVs from earlier builds still transcribe and export | ✓ auto |
 | Disk nearly full: Start is refused below 1 GB; recording stops cleanly below 150 MB | ✓ auto (thresholds) ☐ (real) |
 | On speakers, the others' words aren't transcribed as yours, and talking over them keeps your words; with "Remove call audio from your microphone" off, mic.wav is the raw microphone | ✓ auto (synthetic), ✓ live 2026-10-23 (real voice, simulated room; see PERFORMANCE) ☐ (real call on speakers) |
 | With headphones, your voice in mic.wav sounds the same with echo cancellation on as off | ☐ |

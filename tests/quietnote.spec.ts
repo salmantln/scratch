@@ -499,6 +499,11 @@ async function mockDesktop(page: Page, fixture: Fixture) {
       // Start recording from any app, as Rust registered it (`hotkey_set`; '' is off), and keys another app holds.
       hotkey: 'Control+Alt+R',
       hotkeyTaken: [] as string[],
+      // What `disk_encryption` reports about FileVault.
+      disk: 'on',
+      // The folder the Export audio picker answers (null: cancelled), and what `audio_export` was asked to write.
+      folder: '/Users/me/Desktop' as string | null,
+      exported: [] as { meetingId: string; folder: string }[],
     };
     const emit = (event: string, payload: unknown) => (listeners[event] ?? []).forEach(id => callbacks.get(id)?.({ event, id: 0, payload }));
     const update = (id: string, change: Partial<Meta>) => { const m = find(id); m.metadata = { ...m.metadata, ...change }; return m.metadata; };
@@ -528,6 +533,7 @@ async function mockDesktop(page: Page, fixture: Fixture) {
           case 'capture_allow_microphone': if (state.capture.microphone === 'undetermined') state.capture = { ...state.capture, microphone: state.micAnswer }; emit('quietnote://capture-state', state.capture); return state.capture;
           case 'create_meeting_bundle': meetings.push(args.meeting); return null;
           case 'save_meeting_metadata': { const m = find((args.metadata as Meta).id); m.metadata = args.metadata; return null; }
+          case 'trash_meeting': meetings.splice(meetings.indexOf(find(args.id)), 1); return null;
           case 'capture_start': {
             if (startFailure) throw startFailure;
             const m = find(args.meetingId);
@@ -565,6 +571,9 @@ async function mockDesktop(page: Page, fixture: Fixture) {
           case 'summary_suggest': return state.suggestions;
           case 'plugin:clipboard-manager|write_text': state.clipboard = args.text; return null;
           case 'call_accessibility': return state.accessibility;
+          case 'disk_encryption': return state.disk;
+          case 'plugin:dialog|open': return state.folder;
+          case 'audio_export': state.exported.push({ meetingId: args.meetingId, folder: args.folder }); return [`${args.folder}/${args.meetingId} mic.wav`];
           case 'hotkey_set': if (state.hotkeyTaken.includes(args.accelerator)) throw 'Another app already uses this shortcut. Choose another.'; state.hotkey = args.accelerator; return null;
           case 'mcp_agents': return state.agents;
           case 'mcp_agent_set': { const a = state.agents.find(x => x.id === args.id)!; a.state = args.on ? 'on' : 'off'; return { ...a }; }
@@ -667,7 +676,7 @@ test('J: desktop recording runs in the background, then shows a clean transcript
   await expect(page.locator('.transcript-turn').first()).toContainText('So, we should ship on Friday.');
   // Switching views only changes what's shown: nothing is written.
   expect((await qn(page, q => q.state.calls)).slice(before).filter(c => writes.includes(c))).toEqual([]);
-  await expect(page.getByRole('button', { name: 'Show audio' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Export audio…' })).toBeVisible();
   // Copy transcript copies every turn in the view shown, even while Find narrows the list.
   await page.getByLabel('Find in transcript').fill('Friday');
   await page.getByRole('button', { name: 'Copy transcript' }).click();
@@ -772,7 +781,7 @@ test('M: a recovered recording and a failed transcription say what happened and 
   await expect(failure.getByText('The speech model is missing from this installation of QuietNote.')).toBeHidden();
   await failure.getByText('Details').click();
   await expect(failure.getByText('The speech model is missing from this installation of QuietNote.')).toBeVisible();
-  await expect(failure.getByRole('button', { name: 'Show audio' })).toBeVisible();
+  await expect(failure.getByRole('button', { name: 'Export audio…' })).toBeVisible();
   await expect(page.locator('.meeting-meta .status')).toHaveText('Needs attention');
   await failure.getByRole('button', { name: 'Retry transcription' }).click();
   expect(await qn(page, q => q.state.calls.includes('transcribe_meeting'))).toBe(true);
@@ -900,6 +909,32 @@ test('Q: Home lists open action items from every meeting, and a tick is written 
   await page.keyboard.type('phase two');
   await expect(page.getByRole('searchbox', { name: 'Search meetings' })).toHaveValue('phase two');
   await expect(page.locator('.result').first()).toContainText('Acme onboarding call');
+});
+
+test('Q1: a tick says so in a toast, and Undo puts the item back as it was', async ({ page }) => {
+  await examples(page);
+  const items = page.locator('.home-section', { has: page.getByRole('heading', { name: /^Open action items/ }) });
+  const total = demoMeetings.reduce((n, m) => n + actionItems(m.markdown).length, 0);
+  const first = items.locator('.action-row').first();
+  await first.locator('input').check();
+  const done = page.locator('[data-sonner-toast]', { hasText: 'Marked done' });
+  await expect(done).toBeVisible();
+  await expect(items.locator('.home-count')).toHaveText(String(total - 1));
+  await done.getByRole('button', { name: 'Undo' }).click();
+  await expect(done).toHaveCount(0);
+  await expect(first.locator('input')).not.toBeChecked();
+  await expect(items.locator('.home-count')).toHaveText(String(total));
+  // In a meeting too, and both ways: ticking the same item again replaces its toast, and reopening can be undone.
+  await first.getByRole('button', { name: 'Acme onboarding call' }).click();
+  const item = page.locator('.action-row', { hasText: 'send the revised onboarding plan' }).locator('input');
+  await expect(item).not.toBeChecked();
+  await item.check();
+  await item.uncheck();
+  const reopened = page.locator('[data-sonner-toast]', { hasText: 'Reopened' });
+  await expect(reopened).toBeVisible();
+  await expect(page.locator('[data-sonner-toast]')).toHaveCount(1);
+  await reopened.getByRole('button', { name: 'Undo' }).click();
+  await expect(item).toBeChecked();
 });
 
 test('Q2: the Action items page lists every meeting’s items under the meeting, open or done', async ({ page }) => {
@@ -1766,6 +1801,47 @@ test('AG: without sign-in built in, Linear and GitHub still connect with a paste
   expect(await qn(page, q => q.state.calls.includes('connector_sign_in'))).toBe(false);
 });
 
+test('AG2: a meeting is deleted only after asking, and on desktop it goes to the Trash; never while it’s being transcribed', async ({ page }) => {
+  const busy = makeMeeting('Board prep', 'Acme');
+  busy.metadata.status = 'processing';
+  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme'), busy] });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Board prep/ }).click();
+  await expect(page.getByRole('button', { name: 'Delete meeting' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: /Weekly sync/ }).click();
+  await page.getByRole('button', { name: 'Delete meeting' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete “Weekly sync”?' });
+  await expect(dialog).toContainText('move to the Trash');
+  // Cancel is focused, and cancelling changes nothing.
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  expect(await qn(page, q => q.state.calls.includes('trash_meeting'))).toBe(false);
+  await page.getByRole('button', { name: 'Delete meeting' }).click();
+  await dialog.getByRole('button', { name: 'Move to Trash' }).click();
+  await expect(page.getByText('Moved “Weekly sync” to the Trash')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Acme' })).toBeVisible();
+  await expect(row(page, 'Weekly sync')).toHaveCount(0);
+  await expect(row(page, 'Board prep')).toHaveCount(1);
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'trash_meeting').length)).toBe(1);
+});
+test('AG3: in the browser preview a deleted meeting is gone from every list and stays gone', async ({ page }) => {
+  await examples(page);
+  await row(page, 'Acme onboarding call').click();
+  await page.getByRole('button', { name: 'Delete meeting' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete “Acme onboarding call”?' });
+  await expect(dialog).toContainText('removed from this browser');
+  await dialog.getByRole('button', { name: 'Delete meeting' }).click();
+  await expect(page.getByText('Deleted “Acme onboarding call”')).toBeVisible();
+  await page.getByRole('button', { name: 'All meetings' }).click();
+  await expect(page.locator('.meeting-row')).toHaveCount(5);
+  await page.reload();
+  await page.getByRole('button', { name: 'All meetings' }).click();
+  await expect(page.locator('.meeting-row')).toHaveCount(5);
+  await expect(row(page, 'Acme onboarding call')).toHaveCount(0);
+});
+
 test('AH: AI apps on this computer are added to QuietNote in one click, and files it can’t read are left alone', async ({ page }) => {
   await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')] });
   await page.addInitScript(() => {
@@ -1824,4 +1900,44 @@ test('AJ: Give feedback opens a new email with only the version filled in', asyn
   await page.goto('/');
   await page.getByRole('button', { name: 'Give feedback' }).click();
   await expect.poll(() => qn(page, q => q.state.opened.at(-1))).toMatch(/^mailto:sarl\.the\.developer@gmail\.com\?subject=QuietNote%20feedback&body=/);
+});
+test('AL: Export audio saves a playable copy in the folder picked each time', async ({ page }) => {
+  const recorded = meetingWith('Design review', { status: 'ready', audioPath: 'Acme/design-review/audio' });
+  recorded.transcript = '# Transcript\n\n### 00:00 You\nLet’s ship on Friday.\n';
+  await mockDesktop(page, { meetings: [recorded] });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Design review/ }).click();
+  await tab(page, 'Transcript').click();
+  await page.getByRole('button', { name: 'Export audio…' }).click();
+  await expect(page.getByText('Exported the audio to “Desktop”')).toBeVisible();
+  expect(await qn(page, q => (q.state as unknown as { exported: unknown[] }).exported)).toEqual([{ meetingId: recorded.metadata.id, folder: '/Users/me/Desktop' }]);
+  // Cancelling the picker exports nothing; the folder is asked for every time.
+  await qn(page, q => { (q.state as unknown as { folder: null }).folder = null; });
+  await page.getByRole('button', { name: 'Export audio…' }).click();
+  await expect.poll(() => qn(page, q => q.state.calls.filter(c => c === 'plugin:dialog|open').length)).toBe(2);
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'audio_export').length)).toBe(1);
+});
+test('AK: Privacy says whether FileVault encrypts the disk, and recordings stay out of Time Machine unless turned on', async ({ page }) => {
+  test.skip(process.platform !== 'darwin', 'FileVault and Time Machine are macOS only');
+  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')] });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByText('Encrypted by FileVault')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open System Settings' })).toHaveCount(0);
+  // Recordings are encrypted unless turned off.
+  const encrypt = page.getByRole('switch', { name: 'Encrypt recordings' });
+  await expect(encrypt).toBeChecked();
+  await encrypt.click();
+  await expect.poll(() => qn(page, q => q.state.preferences.encryptAudio)).toBe(false);
+  const backup = page.getByRole('switch', { name: 'Back up recordings with Time Machine' });
+  await expect(backup).not.toBeChecked();
+  await backup.click();
+  await expect.poll(() => qn(page, q => q.state.preferences.backupAudio)).toBe(true);
+  // Turned off, it says what that means and where to turn it on, checked again on coming back.
+  await qn(page, q => { (q.state as unknown as { disk: string }).disk = 'off'; });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByText('FileVault is off')).toBeVisible();
+  await expect(page.getByText('Encrypted by FileVault')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open System Settings' }).click();
+  expect(await qn(page, q => q.state.calls.includes('open_privacy_settings'))).toBe(true);
 });

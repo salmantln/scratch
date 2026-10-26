@@ -2,6 +2,7 @@
 //! hidden, and the tray can stop it. A meeting moves idle → recording → processing → ready, or to
 //! error with its audio kept for a retry. Nothing starts recording except an explicit start.
 use crate::meetings::{self, Metadata, Resume};
+use crate::sealed::{self, TRACKS};
 use crate::transcript::{self, Transcript};
 use crate::tray;
 use serde::Serialize;
@@ -15,7 +16,6 @@ use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const AUDIO: &str = "audio";
-const TRACKS: [&str; 2] = ["mic.wav", "system.wav"];
 /// Written in the audio folder while Whisper runs, with the attempt count, so a transcription that
 /// crashes QuietNote is retried once and then left for the user rather than crashing every launch.
 const MARKER: &str = ".transcribing";
@@ -287,16 +287,17 @@ fn begin(app: &AppHandle, id: &str) -> Result<Metadata, Failure> {
     }
     let audio = dir.join(AUDIO);
     // Audio kept from the earlier recording is continued; it's never deleted here.
-    let kept = resuming && TRACKS.iter().any(|t| audio.join(t).exists());
+    let kept = resuming && TRACKS.iter().any(|t| sealed::path(&audio, t).is_some());
     if !kept {
         // Left over from a start that failed before the meeting was marked as recording.
         if audio.exists() { std::fs::remove_dir_all(&audio).map_err(|e| e.to_string())?; }
         std::fs::create_dir_all(&audio).map_err(|e| e.to_string())?;
     }
+    crate::protect::recording(&root, &audio);
     let resume = resuming.then(|| resume_point(&dir, metadata.duration, kept));
     let discard = |audio: &Path| if !kept { let _ = std::fs::remove_dir_all(audio); };
     let health = Arc::new(crate::recorder::Health::with_mic(meetings::preference_str(&root, "inputDevice")));
-    let recording = match crate::recorder::start(&audio, health.clone(), kept, meetings::preference(&root, "echoCancellation", true)) {
+    let recording = match audio_key(&root, &audio, &health).and_then(|key| crate::recorder::start(&audio, health.clone(), kept, meetings::preference(&root, "echoCancellation", true), key)) {
         Ok(recording) => recording,
         Err(e) => {
             discard(&audio);
@@ -334,11 +335,27 @@ fn begin(_: &AppHandle, _: &str) -> Result<Metadata, Failure> { Err(UNSUPPORTED.
 fn resume_point(dir: &Path, duration: u64, kept: bool) -> Resume {
     let audio = dir.join(AUDIO);
     let sample = if !kept { 0 } else {
-        TRACKS.iter().filter_map(|t| { let path = audio.join(t); repair_wav(&path).ok()?; hound::WavReader::open(&path).ok().map(|r| r.duration() as u64) }).max().unwrap_or(0)
+        TRACKS.iter().filter_map(|t| {
+            let path = sealed::path(&audio, t)?;
+            if sealed::encrypted(&path) { return sealed::length(&path).ok(); }
+            repair_wav(&path).ok()?;
+            hound::WavReader::open(&path).ok().map(|r| r.duration() as u64)
+        }).max().unwrap_or(0)
     };
     let spoken = std::fs::read(dir.join("transcript.json")).ok().and_then(|b| serde_json::from_slice::<Transcript>(&b).ok())
         .and_then(|t| t.turns.iter().map(|t| t.end_ms).max()).unwrap_or(0);
     Resume { at_ms: (duration * 1000).max(sample * 1000 / crate::recorder::RATE as u64).max(spoken), sample }
+}
+/// The key a recording's audio is encrypted with: always for tracks already encrypted, which can't be
+/// continued without it, and for new ones while `encryptAudio` is on (macOS). If the Keychain can't
+/// give one, new audio is recorded unencrypted and the recorder says so.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn audio_key(root: &Path, audio: &Path, health: &crate::recorder::Health) -> Result<Option<Arc<sealed::Key>>, String> {
+    if TRACKS.iter().any(|t| sealed::path(audio, t).is_some_and(|p| sealed::encrypted(&p))) {
+        return sealed::key(false)?.ok_or_else(|| sealed::MISSING_KEY.to_string()).map(Some);
+    }
+    if !sealed::AVAILABLE || !meetings::preference(root, "encryptAudio", true) { return Ok(None); }
+    sealed::key(true).or_else(|e| { health.set_note(format!("{e} This recording isn’t encrypted.")); Ok(None) })
 }
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn recorder_failure(message: String) -> Failure {
@@ -379,9 +396,11 @@ pub fn resume(app: &AppHandle) -> Result<(), Failure> {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         let (_, dir) = meetings::find(&root, &session.meeting_id)?;
+        let audio = dir.join(AUDIO);
         // Why it paused no longer applies.
         session.health.clear();
-        session.recording = Some(crate::recorder::start(&dir.join(AUDIO), session.health.clone(), true, meetings::preference(&root, "echoCancellation", true)).map_err(recorder_failure)?);
+        let key = audio_key(&root, &audio, &session.health)?;
+        session.recording = Some(crate::recorder::start(&audio, session.health.clone(), true, meetings::preference(&root, "echoCancellation", true), key).map_err(recorder_failure)?);
     }
     (session.wall, session.resumed_at, session.started, session.paused) = (SystemTime::now(), now(), Instant::now(), false);
     drop(guard);
@@ -603,7 +622,7 @@ fn process(app: &AppHandle, id: &str) -> Result<Option<(Metadata, String)>, Stri
     set_progress(app, id, Some(&metadata.title), 0);
     let audio = dir.join(AUDIO);
     if !audio.is_dir() { return Err("The audio for this meeting is missing.".into()); }
-    for track in TRACKS { let _ = repair_wav(&audio.join(track)); }
+    for path in TRACKS.iter().filter_map(|t| sealed::path(&audio, t)) { let _ = repair(&path); }
     std::fs::write(audio.join(MARKER), (attempts(&audio) + 1).to_string()).map_err(|e| e.to_string())?;
     // Recording resumed: the new part goes after the transcript that's already there, which must be readable.
     let earlier = dir.join("transcript.json");
@@ -631,7 +650,7 @@ fn process(app: &AppHandle, id: &str) -> Result<Option<(Metadata, String)>, Stri
 #[cfg(target_os = "macos")]
 fn separate(app: &AppHandle, audio: &Path, resume: Option<Resume>, mut system: Vec<transcript::Piece>, first: usize) -> Vec<transcript::Piece> {
     let (from, at) = resume.map_or((0, 0), |r| (r.sample as usize, r.at_ms));
-    let voices = crate::transcribe::samples(&audio.join(TRACKS[1])).and_then(|mut call| {
+    let voices = sealed::path(audio, TRACKS[1]).ok_or_else(|| "There’s no call audio.".to_string()).and_then(|path| crate::transcribe::samples(&path)).and_then(|mut call| {
         call.drain(..from.min(call.len()));
         crate::speakers::voices(app, &call)
     });
@@ -686,6 +705,9 @@ fn model_name() -> &'static str {
     ""
 }
 
+/// How long a track is, after repairing one cut short by a crash: a WAV's header is fixed, and an
+/// encrypted track simply ends at its last whole frame.
+fn repair(path: &Path) -> std::io::Result<Duration> { if sealed::encrypted(path) { sealed::duration(path) } else { repair_wav(path) } }
 /// Fixes the size fields of a WAV file that wasn't finalized (QuietNote was force-quit or crashed),
 /// so everything written up to the last flush plays and transcribes. Returns the audio duration.
 pub(crate) fn repair_wav(path: &Path) -> std::io::Result<Duration> {
@@ -729,7 +751,7 @@ fn recover_archive(root: &Path, mut queue: impl FnMut(&str)) -> Result<(), Strin
     for (mut metadata, dir) in meetings::read_metadata(root)? {
         if metadata.status != "recording" && metadata.status != "processing" { continue; }
         let audio = dir.join(AUDIO);
-        let recovered = TRACKS.iter().filter_map(|t| repair_wav(&audio.join(t)).ok()).max().filter(|d| !d.is_zero());
+        let recovered = TRACKS.iter().filter_map(|t| repair(&sealed::path(&audio, t)?).ok()).max().filter(|d| !d.is_zero());
         let Some(duration) = recovered.filter(|_| SUPPORTED && metadata.audio_path.is_some()) else {
             if metadata.status == "processing" { metadata.error = Some("The audio for this meeting is missing, so it can’t be transcribed.".into()); }
             metadata.status = "error".into();
@@ -842,6 +864,43 @@ pub async fn transcribe_meeting(app: AppHandle, meeting_id: String) -> Result<Me
         Ok(metadata)
     }).await.map_err(|e| e.to_string())?
 }
+/// Writes a playable copy of a meeting's audio, a WAV file per track, into the folder the user chose.
+/// Nothing in the archive changes, and no file there is replaced. Returns the files written.
+#[tauri::command]
+pub async fn audio_export(app: AppHandle, meeting_id: String, folder: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if app.state::<Capture>().owns(&meeting_id) { return Err("Export the audio once this meeting has finished recording and transcribing.".to_string()); }
+        let (_, dir) = meetings::find(&meetings::root(&app)?, &meeting_id)?;
+        let audio = dir.join(AUDIO);
+        let key = if TRACKS.iter().any(|t| sealed::path(&audio, t).is_some_and(|p| sealed::encrypted(&p))) { Some(sealed::key(false)?.ok_or(sealed::MISSING_KEY)?) } else { None };
+        export_audio(&audio, &meeting_id, Path::new(&folder), key.as_deref())
+    }).await.map_err(|e| e.to_string())?
+}
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn export_audio(audio: &Path, name: &str, folder: &Path, key: Option<&sealed::Key>) -> Result<Vec<String>, String> {
+    if !folder.is_dir() { return Err("That folder isn’t available.".into()); }
+    let mut written = Vec::new();
+    for track in TRACKS {
+        let Some(path) = sealed::path(audio, track) else { continue };
+        let out = (1..).map(|n| folder.join(if n == 1 { format!("{name} {track}.wav") } else { format!("{name} {track} {n}.wav") })).find(|p| !p.exists()).ok_or("No free file name.")?;
+        let fail = |e: &dyn std::fmt::Display| format!("Couldn’t write {}: {e}", out.display());
+        match key.filter(|_| sealed::encrypted(&path)) {
+            Some(key) => {
+                let (rate, samples) = sealed::read(&path, key)?;
+                let mut wav = hound::WavWriter::create(&out, hound::WavSpec { channels: 1, sample_rate: rate, bits_per_sample: 16, sample_format: hound::SampleFormat::Int }).map_err(|e| fail(&e))?;
+                for s in samples { wav.write_sample(s).map_err(|e| fail(&e))?; }
+                wav.finalize().map_err(|e| fail(&e))?;
+            }
+            None if sealed::encrypted(&path) => return Err(sealed::MISSING_KEY.into()),
+            None => { std::fs::copy(&path, &out).map_err(|e| fail(&e))?; }
+        }
+        written.push(out.display().to_string());
+    }
+    if written.is_empty() { return Err("This meeting has no audio to export.".into()); }
+    Ok(written)
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn export_audio(_: &Path, _: &str, _: &Path, _: Option<&sealed::Key>) -> Result<Vec<String>, String> { Err(UNSUPPORTED.into()) }
 /// A recorded transcript turn: the words as recognized, and the clean view of them.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -932,6 +991,7 @@ pub fn open_privacy_settings(kind: String) -> Result<(), String> {
         ("systemAudio", true) => "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
         ("accessibility", true) => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
         ("calendars", true) => "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars",
+        ("fileVault", true) => "x-apple.systempreferences:com.apple.preference.security?FileVault",
         ("microphone", false) if cfg!(windows) => "ms-settings:privacy-microphone",
         _ => return Err("There’s no system setting for this on this computer.".into()),
     };
@@ -1059,6 +1119,50 @@ mod tests {
         assert_eq!(find("no-audio").status, "error");
         assert!(find("lost-audio").error.unwrap().contains("missing"));
         assert_eq!(find("done").status, "ready");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    /// A meeting recorded with encryption: two seconds of `mic.qna`, plus half a frame from the crash.
+    fn encrypted_meeting(root: &Path, id: &str, status: &str, key: &Arc<sealed::Key>) -> std::path::PathBuf {
+        let dir = meeting(root, id, status, true);
+        std::fs::remove_file(dir.join(AUDIO).join("mic.wav")).unwrap();
+        let path = dir.join(AUDIO).join("mic.qna");
+        let mut writer = sealed::Writer::create(&path, key.clone(), 16_000).unwrap();
+        for i in 0..32_000 { writer.write_sample((i % 300) as i16).unwrap(); if i % 16_000 == 15_999 { writer.flush().unwrap(); } }
+        writer.finalize().unwrap();
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut file, &[0xff, 0, 0, 0, 1, 2, 3]).unwrap();
+        dir
+    }
+    #[test]
+    fn recovers_an_encrypted_recording_without_its_key() {
+        let root = archive("recover-sealed");
+        encrypted_meeting(&root, "crashed", "recording", &Arc::new(sealed::Key::new(&[8; 32])));
+        let mut queued = Vec::new();
+        recover_archive(&root, |id| queued.push(id.to_string())).unwrap();
+        assert_eq!(queued, vec!["crashed"]);
+        let crashed = meetings::find(&root, "crashed").unwrap().0;
+        assert_eq!((crashed.status.as_str(), crashed.duration, crashed.interrupted), ("processing", 2, true));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn exports_playable_audio_without_replacing_anything() {
+        let root = archive("export");
+        let key = Arc::new(sealed::Key::new(&[9; 32]));
+        let sealed_audio = encrypted_meeting(&root, "sealed", "ready", &key).join(AUDIO);
+        let plain = meeting(&root, "plain", "ready", true).join(AUDIO);
+        let folder = root.join("Exported");
+        std::fs::create_dir_all(&folder).unwrap();
+        let written = export_audio(&sealed_audio, "sealed", &folder, Some(&key)).unwrap();
+        assert_eq!(written, vec![folder.join("sealed mic.wav").display().to_string()]);
+        let samples: Vec<i16> = hound::WavReader::open(folder.join("sealed mic.wav")).unwrap().into_samples().map(Result::unwrap).collect();
+        assert_eq!(samples.len(), 32_000);
+        assert!(samples.iter().enumerate().all(|(i, s)| *s == (i % 300) as i16));
+        // Again: a second copy beside the first. A WAV from before encryption is copied as it is.
+        assert_eq!(export_audio(&sealed_audio, "sealed", &folder, Some(&key)).unwrap(), vec![folder.join("sealed mic 2.wav").display().to_string()]);
+        export_audio(&plain, "plain", &folder, None).unwrap();
+        assert_eq!(std::fs::read(folder.join("plain mic.wav")).unwrap(), std::fs::read(plain.join("mic.wav")).unwrap());
+        assert_eq!(export_audio(&sealed_audio, "sealed", &folder, None).unwrap_err(), sealed::MISSING_KEY);
+        assert_eq!(export_audio(&root.join("none"), "none", &folder, None).unwrap_err(), "This meeting has no audio to export.");
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

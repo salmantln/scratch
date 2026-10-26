@@ -1,6 +1,7 @@
 //! Local speech recognition with whisper.cpp. The bundled model and voice activity detector run on
 //! this computer (Metal on Apple silicon, the CPU on Windows); audio never leaves it.
-use crate::recorder::{RATE, TRACKS};
+use crate::recorder::RATE;
+use crate::sealed::TRACKS;
 use crate::transcript::Piece;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -66,6 +67,11 @@ pub(crate) fn verified(path: Option<PathBuf>, name: &str, size: u64, hash: &str)
     Ok(path)
 }
 pub(crate) fn samples(path: &Path) -> Result<Vec<f32>, String> {
+    if crate::sealed::encrypted(path) {
+        let (rate, samples) = crate::sealed::samples(path)?;
+        if rate != RATE { return Err(format!("{} isn’t 16 kHz audio", path.display())); }
+        return Ok(samples.into_iter().map(|s| s as f32 / 32768.0).collect());
+    }
     let reader = hound::WavReader::open(path).map_err(|e| format!("Couldn’t read {}: {e}", path.display()))?;
     if reader.spec().sample_rate != RATE || reader.spec().channels != 1 { return Err(format!("{} isn’t 16 kHz mono audio", path.display())); }
     // A truncated final sample (from an abrupt exit) ends the track rather than failing it.
@@ -290,8 +296,7 @@ pub(crate) fn recognize(model: &Path, vad: &Path, audio: &Path, from: usize, pro
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8) as i32;
     let mut tracks: [Vec<Piece>; 2] = Default::default();
     for (index, name) in TRACKS.iter().enumerate() {
-        let path = audio.join(name);
-        if !path.exists() { continue; }
+        let Some(path) = crate::sealed::path(audio, name) else { continue };
         let mut audio = samples(&path)?;
         audio.drain(..from.min(audio.len()));
         // Nothing to hear: a denied permission or an empty call leaves only digital silence.
