@@ -2,7 +2,7 @@ import { memo, useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { othersWaiting, track, useLevels } from './Capture';
 import { Hush, useLook, type Mood } from './Hush';
-import { actionItems, dayGroup, durationLabel, shortDate, statusLabel, timeLabel, type CalendarEvent, type Meeting, type MeetingTab } from './model';
+import { actionItems, dayGroup, durationLabel, shortDate, statusLabel, timeLabel, yoursFirst, type CalendarEvent, type Meeting, type MeetingTab } from './model';
 import { isExample } from './seeds';
 import * as storage from './storage';
 
@@ -89,18 +89,18 @@ function UpNext({ events, meetings, onOpen, onPrepare }: { events: CalendarEvent
   </section>;
 }
 type HomeProps = {
-  meetings: Meeting[]; live: storage.CaptureState; events: CalendarEvent[]; onPrepare: (event: CalendarEvent) => void; onOpen: (id: string, tab?: MeetingTab) => void; onNewMeeting: () => void; onRecord: () => void;
+  meetings: Meeting[]; me: string; live: storage.CaptureState; events: CalendarEvent[]; onPrepare: (event: CalendarEvent) => void; onOpen: (id: string, tab?: MeetingTab) => void; onNewMeeting: () => void; onRecord: () => void;
   onSearch: (text: string) => void; onToggle: (id: string, index: number) => Promise<void>; onAll: () => void; onAllActions: () => void;
 };
 const recentCount = 10;
 const itemCount = 6;
 /** Home: whether you can record, what you owe people, and what happened lately. Sections with nothing to show are left out. */
-export function Home({ meetings, live, events, onPrepare, onOpen, onNewMeeting, onRecord, onSearch, onToggle, onAll, onAllActions }: HomeProps) {
+export function Home({ meetings, me, live, events, onPrepare, onOpen, onNewMeeting, onRecord, onSearch, onToggle, onAll, onAllActions }: HomeProps) {
   // Items ticked here stay listed (struck through) until you leave, so a mistaken tick is easy to undo.
   const [ticked, setTicked] = useState<string[]>([]);
-  const items = useMemo(() => meetings.flatMap(({ metadata, markdown }) => actionItems(markdown)
-    .map(item => ({ item, meeting: metadata, key: `${metadata.id}:${item.index}` }))
-    .filter(({ item, key }) => !item.done || ticked.includes(key))), [meetings, ticked]);
+  const items = useMemo(() => yoursFirst(meetings.flatMap(({ metadata, markdown }) => actionItems(markdown)
+    .map(item => ({ item, meeting: metadata, key: `${metadata.id}:${item.key}` }))
+    .filter(({ item, key }) => !item.done || ticked.includes(key))), i => i.item.owner, me), [meetings, ticked, me]);
   const open = items.filter(i => !i.item.done).length;
   const shown = items.slice(0, itemCount);
   const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -128,19 +128,19 @@ export function Home({ meetings, live, events, onPrepare, onOpen, onNewMeeting, 
 }
 /** Every meeting's action items in one place, under the meeting each came from, newest first: the open ones, or
  * those done. A tick is written to its meeting, and the item stays where it is until you leave, as on Home. */
-export function ActionItems({ meetings, onOpen, onToggle }: { meetings: Meeting[]; onOpen: (id: string, tab?: MeetingTab) => void; onToggle: (id: string, index: number) => Promise<void> }) {
+export function ActionItems({ meetings, me, onOpen, onToggle }: { meetings: Meeting[]; me: string; onOpen: (id: string, tab?: MeetingTab) => void; onToggle: (id: string, index: number) => Promise<void> }) {
   const [done, setDone] = useState(false);
   const [ticked, setTicked] = useState<string[]>([]);
-  const all = useMemo(() => meetings.map(({ metadata, markdown }) => ({ meeting: metadata, items: actionItems(markdown) })), [meetings]);
+  const all = useMemo(() => meetings.map(({ metadata, markdown }) => ({ meeting: metadata, items: yoursFirst(actionItems(markdown), i => i.owner, me) })), [meetings, me]);
   const open = all.reduce((n, g) => n + g.items.filter(i => !i.done).length, 0);
-  const groups = all.map(g => ({ ...g, items: g.items.filter(i => i.done === done || ticked.includes(`${g.meeting.id}:${i.index}`)) })).filter(g => g.items.length);
+  const groups = all.map(g => ({ ...g, items: g.items.filter(i => i.done === done || ticked.includes(`${g.meeting.id}:${i.key}`)) })).filter(g => g.items.length);
   const show = (next: boolean) => { setDone(next); setTicked([]); };
   return <div className="page actions-page">
     <header className="page-header"><div><h1>Action items</h1><p className="subtle">{open} open</p></div>
       <div className="segmented" role="group" aria-label="Show action items"><button aria-pressed={!done} onClick={() => show(false)}>Open</button><button aria-pressed={done} onClick={() => show(true)}>Done</button></div></header>
     {groups.length ? groups.map(({ meeting, items }) => <section className="action-group" key={meeting.id} aria-label={meeting.title}>
       <h2 className="group-label action-group-head"><button className="text-button" title={`Open ${meeting.title}`} onClick={() => onOpen(meeting.id, 'Enhanced')}>{meeting.title}</button><span>{shortDate(meeting.date)} · {meeting.project}</span></h2>
-      <div className="action-list">{items.map(item => { const key = `${meeting.id}:${item.index}`; return <label className={`action-row ${item.done ? 'complete' : ''}`} key={key}>
+      <div className="action-list">{items.map(item => { const key = `${meeting.id}:${item.key}`; return <label className={`action-row ${item.done ? 'complete' : ''}`} key={key}>
         <input type="checkbox" checked={item.done} onChange={() => { setTicked(t => t.includes(key) ? t : [...t, key]); void onToggle(meeting.id, item.index); }} />
         <span><span className="action-text">{item.text}</span>{item.owner && <span className="action-owner">{item.owner}</span>}</span>
         {item.link && <button className="action-link" title={item.link.url} onClick={e => { e.preventDefault(); void storage.openLink(item.link!.url); }}>{item.link.label}</button>}

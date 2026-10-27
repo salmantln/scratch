@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { demoMeetings } from '../src/quietnote/seeds';
-import { section, replaceSection, toggleAction, matchesMeeting, searchMeeting, makeMeeting, transcriptTurns, validProjectName, appendAction, actionItems, enhancedNotes, openingTab, linkAction, issueFor, previousMeeting, notesMarkdown, summaryBlocks, templateFor, people, owns, projectFor, type Meeting } from '../src/quietnote/model';
+import { section, replaceSection, toggleAction, matchesMeeting, searchMeeting, makeMeeting, transcriptTurns, validProjectName, appendAction, actionItems, enhancedNotes, openingTab, linkAction, issueFor, editAction, removeAction, restoreAction, actionLine, mine, yoursFirst, previousMeeting, notesMarkdown, summaryBlocks, templateFor, people, owns, projectFor, type Meeting } from '../src/quietnote/model';
 
 async function examples(page: Page) {
   await page.goto('/');
@@ -12,6 +12,7 @@ async function firstProject(page: Page, name: string) {
   await page.getByRole('button', { name: 'Get started' }).click();
   await page.getByLabel('Project name').fill(name);
   await page.getByRole('button', { name: 'Create project' }).click();
+  await page.getByRole('button', { name: 'Skip' }).click();
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
 }
 async function newMeeting(page: Page, title: string) {
@@ -62,7 +63,7 @@ test('model keeps Markdown sections separate and never invents content', () => {
   expect(searchMeeting({ ...blank, markdown: older }, 'Fridays')?.tab).toBe('Enhanced');
   const added = appendAction(blank.markdown, 'Maya — send the plan');
   expect(openingTab({ ...blank, markdown: added })).toBe('Enhanced');
-  expect(actionItems(added)).toEqual([{ index: 0, done: false, text: 'send the plan', owner: 'Maya' }]);
+  expect(actionItems(added)).toEqual([{ index: 0, key: '0 Maya — send the plan', done: false, text: 'send the plan', owner: 'Maya' }]);
   expect(section(added, 'Notes')).toBe('');
   expect(validProjectName('Acme')).toBe('');
   expect(validProjectName('../Acme')).not.toBe('');
@@ -151,12 +152,36 @@ test('sent action items keep their issue link in Markdown, and only the item lea
   const url = 'https://linear.app/acme/issue/ENG-12';
   const linked = linkAction(markdown, 0, 'ENG-12', url);
   expect(section(linked, 'Action items')).toContain(`- [ ] Maya — send the plan [ENG-12](${url})`);
-  expect(actionItems(linked)[0]).toEqual({ index: 0, done: false, text: 'send the plan', owner: 'Maya', link: { label: 'ENG-12', url } });
+  expect(actionItems(linked)[0]).toEqual({ index: 0, key: '0 Maya — send the plan', done: false, text: 'send the plan', owner: 'Maya', link: { label: 'ENG-12', url } });
   expect(actionItems(linked)[1].link).toBeUndefined();
   expect(linkAction(linked, 0, 'ENG-13', 'https://linear.app/acme/issue/ENG-13')).toBe(linked);
   expect(actionItems(toggleAction(linked, 0))[0]).toMatchObject({ done: true, link: { label: 'ENG-12' } });
   const issue = issueFor(actionItems(linked)[0], { ...blank.metadata, title: 'Kickoff', date: '2026-09-28T09:00:00' });
   expect(issue).toEqual({ title: 'send the plan', body: 'From “Kickoff” (2026-09-28, Acme). Owner: Maya.' });
+});
+
+test('action items are found again by their text, edited and removed by line, and the user’s own come first', () => {
+  const blank = makeMeeting('Kickoff', 'Acme');
+  const url = 'https://linear.app/acme/issue/ENG-12';
+  const markdown = linkAction(['Maya — send the plan', 'Follow up', 'You — write the brief', 'Follow up', 'Sam Lee — check the budget'].reduce(appendAction, blank.markdown), 0, 'ENG-12', url);
+  const items = actionItems(markdown);
+  // Lines that read the same are told apart by which copy they are.
+  expect(items.map(a => a.key)).toEqual(['0 Maya — send the plan', '0 Follow up', '0 You — write the brief', '1 Follow up', '0 Sam Lee — check the budget']);
+  expect(actionItems(toggleAction(markdown, 1))[1].key).toBe('0 Follow up');
+  // Yours: “You”, or your full or first name; an item without an owner isn't.
+  expect([mine('You', ''), mine('sam lee', 'Sam Lee'), mine('Sam', 'Sam Lee'), mine('', 'Sam Lee'), mine('Maya', 'Sam Lee'), mine('Sam', '')]).toEqual([true, true, true, false, false, false]);
+  expect(yoursFirst(items, a => a.owner, 'Sam Lee').map(a => a.index)).toEqual([2, 4, 0, 1, 3]);
+  // Editing changes the task only: the owner and the issue link stay, and empty text changes nothing.
+  expect(actionLine(editAction(markdown, 0, ' send the final plan '), 0)).toBe(`- [ ] Maya — send the final plan [ENG-12](${url})`);
+  expect(editAction(markdown, 0, '  ')).toBe(markdown);
+  // A removed line goes back where it was, even after the list changed, or after the last item if it's shorter now.
+  const line = actionLine(markdown, 2);
+  const removed = removeAction(markdown, 2);
+  expect(actionItems(removed).map(a => a.text)).toEqual(['send the plan', 'Follow up', 'Follow up', 'check the budget']);
+  expect(restoreAction(removed, line, 2)).toBe(markdown);
+  expect(actionItems(restoreAction(toggleAction(removed, 3), line, 2))[4]).toMatchObject({ text: 'check the budget', done: true });
+  expect(actionLine(restoreAction(removeAction(removeAction(removed, 3), 2), line, 9), 2)).toBe(line);
+  expect(section(restoreAction(blank.markdown, '- [ ] Book the room', 0), 'Action items')).toBe('- [ ] Book the room');
 });
 
 test('A: first launch creates a project, then a meeting', async ({ page }) => {
@@ -178,6 +203,10 @@ test('A: first launch creates a project, then a meeting', async ({ page }) => {
   await expect(page.getByRole('alert')).toContainText('Use letters, numbers');
   await page.getByLabel('Project name').fill('Acme');
   await page.getByRole('button', { name: 'Create project' }).click();
+  // Your name is the last screen, on its own; the project exists by then, so there's no going back to it.
+  await expect(page.getByRole('heading', { name: 'One last thing: what’s your name?' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Back' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Skip' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Acme' })).toBeVisible();
   await expect(page.getByText('No meetings in Acme yet.')).toBeVisible();
   await expect(page.getByText('Create a meeting to take notes.')).toBeVisible();
@@ -210,6 +239,21 @@ test('A: first launch creates a project, then a meeting', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: 'Untitled meeting' })).toBeVisible();
   await expect(view(page, 'Enhanced notes')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.action-text')).toHaveText('send the plan');
+});
+
+test('A1: onboarding ends by asking your name, optionally, and keeps the kind of meeting chosen too', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Get started' }).click();
+  await page.getByRole('radio', { name: 'Standups' }).click();
+  await expect(page.getByLabel('Your name')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Create project' }).click();
+  await expect(page.getByRole('heading', { name: 'One last thing: what’s your name?' })).toBeFocused();
+  await page.getByLabel('Your name').fill('Tom Rivera');
+  await page.getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Team' })).toBeVisible();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('quietnote.privacy') ?? '{}'))).toMatchObject({ noteTemplate: 'Standup', userName: 'Tom Rivera' });
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByRole('textbox', { name: 'Your name' })).toHaveValue('Tom Rivera');
 });
 
 test('B: prototype capture is labelled honestly and invents nothing', async ({ page }) => {
@@ -959,6 +1003,49 @@ test('Q2: the Action items page lists every meeting’s items under the meeting,
   await page.getByRole('region', { name: 'Acme onboarding call' }).getByRole('button', { name: 'Acme onboarding call' }).click();
   await expect(view(page, 'Enhanced notes')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.note-actions .action-row input').first()).toBeChecked();
+});
+
+test('Q3: your own action items come first, and in a meeting an item can be edited or removed with Undo', async ({ page }) => {
+  await examples(page);
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('textbox', { name: 'Your name' }).fill('Tom Rivera');
+  await page.keyboard.press('Enter');
+  await home(page).click();
+  const items = page.locator('.home-section', { has: page.getByRole('heading', { name: /^Open action items/ }) });
+  await expect(items.locator('.action-row').first().locator('.action-text')).toHaveText('share analytics credentials by 1 October');
+  await page.getByRole('button', { name: 'All action items' }).click();
+  await expect(page.getByRole('region', { name: 'Acme onboarding call' }).locator('.action-text').first()).toHaveText('share analytics credentials by 1 October');
+  await page.getByRole('region', { name: 'Acme onboarding call' }).getByRole('button', { name: 'Acme onboarding call' }).click();
+  const rows = page.locator('.note-actions .action-row');
+  await expect(rows.first().locator('.action-text')).toHaveText('share analytics credentials by 1 October');
+  // Pressing the text edits it; Escape keeps it, Enter saves it, and the owner stays.
+  const review = rows.filter({ hasText: 'schedule a technical review' });
+  await review.getByRole('button', { name: 'schedule a technical review for next week', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Edit action item' }).fill('nothing');
+  await page.keyboard.press('Escape');
+  await expect(review.locator('.action-text')).toHaveText('schedule a technical review for next week');
+  await review.getByRole('button', { name: 'schedule a technical review for next week', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Edit action item' }).fill('schedule a technical review for Thursday');
+  await page.keyboard.press('Enter');
+  const edited = rows.filter({ hasText: 'for Thursday' });
+  await expect(edited.locator('.action-owner')).toHaveText('Alex');
+  // Tick one, then remove an item above it in the file: the tick's Undo still reopens the item it ticked.
+  const launch = rows.filter({ hasText: 'confirm the new launch date' });
+  await launch.locator('input[type=checkbox]').check();
+  await rows.filter({ hasText: 'send the revised onboarding plan' }).getByRole('button', { name: /^Remove/ }).click();
+  await expect(rows).toHaveCount(3);
+  // The two toasts stack; hovering spreads them out.
+  await page.locator('[data-sonner-toast][data-front="true"]').hover();
+  await page.locator('[data-sonner-toast]', { hasText: 'Marked done' }).getByRole('button', { name: 'Undo' }).click();
+  await expect(launch.locator('input[type=checkbox]')).not.toBeChecked();
+  await expect(rows.locator('input:checked')).toHaveCount(0);
+  // Undo on the removal puts back only that line, where it was.
+  await page.locator('[data-sonner-toast]', { hasText: 'Removed' }).getByRole('button', { name: 'Undo' }).click();
+  await expect(rows).toHaveCount(4);
+  await page.reload();
+  const markdown = await page.evaluate(() => (JSON.parse(localStorage.getItem('quietnote.preview.archive.v1') ?? '[]') as Meeting[]).find(m => m.metadata.title === 'Acme onboarding call')!.markdown);
+  expect(actionItems(markdown).map(a => `${a.done ? 'x' : ' '} ${a.owner} — ${a.text}`)).toEqual([
+    '  Maya — send the revised onboarding plan by 30 September', '  Tom — share analytics credentials by 1 October', '  Alex — schedule a technical review for Thursday', '  Maya — confirm the new launch date with Acme']);
 });
 
 test('R: Home says whether recording is ready, and a recording never gets a second Stop', async ({ page }) => {
@@ -1724,6 +1811,7 @@ test('AD: first launch on a Mac explains both permissions on one screen before a
   await expect(page.locator('.onboarding')).toContainText('It never starts by itself.');
   await page.screenshot({ path: 'docs/screenshots/00-onboarding-kind.png', animations: 'disabled' });
   await page.getByRole('button', { name: 'Create project' }).click();
+  await page.getByRole('button', { name: 'Skip' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Research' })).toBeVisible();
   await expect.poll(() => qn(page, q => q.state.preferences.noteTemplate)).toBe('User interview');
   expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(0);
@@ -1742,6 +1830,7 @@ test('AE: a refused microphone shows where to allow it, and skipping it keeps th
   await page.getByRole('button', { name: 'Continue' }).click();
   expect(await qn(page, q => q.state.preferences.calendar)).toBeUndefined();
   await page.getByRole('button', { name: 'Create project' }).click();
+  await page.getByRole('button', { name: 'Skip' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Work' })).toBeVisible();
   expect(await qn(page, q => q.state.preferences.noteTemplate)).toBeUndefined();
 });

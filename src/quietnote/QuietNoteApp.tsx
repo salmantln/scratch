@@ -15,7 +15,7 @@ import { People } from './People';
 import { ActionItems, Home, MeetingList } from './Library';
 import { Onboarding } from './Onboarding';
 import { accelerator, bound, label, type Action } from './shortcuts';
-import { actionItems, clock, linkAction, recorded, makeMeeting, openingTab, previousMeeting, projectFor, retitle, replaceSection, searchMeeting, searchTerms, section, shortDate, stopsIn, toggleAction, type CalendarEvent, type Meeting, type MeetingTab } from './model';
+import { actionItems, actionLine, clock, editAction, removeAction, restoreAction, linkAction, recorded, makeMeeting, openingTab, previousMeeting, projectFor, retitle, replaceSection, searchMeeting, searchTerms, section, shortDate, stopsIn, toggleAction, type ActionItem, type CalendarEvent, type Meeting, type MeetingTab } from './model';
 import { demoMeetings, isExample } from './seeds';
 import * as storage from './storage';
 import './quietnote.css';
@@ -98,6 +98,8 @@ function Shell() {
   // Development only: VITE_QUIETNOTE_ONBOARDING=1 (or ?onboarding in the browser preview) opens onboarding over an
   // archive that already has meetings, until it's finished.
   const [replay, setReplay] = useState(() => import.meta.env.DEV && (import.meta.env.VITE_QUIETNOTE_ONBOARDING === '1' || new URLSearchParams(location.search).has('onboarding')));
+  // Onboarding stays on screen after it creates the first project, for its last screen (your name).
+  const [finishing, setFinishing] = useState(false);
   const [preferences, setPreferences] = useState<storage.PrivacyPreferences>({});
   useEffect(() => showHush(preferences.showHush !== false), [preferences.showHush]);
   // The theme is Scratch's own light and dark (the `.dark` class, which its editor follows too), set once the
@@ -243,8 +245,10 @@ function Shell() {
     if (dirty.current.size) { setProblem('Save or discard your unsaved changes before reloading.'); return; }
     await load(); setExternal(false); setReloadKey(v => v + 1);
   }
+  // Two changes in a row (onboarding's template and name) each build on the one before.
+  const latestPreferences = useRef(preferences); latestPreferences.current = preferences;
   function changePreference(key: string, value: storage.PrivacyPreferences[string]) {
-    const next = { ...preferences, [key]: value }; setPreferences(next);
+    const next = { ...latestPreferences.current, [key]: value }; latestPreferences.current = next; setPreferences(next);
     queue.current = queue.current.then(async () => {
       try { await storage.preferences(next); } catch (e) { setProblem(`Couldn’t save your privacy preferences. ${String(e)}`); return; }
       if (key === 'cleanTranscript') await storage.renderTranscripts(value === true).catch(e => setProblem(`Couldn’t update your transcripts. ${String(e)}`));
@@ -469,21 +473,35 @@ function Shell() {
   // The "Recording saved" / "Transcript ready" banner has the screen's Hush, outside Home (where the card has it).
   const saved = stopped ? meetings.find(m => m.metadata.id === stopped.id) : undefined;
   const bannerHush = Boolean(saved && saved.metadata.status !== 'error' && view !== 'home');
-  if (replay || (!allProjects.length && !meetings.length)) return <div className="quietnote-shell centered"><Onboarding live={live} preferences={preferences} busy={addingExamples} onPreference={changePreference} onCreate={async name => { if (allProjects.includes(name)) go('project', name); else await createProject(name); setReplay(false); }} onExamples={() => void addExamples().then(() => setReplay(false))} />{problem && <p className="field-error floating" role="alert">{problem}</p>}{dialogs}</div>;
+  if (replay || finishing || (!allProjects.length && !meetings.length)) return <div className="quietnote-shell centered"><Onboarding live={live} preferences={preferences} busy={addingExamples} onPreference={changePreference}
+    onCreate={async name => { setFinishing(true); try { if (allProjects.includes(name)) go('project', name); else await createProject(name); } catch (e) { setFinishing(false); throw e; } }}
+    onDone={() => { setFinishing(false); setReplay(false); }} onExamples={() => void addExamples().then(() => setReplay(false))} />{problem && <p className="field-error floating" role="alert">{problem}</p>}{dialogs}</div>;
   // A transcript hit opens the transcript filtered to the search, so the passage is on screen.
   const openResult = (id: string, hitTab: MeetingTab) => openMeeting(id, hitTab, hitTab === 'Transcript' ? query.trim() : '');
   const libraryMeetings = view === 'project' ? sorted.filter(m => m.metadata.project === project) : sorted;
-  const itemOf = (id: string, index: number) => { const latest = records.current.find(m => m.metadata.id === id); return latest && { latest, item: actionItems(latest.markdown).find(a => a.index === index) }; };
-  // Undo puts the item back as it was, whatever happened to it since.
-  const setItem = (id: string, index: number, done: boolean) => { const found = itemOf(id, index); return found?.item && found.item.done !== done ? persist(id, toggleAction(found.latest.markdown, index)) : Promise.resolve(); };
+  const itemOf = (id: string, find: (item: ActionItem) => boolean) => { const latest = records.current.find(m => m.metadata.id === id); return latest && { latest, item: actionItems(latest.markdown).find(find) }; };
+  // Undo puts the item back as it was, whatever happened to it since; it's found by its text, as items above it may
+  // have been removed.
+  const setItem = (id: string, key: string, done: boolean) => { const found = itemOf(id, a => a.key === key); return found?.item && found.item.done !== done ? persist(id, toggleAction(found.latest.markdown, found.item.index)) : Promise.resolve(); };
   // Every tick says so in a toast with Undo; ticking the same item again replaces its toast.
   const toggleItem = (id: string, index: number) => {
-    const found = itemOf(id, index);
+    const found = itemOf(id, a => a.index === index);
     if (!found?.item) return Promise.resolve();
-    const was = found.item.done;
-    toast(was ? 'Reopened' : 'Marked done', { id: `action:${id}:${index}`, duration: 5000, action: { label: 'Undo', onClick: () => void setItem(id, index, was) } });
+    const { done: was, key } = found.item;
+    toast(was ? 'Reopened' : 'Marked done', { id: `action:${id}:${key}`, duration: 5000, action: { label: 'Undo', onClick: () => void setItem(id, key, was) } });
     return persist(id, toggleAction(found.latest.markdown, index));
   };
+  const editItem = (id: string, index: number, text: string) => { const latest = records.current.find(m => m.metadata.id === id); return latest ? persist(id, editAction(latest.markdown, index, text)) : Promise.resolve(); };
+  // Undo puts back only the removed line, where it was, leaving anything changed since.
+  const removeItem = (id: string, index: number) => {
+    const found = itemOf(id, a => a.index === index);
+    if (!found?.item) return Promise.resolve();
+    const line = actionLine(found.latest.markdown, index);
+    toast(`Removed “${found.item.text}”`, { id: `removed:${id}:${found.item.key}`, duration: 5000, action: { label: 'Undo', onClick: () => { const latest = records.current.find(m => m.metadata.id === id); if (latest) void persist(id, restoreAction(latest.markdown, line, index)); } } });
+    return persist(id, removeAction(found.latest.markdown, index));
+  };
+  // Settings → Privacy → Your name: action items they own come first.
+  const me = typeof preferences.userName === 'string' ? preferences.userName : '';
   const count = (n: number) => `${n} ${n === 1 ? 'meeting' : 'meetings'}`;
   const openItems = meetings.reduce((n, m) => n + actionItems(m.markdown).filter(a => !a.done).length, 0);
   const saveText = saveState === 'saving' ? 'Saving…' : saveState === 'unsaved' ? 'Not saved' : storage.desktop ? 'Saved' : 'Saved in this browser';
@@ -545,7 +563,7 @@ function Shell() {
       {problem && <div className="banner warning" role="alert"><div><strong>{problem}</strong></div><div className="banner-actions"><button className="text-button" onClick={() => setProblem('')}>Dismiss</button></div></div>}
       <main className="qn-main" ref={main}><HushYield.Provider value={bannerHush}>
         {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} connections={connections} summaryKey={summaryKey} onSummaryKey={setSummaryKey} section={settingsSection} onSection={setSettingsSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
-        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={index => toggleItem(previous!.metadata.id, index)} onToggle={index => toggleItem(current.metadata.id, index)} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onExportAudio={() => void exportAudio(current)} onMarkEnded={() => void markEnded(current)} onDelete={() => setDialog('delete')} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
+        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={index => toggleItem(previous!.metadata.id, index)} onToggle={index => toggleItem(current.metadata.id, index)} onEdit={(index, text) => editItem(current.metadata.id, index, text)} onRemove={index => removeItem(current.metadata.id, index)} me={me} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onExportAudio={() => void exportAudio(current)} onMarkEnded={() => void markEnded(current)} onDelete={() => setDialog('delete')} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
           const latest = records.current.find(m => m.metadata.id === current.metadata.id);
           // The editor can save once more as it closes, after its meeting was deleted.
           if (!latest) return Promise.resolve();
@@ -562,8 +580,8 @@ function Shell() {
           : <div className="empty-inline" role="status"><Hush mood="resting" size={72} /><h2>No meetings found for ‘{query.trim()}’.</h2><p>Try another term.</p></div>}
         </div>
         : view === 'people' ? <People meetings={meetings} selected={person} calendar={calendarOn} onSelect={setPerson} onOpen={openMeeting} onToggle={toggleItem} onSettings={() => go('settings')} />
-        : view === 'actions' ? <ActionItems meetings={sorted} onOpen={openMeeting} onToggle={toggleItem} />
-        : view === 'home' ? <Home meetings={sorted} live={live} events={events} onPrepare={event => void (allProjects.length ? createMeeting(event.title, projectOf(event), false, event) : Promise.resolve(newMeeting(event))).catch(e => setProblem(`Couldn’t create the meeting. ${String(e)}`))} onOpen={openMeeting} onNewMeeting={() => newMeeting()} onRecord={() => void quickRecord()} onSearch={text => { setQuery(text); setView('search'); }} onToggle={toggleItem} onAll={() => go('all')} onAllActions={() => go('actions')} />
+        : view === 'actions' ? <ActionItems meetings={sorted} me={me} onOpen={openMeeting} onToggle={toggleItem} />
+        : view === 'home' ? <Home meetings={sorted} me={me} live={live} events={events} onPrepare={event => void (allProjects.length ? createMeeting(event.title, projectOf(event), false, event) : Promise.resolve(newMeeting(event))).catch(e => setProblem(`Couldn’t create the meeting. ${String(e)}`))} onOpen={openMeeting} onNewMeeting={() => newMeeting()} onRecord={() => void quickRecord()} onSearch={text => { setQuery(text); setView('search'); }} onToggle={toggleItem} onAll={() => go('all')} onAllActions={() => go('actions')} />
         : <div className="page library-page">
           <header className="page-header"><div><h1>{view === 'project' ? project : 'All meetings'}</h1>{libraryMeetings.length > 0 && <p className="subtle">{count(libraryMeetings.length)}</p>}</div></header>
           {libraryMeetings.length ? <MeetingList meetings={libraryMeetings} showProject={view !== 'project'} onOpen={openMeeting} />

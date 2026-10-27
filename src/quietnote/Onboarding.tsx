@@ -5,7 +5,7 @@ import { validProjectName } from './model';
 import * as storage from './storage';
 import { bound, label } from './shortcuts';
 
-type Step = 'hello' | 'access' | 'project';
+type Step = 'hello' | 'access' | 'project' | 'name';
 /** The kinds of meeting to choose from: each picks its built-in note template and names the first project. */
 const kinds: { template: string; label: string; project: string }[] = [
   { template: '1:1', label: '1:1s', project: 'One-on-ones' },
@@ -33,17 +33,17 @@ function Access({ icon, name, why, alert, children }: { icon: 'mic' | 'meeting';
 const Allowed = () => <span className="ob-allowed"><Icon name="check" size={14} />Allowed</span>;
 type Props = {
   live: storage.CaptureState; preferences: storage.PrivacyPreferences; busy: boolean;
-  onPreference: (key: string, value: storage.PrivacyPreferences[string]) => void; onCreate: (project: string) => Promise<void>; onExamples: () => void;
+  onPreference: (key: string, value: storage.PrivacyPreferences[string]) => void; onCreate: (project: string) => Promise<void>; onExamples: () => void; onDone: () => void;
 };
-/** First launch in three screens at most: hello; the permissions, each explained before macOS asks; then the first
- * project, with one optional question. Nothing records here. */
-export function Onboarding({ live, preferences, busy, onPreference, onCreate, onExamples }: Props) {
+/** First launch in four screens at most: hello; the permissions, each explained before macOS asks; the first
+ * project, with one optional question; then, optionally, your name. Nothing records here. */
+export function Onboarding({ live, preferences, busy, onPreference, onCreate, onExamples, onDone }: Props) {
   // Fixed when it opens, so a permission granted along the way doesn't remove the row you're on.
   const [asks] = useState(() => ({
     mic: live.available && mac && (live.microphone === 'undetermined' || live.microphone === 'denied'),
     calendar: storage.desktop && mac && preferences.calendar !== true,
   }));
-  const steps: Step[] = ['hello', ...(asks.mic || asks.calendar ? ['access' as const] : []), 'project'];
+  const steps: Step[] = ['hello', ...(asks.mic || asks.calendar ? ['access' as const] : []), 'project', 'name'];
   const [index, setIndex] = useState(0);
   const [direction, setDirection] = useState<'forward' | 'back'>('forward');
   const [kind, setKind] = useState(() => typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : '');
@@ -60,6 +60,8 @@ export function Onboarding({ live, preferences, busy, onPreference, onCreate, on
   // Untouched, the name follows the kind of meeting chosen.
   const [typed, setName] = useState<string | null>(null);
   const name = typed ?? chosen?.project ?? 'Work';
+  // Optional, on the last screen: puts the action items they own first.
+  const [me, setMe] = useState(() => typeof preferences.userName === 'string' ? preferences.userName : '');
   // Each new step is announced from its heading, as a page would be.
   useEffect(() => { if (moved.current) heading.current?.focus(); }, [index]);
   const go = (by: 1 | -1) => { moved.current = true; setDirection(by > 0 ? 'forward' : 'back'); setError(''); setIndex(i => Math.min(steps.length - 1, Math.max(0, i + by))); };
@@ -82,8 +84,9 @@ export function Onboarding({ live, preferences, busy, onPreference, onCreate, on
     if (problem) { setError(problem); return; }
     setWorking(true);
     if (chosen) onPreference('noteTemplate', chosen.template);
-    try { await onCreate(project); }
-    catch (e) { setError(String(e).replace(/^Error: /, '')); setWorking(false); }
+    try { await onCreate(project); go(1); }
+    catch (e) { setError(String(e).replace(/^Error: /, '')); }
+    finally { setWorking(false); }
   }
   let scene: ReactNode = null, extra: ReactNode = null, title: string, body: ReactNode, action: ReactNode;
   if (step === 'hello') {
@@ -107,7 +110,7 @@ export function Onboarding({ live, preferences, busy, onPreference, onCreate, on
       </Access>}
     </div>;
     action = <button className="primary large" disabled={Boolean(asking)} onClick={() => go(1)}>Continue</button>;
-  } else {
+  } else if (step === 'project') {
     title = 'What meetings do you have most?';
     body = <form className="ob-project" id={fieldId} onSubmit={e => { e.preventDefault(); void create(); }}>
       <div className="ob-kinds" role="radiogroup" aria-label="Meetings you have most">{kinds.map(k => <button key={k.template} type="button" role="radio" aria-checked={kind === k.template} className={`ob-kind ${kind === k.template ? 'selected' : ''}`} onClick={() => setKind(c => c === k.template ? '' : k.template)}>{k.label}</button>)}</div>
@@ -117,6 +120,14 @@ export function Onboarding({ live, preferences, busy, onPreference, onCreate, on
       {live.detectsCalls && <p className="ob-fact">Opens at login in the menu bar{preferences.detectCalls !== false ? ' and offers to record when a call starts. It never starts by itself' : ''}.</p>}
     </form>;
     action = <button className="primary large" type="submit" form={fieldId} disabled={working}>{working ? 'Creating…' : 'Create project'}</button>;
+  } else {
+    title = 'One last thing: what’s your name?';
+    body = <form className="ob-project" id={fieldId} onSubmit={e => { e.preventDefault(); if (me.trim()) onPreference('userName', me.trim()); onDone(); }}>
+      <label className="field">Your name<input value={me} maxLength={60} autoComplete="name" onChange={e => setMe(e.target.value)} /></label>
+      <p className="ob-fact">Your action items come first, wherever they’re listed. It stays {storage.desktop ? `on this ${storage.device}` : 'in this browser'}.</p>
+    </form>;
+    action = <button className="primary large" type="submit" form={fieldId}>Done</button>;
+    extra = <button className="text-button" onClick={onDone}>Skip</button>;
   }
   return <div className="onboarding" data-tauri-drag-region>
     <div key={`step-${step}`} className={`ob-step ${moved.current ? direction : ''}`}>
@@ -126,8 +137,9 @@ export function Onboarding({ live, preferences, busy, onPreference, onCreate, on
       {step !== 'project' && error && <p className="field-error" role="alert">{error}</p>}
     </div>
     {/* Keyed by step: a click that moves on mustn't land on the next step's button (Create project submits). */}
-    <div className={`ob-footer ${index ? '' : 'first'}`} key={`footer-${step}`}>
-      {index > 0 && <button className="text-button ob-back" disabled={working || Boolean(asking)} onClick={() => go(-1)}><Icon name="back" size={15} />Back</button>}
+    <div className={`ob-footer ${index && step !== 'name' ? '' : 'first'}`} key={`footer-${step}`}>
+      {/* The project exists by the last screen, so there's no going back to make it again. */}
+      {index > 0 && step !== 'name' && <button className="text-button ob-back" disabled={working || Boolean(asking)} onClick={() => go(-1)}><Icon name="back" size={15} />Back</button>}
       <div className="ob-actions">{extra}{action}</div>
     </div>
     <p className="sr-only" aria-live="polite">Step {index + 1} of {steps.length}</p>

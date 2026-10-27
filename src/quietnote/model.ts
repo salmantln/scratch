@@ -33,7 +33,9 @@ export interface Meeting { metadata: MeetingMetadata; markdown: string; transcri
 /** A meeting has two tabs, Notes and Transcript; Notes shows either the enhanced notes (action items, then the
  * Summary section) or your own notes. */
 export type MeetingTab = 'Enhanced' | 'Notes' | 'Transcript';
-export interface ActionItem { index: number; done: boolean; text: string; owner: string; link?: { label: string; url: string } }
+/** `key` finds the item again after others are added or removed: its line's text (owner included, link and tick
+ * left out), and which copy it is when lines read the same. */
+export interface ActionItem { index: number; key: string; done: boolean; text: string; owner: string; link?: { label: string; url: string } }
 export interface TranscriptTurn { time: string; speaker: string; text: string }
 export function section(markdown: string, name: string): string {
   const lines = markdown.split('\n');
@@ -49,12 +51,26 @@ export function replaceSection(markdown: string, name: string, content: string):
   const end = name.toLowerCase() === 'notes' ? -1 : lines.findIndex((line, i) => i > start && /^## /.test(line));
   return [...lines.slice(0, start + 1), content.trim(), '', ...(end < 0 ? [] : lines.slice(end))].join('\n');
 }
-export function toggleAction(markdown: string, index: number): string {
+const itemLine = /^- \[[ xX]\] /;
+// The Action items section with its `index`th item line replaced, or removed when `change` gives null.
+function changeAction(markdown: string, index: number, change: (line: string) => string | null): string {
   let current = -1;
-  return replaceSection(markdown, 'Action items', section(markdown, 'Action items').replace(/^- \[([ xX])\] (.*)$/gm, (line, done, text) => {
-    current++;
-    return current === index ? `- [${done === ' ' ? 'x' : ' '}] ${text}` : line;
-  }));
+  return replaceSection(markdown, 'Action items', section(markdown, 'Action items').split('\n').flatMap(line => itemLine.test(line) && ++current === index ? change(line) ?? [] : [line]).join('\n'));
+}
+export const toggleAction = (markdown: string, index: number) => changeAction(markdown, index, line => `- [${line[3] === ' ' ? 'x' : ' '}] ${line.slice(6)}`);
+/** The item's task text replaced; its owner and any issue link stay. Empty text changes nothing. */
+export function editAction(markdown: string, index: number, text: string): string {
+  const item = actionItems(markdown)[index];
+  return !item || !text.trim() ? markdown : changeAction(markdown, index, line => `${line.slice(0, 6)}${item.owner ? `${item.owner} — ` : ''}${text.trim()}${item.link ? ` [${item.link.label}](${item.link.url})` : ''}`);
+}
+export const removeAction = (markdown: string, index: number) => changeAction(markdown, index, () => null);
+export const actionLine = (markdown: string, index: number) => section(markdown, 'Action items').split('\n').filter(l => itemLine.test(l))[index] ?? '';
+/** A removed item's line put back where it was (`at`), or after the last item if the list is shorter now. */
+export function restoreAction(markdown: string, line: string, at: number): string {
+  const lines = section(markdown, 'Action items').split('\n');
+  const items = lines.flatMap((l, i) => itemLine.test(l) ? [i] : []);
+  const where = items[at] ?? (items.length ? items[items.length - 1] + 1 : lines.length);
+  return replaceSection(markdown, 'Action items', [...lines.slice(0, where), line, ...lines.slice(where)].join('\n'));
 }
 // A sent action item keeps its issue link at the end of its own line: `- [ ] Maya — task [ENG-12](https://…)`.
 const trailingLink = / \[([^\]]+)\]\((https:\/\/[^\s)]+)\)$/;
@@ -74,13 +90,23 @@ export function enhancedNotes(markdown: string): string {
 /** Where a meeting opens: its enhanced notes once it has some or has a transcript (enhancing starts there), else your own notes. */
 export const openingTab = ({ markdown, transcript }: Meeting): MeetingTab => enhancedNotes(markdown) || actionItems(markdown).length || transcriptTurns(transcript).length ? 'Enhanced' : 'Notes';
 export function actionItems(markdown: string): ActionItem[] {
-  return section(markdown, 'Action items').split('\n').filter(l => /^- \[[ xX]\] /.test(l)).map((line, index) => {
+  const seen = new Map<string, number>();
+  return section(markdown, 'Action items').split('\n').filter(l => itemLine.test(l)).map((line, index) => {
     const match = line.match(trailingLink);
     const text = line.slice(6, match?.index).trim();
+    const copy = seen.get(text) ?? 0;
+    seen.set(text, copy + 1);
     const [owner, ...rest] = text.split(' — ');
-    return { index, done: /^- \[[xX]\]/.test(line), text: rest.length ? rest.join(' — ') : text, owner: rest.length ? owner : '', ...(match && { link: { label: match[1], url: match[2] } }) };
+    return { index, key: `${copy} ${text}`, done: /^- \[[xX]\]/.test(line), text: rest.length ? rest.join(' — ') : text, owner: rest.length ? owner : '', ...(match && { link: { label: match[1], url: match[2] } }) };
   });
 }
+/** Whether an action item is the user's: its owner is "You", or their name (full or first). One without an owner isn't. */
+export function mine(owner: string, name: string): boolean {
+  const o = owner.trim().toLowerCase(), n = name.trim().toLowerCase();
+  return o === 'you' || (Boolean(o) && Boolean(n) && (o === n || o === n.split(/\s+/)[0]));
+}
+/** The user's items first, each part in the order it had: for showing only, since items are written by position. */
+export const yoursFirst = <T,>(items: T[], owner: (item: T) => string, name: string) => [...items.filter(i => mine(owner(i), name)), ...items.filter(i => !mine(owner(i), name))];
 /** The project a meeting from `event` belongs in: that of the series' last meeting, else the one where most of
  * the same people's earlier meetings are, else `fallback`. */
 export function projectFor(event: CalendarEvent, all: Meeting[], fallback: string): string {

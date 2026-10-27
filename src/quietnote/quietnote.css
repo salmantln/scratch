@@ -257,6 +257,15 @@
 /* An item just added from a suggestion flashes where it landed, as a cited transcript line does. */
 .action-row.fresh { animation: cited 1.6s var(--qn-ease-out); }
 .action-row.complete .action-text { color: var(--qn-muted); text-decoration: line-through; text-decoration-color: var(--qn-faint); }
+.action-row:has(.action-edit) { cursor: default; }
+/* In its meeting, an item's text edits it, and its × (shown on hover or focus) removes it. */
+.action-body { flex: 1; min-width: 0; }
+.action-edit { display: block; max-width: 100%; padding: 0; border: 0; background: none; text-align: left; cursor: text; border-radius: 4px; }
+.action-edit:hover { background: var(--qn-hover); box-shadow: 0 0 0 3px var(--qn-hover); }
+.action-edit:focus-visible { outline: 2px solid var(--qn-blue); outline-offset: 2px; }
+.quietnote-shell .action-input { display: block; width: 100%; padding: 0 var(--qn-space-1); margin-left: calc(-1 * var(--qn-space-1)); border: 1px solid var(--qn-line); border-radius: 6px; background: var(--qn-card); font-size: 14px; line-height: 1.45; color: var(--qn-ink); }
+.action-remove { flex-shrink: 0; margin: -3px 0; opacity: 0; transition: opacity var(--qn-dur-quick) var(--qn-ease-out); }
+.action-row:hover .action-remove, .action-row:focus-within .action-remove { opacity: 1; }
 .add-item { display: flex; align-items: center; gap: var(--qn-space-2); padding: var(--qn-space-2) var(--qn-space-1); color: var(--qn-faint); }
 .add-item:focus-within { color: var(--qn-blue-text); }
 .add-item input { flex: 1; min-width: 0; min-height: 34px; border: 0; background: transparent; outline: none; font-size: 14px; color: var(--qn-ink); }
@@ -333,6 +342,7 @@
 .citation:focus-visible { outline: 2px solid var(--qn-blue); outline-offset: 2px; border-radius: 3px; }
 .quietnote-shell .setting-error { margin: var(--qn-space-2) 0 0; }
 .setting-row.key-row { display: block; }
+.setting-row .name-field { flex: 0 0 220px; }
 
 /* Search */
 .search-page { max-width: 760px; }

@@ -26,7 +26,8 @@ Implementation style: AI writes code
 No demonstrated understanding recorded yet.
 
 ## Developing Concepts
-None recorded yet.
+- Identifying list items after others are removed (position vs text vs a stored id): chose text "for now" after the options were explained; reasoning not stated.
+- Undo as restoring a saved state: proposed it unprompted; chose the item's own line over the whole section once the interleaving case was shown.
 
 ## Revisit
 None recorded yet.

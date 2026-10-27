@@ -6,7 +6,7 @@ import { serviceName } from './catalog';
 import { getVersion } from '@tauri-apps/api/app';
 import { dateLabel } from './model';
 import { accelerator, actions, bound, globalDefault, globalRecord, label, problem } from './shortcuts';
-import { activateLicense, appearance, calendarAccess, callAccessibility, checkout, cliSetupCommand, desktop, diskEncryption, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openLink, openPrivacySettings, removeLicense, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type Connections, type LicenseStatus, type PrivacyPreferences, type Service } from './storage';
+import { activateLicense, appearance, calendarAccess, callAccessibility, checkout, cliSetupCommand, desktop, device, diskEncryption, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openLink, openPrivacySettings, removeLicense, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type Connections, type LicenseStatus, type PrivacyPreferences, type Service } from './storage';
 export type SettingsSection = 'Privacy' | 'Appearance' | 'Shortcuts' | 'Local archive' | 'About';
 const mac = /Mac/.test(navigator.userAgent);
 const sections: [SettingsSection, 'privacy' | 'appearance' | 'keyboard' | 'archive' | 'info'][] = [['Privacy', 'privacy'], ['Appearance', 'appearance'], ['Shortcuts', 'keyboard'], ['Local archive', 'archive'], ['About', 'info']];
@@ -62,6 +62,13 @@ function Shortcuts({ values, onChange, anyApp }: { values: PrivacyPreferences; o
   </>;
 }
 /** Who drafts summary suggestions. The Anthropic key is checked, then kept in the Keychain; Ollama runs on this computer. */
+/** Your name, saved when you leave the field, so action items you own come first (with those for “You”). */
+function NameRow({ value, onChange }: { value: string; onChange: (name: string) => void }) {
+  const [name, setName] = useState(value);
+  const save = () => { if (name.trim() !== value) onChange(name.trim()); };
+  return <div className="setting-row"><div><div className="setting-title">Your name</div><p>Puts your action items first. {desktop ? `Stays on this ${device}.` : 'Stays in this browser.'}</p></div>
+    <label className="field name-field"><input aria-label="Your name" value={name} maxLength={60} placeholder="Optional" autoComplete="name" onChange={e => setName(e.target.value)} onBlur={save} onKeyDown={e => { if (e.key === 'Enter') save(); }} /></label></div>;
+}
 function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; summaryKey: boolean; onSummaryKey: (saved: boolean) => void }) {
   const provider = values.summaryProvider === 'anthropic' || values.summaryProvider === 'ollama' ? values.summaryProvider : '';
   const [key, setKey] = useState('');
@@ -258,6 +265,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
           {disk === 'on' && fact('Encrypted by FileVault', `macOS encrypts this Mac’s disk, ${recording ? 'recordings, transcripts and notes' : 'meetings'} included, so no one can read them from the disk without your password.`)}
           {disk === 'encrypting' && fact('FileVault is encrypting this disk', 'Once it’s done, no one can read your meetings from this Mac’s disk without your password.')}
           {(disk === 'off' || disk === 'decrypting') && <div className="setting-row"><div><div className="setting-title">{disk === 'off' ? 'FileVault is off' : 'FileVault is being turned off'}</div><p>{`Anyone with this Mac’s disk could read your ${recording ? 'recordings, transcripts and notes' : 'meetings'}. FileVault encrypts the whole disk with your login password. Turn it on under Privacy & Security → FileVault.`}</p></div><button className="text-button" onClick={() => void openPrivacySettings('fileVault').catch(() => { /* The text says where to go. */ })}>Open System Settings</button></div>}
+          <NameRow value={typeof values.userName === 'string' ? values.userName : ''} onChange={name => onChange('userName', name)} />
           {fact('No meeting bot', 'QuietNote never joins a call or adds an attendee.')}
           {fact('No account required', 'There is no sign-in and no cloud sync.')}
           {desktop && fact(connected.length ? `Connected to ${connected.join(' and ')}` : 'No connections', connected.length ? 'Action items are sent only when you choose Send. Keys are kept in your macOS Keychain.' : 'Connect Linear or GitHub from Connections in the sidebar to send action items as issues.')}

@@ -44,7 +44,7 @@ function Detail({ everyone, meetings, selected, onSelect, onOpen, onToggle }: {
   const [ticked, setTicked] = useState<string[]>([]);
   const ids = new Set(group.flatMap(p => p.meetingIds));
   const theirs = meetings.filter(m => ids.has(m.metadata.id)).sort((a, b) => b.metadata.date.localeCompare(a.metadata.date));
-  const items = theirs.flatMap(({ metadata, markdown }) => actionItems(markdown).map(item => ({ item, meeting: metadata, key: `${metadata.id}:${item.index}` })))
+  const items = theirs.flatMap(({ metadata, markdown }) => actionItems(markdown).map(item => ({ item, meeting: metadata, key: `${metadata.id}:${item.key}` })))
     .filter(({ item, key }) => group.some(p => owns(p, item.owner)) && (!item.done || ticked.includes(key)));
   const person = group[0];
   if (!person) return <div className="page"><button className="text-button" onClick={() => onSelect('')}><Icon name="back" size={15} />People</button><p className="subtle">This person isn’t in any meeting any more.</p></div>;
