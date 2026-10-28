@@ -15,6 +15,7 @@ import {
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Link from "@tiptap/extension-link";
+import Highlight from "@tiptap/extension-highlight";
 import Image from "@tiptap/extension-image";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
@@ -79,6 +80,7 @@ import {
   BoldIcon,
   ItalicIcon,
   StrikethroughIcon,
+  HighlighterIcon,
   Heading1Icon,
   Heading2Icon,
   Heading3Icon,
@@ -282,6 +284,13 @@ function FormatBar({
         title={`Strikethrough (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}S)`}
       >
         <StrikethroughIcon className="w-4.5 h-4.5 stroke-[1.5]" />
+      </ToolbarButton>
+      <ToolbarButton
+        onClick={() => editor.chain().focus().toggleHighlight().run()}
+        isActive={editor.isActive("highlight")}
+        title={`Highlight (${mod}${isMac ? "" : "+"}${shift}${isMac ? "" : "+"}H)`}
+      >
+        <HighlighterIcon className="w-4.5 h-4.5 stroke-[1.5]" />
       </ToolbarButton>
 
       <div className="w-px h-4.5 border-l border-border mx-2" />
@@ -1100,6 +1109,7 @@ export function Editor({
         inline: false,
         allowBase64: false,
       }),
+      Highlight,
       TaskList,
       TaskItem.configure({
         nested: true,

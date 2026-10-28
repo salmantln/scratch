@@ -712,7 +712,12 @@ test('J: desktop recording runs in the background, then shows a clean transcript
   await tab(page, 'Transcript').click();
   await expect(page.locator('.transcript-turn').first()).toContainText('So, we should ship on Friday.');
   await expect(page.getByRole('button', { name: 'Clean' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByText('Clean removes simple filler words and repeated stutters. Verbatim keeps the original transcription.')).toBeVisible();
+  // What the views mean is the switch's hover text, not a caption shown every time.
+  await expect(page.getByText('Clean removes simple filler words')).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Transcript view' })).toHaveAttribute('title', 'Clean removes simple filler words and repeated stutters. Verbatim keeps the original transcription.');
+  // Bubbles, as in the live transcript: yours on the right.
+  await expect(page.locator('.transcript-turn').first()).toHaveClass(/\byou\b/);
+  await expect(page.locator('.transcript-turn').nth(1)).toHaveClass(/\bothers\b/);
   const before = await qn(page, q => q.state.calls.length);
   await page.getByRole('button', { name: 'Verbatim' }).click();
   await expect(page.locator('.transcript-turn').first()).toContainText('Um, so, uh, we should we should ship on Friday.');
@@ -1475,16 +1480,16 @@ test('W: a finished meeting records more, and its transcript keeps the earlier p
   await mockDesktop(page, { meetings: [done] });
   await page.goto('/');
   await page.getByRole('button', { name: /Acme onboarding/ }).click();
-  // Recording more is offered, but it isn't the page's main action.
+  // Recording more is offered, but quietly: reading the meeting comes first.
   const header = page.locator('.meeting-header');
   await expect(header.getByRole('button', { name: 'Start recording' })).toHaveCount(0);
-  await expect(header.getByRole('button', { name: 'Resume recording' })).not.toHaveClass(/primary/);
-  await header.getByRole('button', { name: 'Resume recording' }).click();
+  await expect(header.getByRole('button', { name: 'Record more' })).toHaveClass(/text-button/);
+  await header.getByRole('button', { name: 'Record more' }).click();
   const recorder = page.getByRole('region', { name: 'Recorder' });
   await expect(recorder.getByRole('status')).toHaveText('Recording');
   expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
   await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
-  await expect(header.getByRole('button', { name: 'Resume recording' })).toHaveCount(0);
+  await expect(header.getByRole('button', { name: 'Record more' })).toHaveCount(0);
   // The clock carries on from the earlier recording.
   await expect(recorder.locator('.recorder-time')).toHaveText(/^12:3[4-6]$/);
   // The earlier transcript stays, and the new part follows it as a live draft.
@@ -1492,13 +1497,30 @@ test('W: a finished meeting records more, and its transcript keeps the earlier p
   const panel = page.getByRole('tabpanel');
   await expect(panel.locator('.transcript-turn')).toContainText('Let’s start with the pilot.');
   // Only one side has spoken, so a label would say nothing: just the time.
-  await expect(panel.locator('.transcript-turn h3')).toHaveText('00:00');
+  await expect(panel.locator('.transcript-turn .turn-meta')).toHaveText('00:00');
   await qn(page, q => {
     q.state.draft = { meetingId: q.meetings[0].metadata.id, turns: [{ startMs: 760_000, speaker: 'Others', text: 'We’re back.', clean: 'We’re back.' }] };
     q.emit('quietnote://live-transcript', q.state.draft);
   });
   await expect(panel.locator('.live-turn.others')).toContainText('We’re back.');
   expect(await panel.evaluate(el => el.querySelector('.transcript-turn')!.compareDocumentPosition(el.querySelector('.live-turn')!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
+});
+
+test('highlighting in My notes is saved as ==text==, which enhancing reads as what mattered most', async ({ page }) => {
+  const done = meetingWith('Acme pilot kickoff', { status: 'ready', duration: 600, captureStartedAt: new Date().toISOString(), captureEndedAt: new Date().toISOString() });
+  done.metadata.audioPath = `Acme/${done.metadata.id}/audio`;
+  await mockDesktop(page, { meetings: [done] });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Acme pilot kickoff/ }).click();
+  await view(page, 'My notes').click();
+  await page.locator('.tiptap').click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('ControlOrMeta+Shift+H');
+  await page.keyboard.type('SSO is the blocker');
+  await expect(page.locator('.tiptap mark')).toHaveText('SSO is the blocker');
+  await expect(page.getByRole('button', { name: /^Highlight/ })).toBeVisible();
+  await expect.poll(() => qn(page, q => q.state.saved)).toContain('==SSO is the blocker==');
 });
 
 test('X: summary suggestions ask before sending, cite the transcript, and write only what you add', async ({ page }) => {
@@ -1508,10 +1530,17 @@ test('X: summary suggestions ask before sending, cite the transcript, and write 
   await mockDesktop(page, { meetings: [done] });
   await page.goto('/');
   await page.getByRole('button', { name: /Pricing sync/ }).click();
-  // Off by default: nothing to ask, and the empty state says where to turn it on.
+  // Off by default: nothing to ask, and the empty state shows what highlighting and enhancing do and where to turn it on.
   await expect(page.getByRole('button', { name: 'Suggest from transcript…' })).toHaveCount(0);
   await expect(view(page, 'Enhanced notes')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByText('Turn on summary suggestions in Settings → Privacy', { exact: false })).toBeVisible();
+  await expect(page.getByText('With summary suggestions on in Settings → Privacy', { exact: false })).toBeVisible();
+  // An example, played once: the next time it's the last frame.
+  const demo = page.getByRole('img', { name: /^Example: you highlight/ });
+  await expect(demo).toHaveClass(/play/);
+  await view(page, 'My notes').click();
+  await view(page, 'Enhanced notes').click();
+  await expect(demo).toBeVisible();
+  await expect(demo).not.toHaveClass(/play/);
   await page.keyboard.press('ControlOrMeta+,');
   await page.getByLabel('Drafted by').selectOption('anthropic');
   await page.getByLabel('Anthropic API key').fill('sk-ant-test');
@@ -1759,7 +1788,7 @@ test('AB: a meeting and its voices get names only from what shows them, or by ha
   await tab(page, 'Transcript').click();
   await page.getByRole('button', { name: 'Speaker 2' }).click();
   await page.getByLabel('Name for Speaker 2').fill('Sam Lee');
-  await page.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('.transcript-turn').filter({ hasText: 'Hi all.' })).toContainText('Sam Lee');
   expect(await qn(page, q => q.state.renamed.at(-1))).toEqual(['Speaker 2', 'Sam Lee']);
   await page.getByRole('button', { name: 'Globex pricing kickoff' }).click();
@@ -1768,23 +1797,44 @@ test('AB: a meeting and its voices get names only from what shows them, or by ha
   await expect(page.getByRole('heading', { level: 1, name: 'Pricing kickoff' })).toBeVisible();
 });
 
-test('AC: with one other person invited, the other voice can be named from the invite without asking a model', async ({ page }) => {
+test('AC: when a transcript is ready, Who spoke? asks for each unnamed voice by its first line, and Not now is remembered', async ({ page }) => {
   const call = meetingWith('Zoom call', { status: 'ready', duration: 300, captureStartedAt: new Date().toISOString(), captureEndedAt: new Date().toISOString(), attendees: [{ name: 'Me', email: 'me@acme.com', me: true }, { name: 'Maria Lopez', email: 'maria@globex.com' }], participants: ['Maria Lopez'] });
   call.metadata.audioPath = `Acme/${call.metadata.id}/audio`;
   call.transcript = '# Transcript\n\n### 00:00 You\nHello.\n\n### 00:03 Others\nHi there.\n';
-  await mockDesktop(page, { meetings: [call] });
+  const kickoff = meetingWith('Pricing call', { status: 'ready', duration: 300, captureStartedAt: new Date().toISOString(), captureEndedAt: new Date().toISOString() });
+  kickoff.metadata.audioPath = `Acme/${kickoff.metadata.id}/audio`;
+  kickoff.transcript = '# Transcript\n\n### 00:00 Speaker 1\nHi all.\n';
+  await mockDesktop(page, { meetings: [call, kickoff] });
   await page.addInitScript(() => {
     const { state } = (window as unknown as { __qn: { state: Record<string, unknown> } }).__qn;
-    state.transcriptData = [{ startMs: 0, speaker: 'You', text: 'Hello.', clean: 'Hello.' }, { startMs: 3000, speaker: 'Others', text: 'Hi there.', clean: 'Hi there.' }];
+    state.transcriptData = [{ startMs: 0, speaker: 'You', text: 'Hello.', clean: 'Hello.' }, { startMs: 3000, speaker: 'Others', text: 'Um, hi there.', clean: 'Hi there.' }];
   });
   await page.goto('/');
   await page.getByRole('button', { name: /Zoom call/ }).click();
-  await tab(page, 'Transcript').click();
-  await expect(page.getByRole('status').filter({ hasText: 'Is “Others” Maria Lopez?' })).toContainText('Maria Lopez was the only other person invited.');
-  await page.getByRole('button', { name: 'Name them' }).click();
+  // One other person was invited and one other voice heard, so “Others” is them; the name is suggested, not saved.
+  const card = page.getByRole('form', { name: 'Who spoke?' });
+  await expect(card).toContainText('“Hi there.”');
+  await expect(card.getByRole('combobox', { name: 'Who is Others?' })).toHaveValue('Maria Lopez');
+  await expect(card.getByRole('combobox', { name: 'Who is You?' })).toHaveCount(0);
+  expect(await qn(page, q => q.state.renamed)).toEqual([]);
+  await card.getByRole('button', { name: 'Save names' }).click();
   await expect.poll(() => qn(page, q => q.state.renamed)).toEqual([['Others', 'Maria Lopez']]);
-  await expect(page.getByText('Is “Others” Maria Lopez?')).toHaveCount(0);
+  await expect(card).toHaveCount(0);
   expect(await qn(page, q => q.state.calls.includes('meeting_names'))).toBe(false);
+  // Voices told apart by sound are asked about whoever was invited; Not now isn't asked again.
+  await qn(page, q => { q.state.transcriptData = [{ startMs: 0, speaker: 'Speaker 1', text: 'Hi all.', clean: 'Hi all.' }, { startMs: 4000, speaker: 'Speaker 2', text: 'Morning.', clean: 'Morning.' }]; });
+  await home(page).click();
+  await page.getByRole('button', { name: /Pricing call/ }).click();
+  await expect(card.getByRole('combobox')).toHaveCount(2);
+  await expect(card).toContainText('“Morning.”');
+  await card.getByRole('button', { name: 'Not now' }).click();
+  await expect(card).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1, name: 'Pricing call' })).toBeVisible();
+  await expect(tab(page, 'Transcript')).toBeVisible();
+  await tab(page, 'Transcript').click();
+  await expect(page.locator('.transcript-turn')).toHaveCount(2);
+  await expect(card).toHaveCount(0);
 });
 
 test('AD: first launch on a Mac explains both permissions on one screen before asking, asks one optional question, and records nothing', async ({ page }) => {

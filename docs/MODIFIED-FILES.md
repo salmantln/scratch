@@ -2,7 +2,7 @@
 
 Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generated dependencies, build outputs, and test scratch output are ignored and excluded.
 
-## Modified files (44)
+## Modified files (45)
 
 - `.github/workflows/ci.yml`
 - `.github/workflows/release.yml`
@@ -42,6 +42,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/components/command-palette/CommandPalette.tsx`
 - `src/components/editor/CodeBlockView.tsx`
 - `src/components/editor/Editor.tsx`
+- `src/components/icons/index.tsx`
 - `src/components/layout/FolderPicker.tsx`
 - `src/components/layout/Footer.tsx`
 - `src/components/settings/AboutSettingsSection.tsx`

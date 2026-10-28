@@ -5,9 +5,22 @@ import { Icon } from './Icon';
 import { Hush, HushYield } from './Hush';
 import { SuggestPanel, type Summarizer } from './Suggestions';
 import { serviceName } from './catalog';
+import { label } from './shortcuts';
 import { desktop, device, openLink, transcriptData, type CaptureState, type Connections, type Service, type TranscriptTurn } from './storage';
 import { actionItems, appendAction, clock, dateLabel, durationLabel, enhancedNotes, openingTab, section, statusLabel, summaryBlocks, timeLabel, transcriptTurns, yoursFirst, type ActionItem, type Meeting, type MeetingTab } from './model';
 const Editor = lazy(() => import('../components/editor/Editor').then(module => ({ default: module.Editor })));
+const demoSeen = 'quietnote.enhance-demo.v1';
+/** An example, never this meeting's words: what highlighting your notes and enhancing them does. It plays once (about
+ * 2.4 s) the first time it's shown; after that, and with Reduce Motion, it's the last frame. */
+function EnhanceDemo() {
+  const [play] = useState(() => { try { return !localStorage.getItem(demoSeen); } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem(demoSeen, '1'); } catch { /* It plays again next time. */ } }, []);
+  return <figure className={`enhance-demo ${play ? 'play' : ''}`} role="img" aria-label="Example: you highlight “SSO is the blocker” in your notes; enhancing adds “Okta isn’t set up, so it blocks week 1.” from 11:30 in the transcript and suggests “Ask legal for a review date”.">
+    <figcaption>Example</figcaption>
+    <ul><li>Pilot starts 3 Nov</li><li><mark>SSO is the blocker</mark></li><li className="added">Okta isn’t set up, so it blocks week 1. <span className="timestamp">11:30</span></li></ul>
+    <div className="enhance-demo-action"><span>Ask legal for a review date</span><span className="enhance-demo-add">Add</span></div>
+  </figure>;
+}
 /** A failure in the notes editor stays in the Notes tab instead of blanking the window. A failed import is cached
  * by the webview, so recovering means reloading; drafts and the open tab are restored. */
 class NotesBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -80,6 +93,48 @@ function AddItem({ label, onAdd }: { label: string; onAdd: (text: string) => Pro
     {text.trim() && <button type="submit" className="text-button">Add</button>}
   </form>;
 }
+// Meetings whose Who spoke? was put off with Not now. A convenience only: losing it just asks again.
+const skippedKey = 'quietnote.naming-skipped.v1';
+const namingSkipped = (): string[] => { try { return JSON.parse(localStorage.getItem(skippedKey) ?? '[]'); } catch { return []; } };
+const skipNaming = (id: string) => { try { localStorage.setItem(skippedKey, JSON.stringify([...namingSkipped(), id])); } catch { /* Asked again next time. */ } };
+type Voice = { voice: string; time: string; line: string; guess: string };
+const cut = (text: string) => text.length > 120 ? `${text.slice(0, 117).trimEnd()}…` : text;
+/** The voices still to name, each with the first thing it said: "Speaker N", and "Others" only when one other person
+ * was invited (whose name is suggested), since one "Others" can be several people. */
+function unnamedVoices(turns: TranscriptTurn[], invited: string[]): Voice[] {
+  const first = new Map<string, TranscriptTurn>();
+  for (const t of turns) if (!first.has(t.speaker)) first.set(t.speaker, t);
+  return [...first].filter(([voice]) => /^Speaker \d+$/.test(voice) || (voice === 'Others' && invited.length === 1))
+    .map(([voice, t]) => ({ voice, time: clock(t.startMs / 1000), line: cut(t.clean || t.text), guess: voice === 'Others' ? invited[0] : '' }));
+}
+/** Once a transcript is ready, its unnamed voices, each with its first line, to name before anything else is offered. */
+function WhoSpoke({ voices, invited, onName, onCite, onSkip }: { voices: Voice[]; invited: string[]; onName: (from: string, to: string) => Promise<void>; onCite: (at: string) => void; onSkip: () => void }) {
+  const [names, setNames] = useState<Record<string, string>>(() => Object.fromEntries(voices.map(v => [v.voice, v.guess])));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const typed = voices.filter(v => names[v.voice]?.trim());
+  async function save() {
+    setSaving(true); setError('');
+    // One at a time: each name rewrites the transcript.
+    try { for (const v of typed) await onName(v.voice, names[v.voice].trim()); }
+    catch (e) { setError(`Couldn’t save the names. ${String(e).replace(/^Error: /, '')}`); }
+    finally { setSaving(false); }
+  }
+  return <form className="notice who-spoke" aria-labelledby="who-spoke" onSubmit={e => { e.preventDefault(); void save(); }}>
+    <Icon name="people" size={16} />
+    <div className="who-spoke-body">
+      <strong id="who-spoke">Who spoke?</strong>
+      <p>Each voice gets its name on every line; the words stay as they were recognized.</p>
+      <ul>{voices.map(v => <li key={v.voice}>
+        <label className="field">{v.voice}<input aria-label={`Who is ${v.voice}?`} list="who-spoke-names" value={names[v.voice] ?? ''} maxLength={60} placeholder="Name" onChange={e => setNames(n => ({ ...n, [v.voice]: e.target.value }))} /></label>
+        <p className="who-line"><button type="button" className="citation" title="Show this line in the transcript" onClick={() => onCite(v.time)}><span className="timestamp">{v.time}</span></button> “{v.line}”</p>
+      </li>)}</ul>
+      <datalist id="who-spoke-names">{invited.map(n => <option key={n} value={n} />)}</datalist>
+      {error && <p className="field-error" role="alert">{error}</p>}
+      <div className="button-row"><button type="submit" className="primary" disabled={saving || !typed.length}>{saving ? 'Saving…' : 'Save names'}</button><button type="button" className="text-button" onClick={onSkip}>Not now</button></div>
+    </div>
+  </form>;
+}
 /** Copies the whole transcript as shown (Clean or Verbatim, never filtered by Find) to paste into another app. */
 function CopyTranscript({ title, turns, voices }: { title: string; turns: { time: string; speaker: string; text: string }[]; voices: number }) {
   const [copied, setCopied] = useState(false);
@@ -110,12 +165,13 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
   const [verbatim, setVerbatim] = useState(!cleanDefault);
   const [raw, setRaw] = useState<TranscriptTurn[] | null>(null);
   const recorded = Boolean(live.available && !example && (meta.audioPath || meta.captureEndedAt) && meta.status === 'ready');
+  // Read on opening, not only on the Transcript tab: Who spoke? needs the voices first thing.
   useEffect(() => {
-    if (!recorded || tab !== 'Transcript') return;
+    if (!recorded) return;
     let cancelled = false;
     transcriptData(meta.id).then(data => { if (!cancelled) setRaw(data); }).catch(() => { if (!cancelled) setRaw(null); });
     return () => { cancelled = true; };
-  }, [recorded, tab, meta.id, transcript]);
+  }, [recorded, meta.id, transcript]);
   // A suggestion's citation opens the Transcript tab at the line it quotes.
   const [cited, setCited] = useState<string | null>(null);
   useEffect(() => {
@@ -130,13 +186,12 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
     return () => clearTimeout(timer);
   }, [tab, cited, raw]);
   const cite = (at: string) => { setTranscriptQuery(''); setCited(at); onTab('Transcript'); };
-  // Naming a voice in a recorded transcript: by hand (press its label), or the one other person invited.
+  // Naming a voice in a recorded transcript: asked once it's ready (Who spoke?), or by pressing its label later.
   const canName = Boolean(raw) && !example && meta.status === 'ready';
   const [naming, setNaming] = useState<{ from: string; to: string; error: string } | null>(null);
-  const [inviteDismissed, setInviteDismissed] = useState(false);
   const invitedOthers = (meta.attendees ?? []).filter(a => !a.me).map(a => a.name);
-  const unnamedVoices = [...new Set((raw ?? []).map(t => t.speaker))].filter(v => v !== 'You');
-  const inviteGuess = canName && !inviteDismissed && invitedOthers.length === 1 && unnamedVoices.length === 1 && /^(Others|Speaker \d+)$/.test(unnamedVoices[0]) ? { from: unnamedVoices[0], to: invitedOthers[0] } : null;
+  const [skipped, setSkipped] = useState(() => namingSkipped().includes(meta.id));
+  const unnamed = canName && !skipped ? unnamedVoices(raw ?? [], invitedOthers) : [];
   const nameVoice = (from: string, to: string) => onSpeaker(from, to).then(() => setNaming(null)).catch(e => setNaming({ from, to, error: String(e).replace(/^Error: /, '') }));
   const latestSave = useRef(onNotes); latestSave.current = onNotes;
   const save = useCallback((notes: string) => latestSave.current(notes), []);
@@ -177,7 +232,7 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
         </div>
         <div className="meeting-actions">
           {meta.status === 'idle' && !armed && <button className={live.available ? 'primary' : 'secondary'} disabled={Boolean(other)} title={other ? `“${other.title}” is recording. Stop it first.` : undefined} onClick={onStartCapture}>{live.available ? <><i className="record-dot" aria-hidden="true" />Start recording</> : 'Start capture'}</button>}
-          {recorded && !armed && <button className="secondary" disabled={Boolean(other)} title={other ? `“${other.title}” is recording. Stop it first.` : 'Record more of this meeting. The new part is added to its transcript.'} onClick={onStartCapture}><i className="record-dot" aria-hidden="true" />Resume recording</button>}
+          {recorded && !armed && <button className="text-button record-more" disabled={Boolean(other)} title={other ? `“${other.title}” is recording. Stop it first.` : 'Record more of this meeting. The new part is added to its transcript.'} onClick={onStartCapture}><i className="record-dot" aria-hidden="true" />Record more</button>}
           {!armed && <button className="icon-button" aria-label="Delete meeting" disabled={owned} title={owned ? (meta.status === 'recording' ? 'Stop recording before deleting this meeting.' : 'Wait until it’s transcribed to delete it.') : 'Delete meeting'} onClick={onDelete}><Icon name="trash" size={16} /></button>}
         </div>
       </div>
@@ -197,6 +252,7 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
     : meta.status === 'processing' ? <div className="notice" role="status"><Hush mood="transcribing" size={44} progress={live.transcribing?.meetingId === meta.id ? live.transcribing.percent / 100 : undefined} fallback={<Icon name="recent" size={16} />} /><div><strong>{transcribing}</strong><p>This runs on this {device}. You can keep working or close the window. The audio is kept until the transcript is saved.</p></div></div>
     : meta.status === 'error' && audioKept ? <div className="notice attention" role="status"><Hush mood="attention" size={44} fallback={<Icon name="info" size={16} />} /><div><strong>Transcription couldn’t finish.</strong><p>Your recording is still saved{meta.duration > 0 ? ` (${durationLabel(meta.duration)})` : ''}, so you can retry.</p>{details}</div><div className="notice-actions"><button className="text-button" onClick={onExportAudio}>Export audio…</button><button className="text-button" onClick={onRetry}>Retry transcription</button></div></div>
     : meta.status === 'error' && <div className="notice attention" role="status"><Hush mood="attention" size={44} fallback={<Icon name="info" size={16} />} /><div><strong>This meeting was interrupted before it finished.</strong><p>{meta.error ?? (live.available ? 'QuietNote closed while it was recording, and no audio was saved.' : 'QuietNote closed while capture was running. No audio was recorded.')} Anything you wrote in Notes is kept.</p></div><div className="notice-actions"><button className="text-button" onClick={() => onTab('Notes')}>Add notes</button><button className="text-button" onClick={onMarkEnded}>Mark as ended</button></div></div>}
+    {unnamed.length > 0 && <WhoSpoke key={unnamed.map(v => v.voice).join()} voices={unnamed} invited={invitedOthers} onName={onSpeaker} onCite={cite} onSkip={() => { skipNaming(meta.id); setSkipped(true); }} />}
     <HushYield.Provider value={yielded || meta.status === 'processing' || meta.status === 'error'}><div className="meeting-content" role="tabpanel" id={tabIds(shownTab).panel} aria-labelledby={tabIds(shownTab).tab}>
       {shownTab === 'Notes' && <div className="segmented notes-view" role="group" aria-label="Notes view"><button aria-pressed={tab === 'Enhanced'} onClick={() => onTab('Enhanced')}>Enhanced notes</button><button aria-pressed={tab === 'Notes'} onClick={() => onTab('Notes')}>My notes</button></div>}
       {tab === 'Enhanced' && (() => {
@@ -213,15 +269,15 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
           {notes ? <div className="summary-text">{actions.length > 0 && summaryBlocks(notes)[0].kind !== 'heading' && <h3>Summary</h3>}{summaryBlocks(notes).map((b, i) => b.kind === 'heading' ? <h3 key={i}>{b.text}</h3> : b.kind === 'paragraph' ? <p key={i}>{b.text}</p>
             // A point with a transcript time was added from the transcript; the rest came from the notes.
             : <ul key={i}>{b.items.map((item, j) => <li key={j} className={item.at ? 'added' : undefined}>{item.text}{item.at && <> <button className="citation" title="Show this line in the transcript" onClick={() => cite(item.at!)}><span className="timestamp">{item.at}</span></button></>}</li>)}</ul>)}</div>
-          : <div className="empty-inline">{calm && <Hush mood="resting" size={72} />}<h2>No enhanced notes yet.</h2><p>{!live.available || example ? 'Enhancing notes isn’t available in this version. Your own notes are the record of this meeting.' : summarizer ? recorded ? 'Enhance your notes from the transcript, or ask for suggestions from it.' : 'Once it’s recorded, you can enhance your notes from its transcript.' : 'Turn on summary suggestions in Settings → Privacy to enhance your notes from the transcript.'}</p><button className="secondary" onClick={() => onTab('Notes')}>Open my notes</button></div>}
+          : <div className="empty-inline">{calm && <Hush mood="resting" size={72} />}<h2>No enhanced notes yet.</h2><p>{!live.available || example ? 'Enhancing notes isn’t available in this version. Your own notes are the record of this meeting.'
+            : recorded ? `Highlight what matters in your notes (${label('CmdOrCtrl+Shift+H')}). ${summarizer ? 'Enhancing them' : 'With summary suggestions on in Settings → Privacy, enhancing them'} fills them in from the transcript, each added line in grey with the moment it came from.`
+            : summarizer ? 'Once it’s recorded, you can enhance your notes from its transcript.' : 'Turn on summary suggestions in Settings → Privacy to enhance your notes from the transcript.'}</p>{recorded && <EnhanceDemo />}<button className="secondary" onClick={() => onTab('Notes')}>Open my notes</button></div>}
           {!actions.length && todo}
         </>;
       })()}
       {tab === 'Notes' && previous && (meta.status === 'idle' || meta.status === 'recording') && <LastTime meeting={previous} me={me} onToggle={onPrevious} onOpen={onOpenPrevious} />}
       {tab === 'Notes' && <div className="quiet-editor"><NotesBoundary><Suspense fallback={<p className="subtle">Opening notes…</p>}><Editor onDraftChange={onDraft} key={meta.id} previewMode={{ content: section(markdown, 'Notes'), title: 'Notes', filePath: meta.meetingPath, modified: 0, hasExternalChanges: false, reloadVersion: 0, save, reload: async () => {} }} /></Suspense></NotesBoundary></div>}
       {tab === 'Transcript' && <section>
-        {inviteGuess && <div className="notice" role="status"><Icon name="people" size={16} /><div><strong>Is “{inviteGuess.from}” {inviteGuess.to}?</strong><p>{inviteGuess.to} was the only other person invited.</p></div>
-          <div className="notice-actions"><button className="text-button" onClick={() => setInviteDismissed(true)}>Not now</button><button className="text-button" onClick={() => void nameVoice(inviteGuess.from, inviteGuess.to)}>Name them</button></div></div>}
         {naming && <form className="name-speaker" onSubmit={e => { e.preventDefault(); if (naming.to.trim()) void nameVoice(naming.from, naming.to); }}>
           <label>Name “{naming.from}” <input aria-label={`Name for ${naming.from}`} list="invited-names" value={naming.to} maxLength={60} autoFocus onChange={e => setNaming({ ...naming, to: e.target.value, error: '' })} /></label>
           <datalist id="invited-names">{invitedOthers.map(n => <option key={n} value={n} />)}</datalist>
@@ -231,12 +287,15 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
         </form>}
         {turns.length > 0 && <>
           <div className="transcript-tools">{example && <span className="subtle">Example transcript · illustrative, not a recording</span>}
-            {raw && <div className="segmented" role="group" aria-label="Transcript view"><button aria-pressed={!verbatim} onClick={() => setVerbatim(false)}>Clean</button><button aria-pressed={verbatim} onClick={() => setVerbatim(true)}>Verbatim</button></div>}
+            {raw && <div className="segmented" role="group" aria-label="Transcript view" title="Clean removes simple filler words and repeated stutters. Verbatim keeps the original transcription."><button aria-pressed={!verbatim} onClick={() => setVerbatim(false)}>Clean</button><button aria-pressed={verbatim} onClick={() => setVerbatim(true)}>Verbatim</button></div>}
             <CopyTranscript title={meta.title} turns={turns} voices={voices} />
             {recorded && meta.audioPath && <button className="text-button" onClick={onExportAudio}><Icon name="folder" size={15} />Export audio…</button>}
             <label className="inline-search"><Icon name="search" size={15} /><input placeholder="Find in transcript" aria-label="Find in transcript" value={transcriptQuery} onChange={e => setTranscriptQuery(e.target.value)} /></label></div>
-          {raw && <p className="subtle transcript-caption">Clean removes simple filler words and repeated stutters. Verbatim keeps the original transcription.</p>}
-          {shownTurns.map((t, i) => <div className="transcript-turn" data-time={t.time} key={i}><h3>{voices > 1 && t.speaker !== shownTurns[i - 1]?.speaker && (canName ? <button className="speaker-name" title={`Name ${t.speaker}`} onClick={() => setNaming({ from: t.speaker, to: '', error: '' })}>{t.speaker}</button> : <span>{t.speaker}</span>)}<span className="timestamp">{t.time}</span></h3><p>{t.text}</p></div>)}
+          {/* Bubbles, as in the live transcript: yours on the right. The voice is named when it changes. */}
+          <div className="transcript-turns">{shownTurns.map((t, i) => { const speaks = voices > 1 && t.speaker !== shownTurns[i - 1]?.speaker;
+            return <div className={`transcript-turn ${t.speaker === 'You' ? 'you' : 'others'} ${speaks ? 'speaks' : ''}`} data-time={t.time} key={i}>
+              <div className="turn-meta">{speaks && (canName ? <button className="speaker-name" title="Name this speaker" onClick={() => setNaming({ from: t.speaker, to: '', error: '' })}>{t.speaker}</button> : <span>{t.speaker}</span>)}<span className="timestamp">{t.time}</span></div>
+              <p>{t.text}</p></div>; })}</div>
           {!shownTurns.length && <p className="subtle">Nothing in the transcript matches “{transcriptQuery}”.</p>}
         </>}
         {live.available && !example ? (() => {

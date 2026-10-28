@@ -207,6 +207,8 @@ for everyone else (voices told apart by sound, not by name). People's names appe
 Their notes show what mattered to them, so they lead: keep every point from them, under the section it belongs to, and fill \
 each in with what the transcript says about it. Then add what else in the transcript belongs in the template's sections. \
 If they wrote little or nothing, the transcript is all there is; if they wrote a lot, follow their order and add only what's important.
+Passages they highlighted are listed under \"They highlighted\": those mattered most, so each gets its own item, first in its section, \
+filled in with what the transcript says about it.
 
 Return the template's sections, in its order and with its headings exactly, each with short items (one point each, a sentence or two):
 - An item from their notes has `source` \"notes\", `quote` a phrase of three to twelve words copied word for word from their notes, and `at` an empty string.
@@ -243,11 +245,18 @@ fn notes_of(markdown: &str) -> String {
     lines.by_ref().find(|l| l.trim().eq_ignore_ascii_case("## notes"));
     lines.collect::<Vec<_>>().join("\n").trim().to_string()
 }
-/// What the model reads: the template, the user's notes and the transcript.
+/// What they highlighted in their notes (the editor's Highlight, `==text==` in Markdown, as its tokenizer reads it).
+fn highlighted(notes: &str) -> Vec<String> {
+    static MARK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"==([^=\n]+)==").unwrap());
+    MARK.captures_iter(notes).map(|c| c[1].trim().to_string()).filter(|m| !m.is_empty()).collect()
+}
+/// What the model reads: the template, the user's notes (and what they highlighted in them) and the transcript.
 fn notes_request(template: &Template, notes: &str, transcript: &str) -> String {
     let sections: Vec<String> = template.sections.iter().map(|s| format!("## {}\n{}", s.heading, s.description).trim_end().to_string()).collect();
+    let marks: Vec<String> = highlighted(notes).iter().map(|m| format!("- {m}")).collect();
+    let marks = if marks.is_empty() { String::new() } else { format!("\n\nThey highlighted:\n{}", marks.join("\n")) };
     let notes = if notes.trim().is_empty() { "(They didn't write any.)" } else { notes };
-    format!("Template \"{}\":\n{}\n\nTheir notes:\n{notes}\n\nTranscript:\n{transcript}", template.name, sections.join("\n\n"))
+    format!("Template \"{}\":\n{}\n\nTheir notes:\n{notes}{marks}\n\nTranscript:\n{transcript}", template.name, sections.join("\n\n"))
 }
 /// Keeps only lines that quote the user's notes or a transcript line, under the template's own headings
 /// in its order, once each.
@@ -448,6 +457,10 @@ mod tests {
         assert_eq!(e.dropped, 4);
         assert_eq!(notes_of("# T\n\n## Summary\nS\n\n## Notes\n- one\n## Heading in notes\n- two\n"), "- one\n## Heading in notes\n- two");
         assert!(notes_request(&template, "  ", "[00:00] You: Hi.").contains("Their notes:\n(They didn't write any.)\n\nTranscript:\n[00:00] You: Hi."));
+        assert_eq!(highlighted("- Pilot starts 3 Nov\n- ==SSO is the blocker==, a == b\n- ==  == and ==legal== review"), ["SSO is the blocker", "legal"]);
+        assert!(notes_request(&template, "- ==SSO is the blocker==", "[00:00] You: Hi.").contains("Their notes:\n- ==SSO is the blocker==\n\nThey highlighted:\n- SSO is the blocker\n\nTranscript:"));
+        // A quote of a highlighted passage still matches the notes: the marks aren't words.
+        assert!(contains(&words("- ==SSO is the blocker=="), &words("SSO is the blocker")));
     }
     #[test]
     fn names_a_voice_only_with_a_line_that_shows_who_it_is() {

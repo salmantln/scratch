@@ -138,6 +138,23 @@
 .empty-state button { margin-top: var(--qn-space-3); }
 .empty-inline { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: var(--qn-space-2) 0 var(--qn-space-6); }
 .empty-inline button { margin-top: var(--qn-space-3); }
+/* The enhance demo in a recorded meeting's empty enhanced notes: an example, played once the first time (mark 600 ms,
+   the added line 1400 ms, the suggestion 2000 ms), otherwise its last frame. */
+.enhance-demo { width: min(100%, 440px); margin: var(--qn-space-3) 0 0; padding: var(--qn-space-4) var(--qn-space-5); background: var(--qn-card); border-radius: 16px; box-shadow: var(--qn-shadow-control); }
+.enhance-demo figcaption { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--qn-faint); }
+.enhance-demo ul { display: grid; gap: 6px; margin: var(--qn-space-2) 0 0; padding-left: 18px; list-style: disc; color: var(--qn-ink); font-size: 14px; }
+.enhance-demo li.added { list-style: none; color: var(--qn-muted); font-style: italic; }
+.enhance-demo li.added .timestamp { font-style: normal; margin-left: 4px; }
+.quietnote-shell .enhance-demo mark { background: linear-gradient(var(--qn-mark), var(--qn-mark)) no-repeat 0 0 / 100% 100%; }
+.enhance-demo-action { display: flex; align-items: center; justify-content: space-between; gap: var(--qn-space-3); margin-top: var(--qn-space-3); padding-top: var(--qn-space-3); border-top: 1px solid var(--qn-line-soft); color: var(--qn-muted); font-size: 13px; font-style: italic; }
+.enhance-demo-add { padding: 2px 10px; border-radius: 999px; background: var(--qn-chip); color: var(--qn-ink); font-style: normal; font-weight: 600; }
+.enhance-demo.play mark { animation: qn-demo-mark 500ms var(--qn-ease-out) 600ms backwards; }
+.enhance-demo.play .added { animation: qn-demo-in 400ms var(--qn-ease-out) 1400ms backwards; }
+.enhance-demo.play .enhance-demo-action { animation: qn-demo-rise 400ms var(--qn-ease-pop) 2000ms backwards; }
+@keyframes qn-demo-mark { from { background-size: 0% 100%; } }
+@keyframes qn-demo-in { from { opacity: 0; } }
+@keyframes qn-demo-rise { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .enhance-demo.play * { animation: none; } }
 .see-all { margin-top: var(--qn-space-4); }
 /* Folder art: decorative, fans its sheets while the empty state is hovered */
 .folder-art { position: relative; width: 132px; height: 100px; margin-bottom: var(--qn-space-5); perspective: 600px; }
@@ -209,7 +226,8 @@
 .action-source { display: block; min-width: 0; min-height: 0; padding: 0; font-size: 12px; font-weight: 400; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Meeting detail: title and tabs stay put, content scrolls beneath. */
-.meeting-detail { max-width: 880px; margin: 0 auto; padding: 0 var(--qn-space-8) var(--qn-space-9); }
+/* One 720px column for the header, both tabs and the notes and transcript in them, inside a gutter that narrows with the window. */
+.meeting-detail { --gutter: var(--qn-space-8); max-width: calc(720px + 2 * var(--gutter)); margin: 0 auto; padding: 0 var(--gutter) var(--qn-space-9); }
 .meeting-header { position: sticky; top: 0; z-index: 5; background: var(--qn-paper); padding-top: var(--qn-space-6); }
 .meeting-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--qn-space-4); }
 .meeting-title { min-width: 0; }
@@ -231,19 +249,19 @@
 .quietnote-shell .meeting-tabs button[aria-selected="true"] { color: var(--qn-ink); border-bottom-color: var(--qn-blue); }
 .quietnote-shell .meeting-tabs button:active:not(:disabled) { transform: none; }
 .meeting-content { padding-top: var(--qn-space-6); }
-.summary-text { display: flex; flex-direction: column; gap: var(--qn-space-3); max-width: 68ch; }
-.summary-text p { color: var(--qn-text); font-size: 15px; line-height: 1.7; text-wrap: pretty; }
-.summary-text h3 { margin-top: var(--qn-space-2); color: var(--qn-ink); font-size: 15px; font-weight: 600; }
-.summary-text ul { display: flex; flex-direction: column; gap: var(--qn-space-1); padding-left: 1.2em; color: var(--qn-text); font-size: 15px; line-height: 1.6; list-style: disc; }
+.summary-text { display: flex; flex-direction: column; gap: var(--qn-space-3); }
+.summary-text p { color: var(--qn-text); font-size: 15px; line-height: 24px; text-wrap: pretty; }
+.summary-text h3 { margin-top: var(--qn-space-2); color: var(--qn-ink); font-size: 16px; line-height: 22px; letter-spacing: -.012em; font-weight: 600; }
+.summary-text ul { display: flex; flex-direction: column; gap: var(--qn-space-1); padding-left: 1.2em; color: var(--qn-text); font-size: 15px; line-height: 24px; list-style: disc; }
 /* Added from the transcript, as opposed to the user's own notes. */
 .summary-text li.added { color: var(--qn-muted); }
 .summary-text li .citation { display: inline-flex; margin: 0; }
 /* Notes: the enhanced notes, led by their action items, or your own notes. */
 .notes-view { margin-bottom: var(--qn-space-5); }
-.note-actions { max-width: 68ch; margin-bottom: var(--qn-space-6); }
+.note-actions { margin-bottom: var(--qn-space-6); }
 .summary-text + .note-actions { margin: var(--qn-space-6) 0 0; }
 .note-actions-head { display: flex; align-items: center; justify-content: space-between; gap: var(--qn-space-3); margin-bottom: var(--qn-space-2); }
-.note-actions-head h3 { color: var(--qn-ink); font-size: 15px; font-weight: 600; }
+.note-actions-head h3 { color: var(--qn-ink); font-size: 16px; line-height: 22px; letter-spacing: -.012em; font-weight: 600; }
 .action-group + .action-group { margin-top: var(--qn-space-6); }
 .quietnote-shell .action-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--qn-space-3); font-weight: 400; }
 .quietnote-shell .action-group-head .text-button { min-height: 0; padding: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--qn-ink); font-size: 13px; font-weight: 600; }
@@ -280,13 +298,14 @@
 .notice summary { cursor: pointer; width: fit-content; }
 .record-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .notice-actions { display: flex; gap: var(--qn-space-2); margin-left: auto; flex-shrink: 0; }
-.quiet-editor { display: flex; flex-direction: column; min-height: 420px; margin: 0 calc(-1 * var(--qn-space-4)); }
-.quiet-editor .ProseMirror { font-family: inherit; font-size: 15px; }
+.quiet-editor { display: flex; flex-direction: column; min-height: 420px; }
+.quiet-editor .ProseMirror { font-family: inherit; font-size: 15px; line-height: 24px; }
 .quiet-editor .ProseMirror:focus-visible { outline: none; }
 .quiet-editor .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; color: var(--qn-faint); pointer-events: none; }
 .quiet-editor > div > div[data-tauri-drag-region] { display: none; }
-.quiet-editor .prose { max-width: none; }
-.quiet-editor .prose h3 { font-size: 17px; }
+.quiet-editor .prose { max-width: none; padding-left: 0; padding-right: 0; }
+/* One heading size in a meeting, as in the enhanced notes. */
+.quiet-editor .prose :is(h1, h2, h3, h4) { font-size: 16px; line-height: 22px; letter-spacing: -.012em; }
 .quiet-editor .prose p { margin: .8em 0; }
 .quiet-editor .prose ul { margin: .8em 0; }
 .quiet-editor .bg-bg { background: var(--qn-paper); }
@@ -296,12 +315,31 @@
 .quietnote-shell .segmented button[aria-pressed="true"] { background: var(--qn-paper); color: var(--qn-ink); box-shadow: 0 1px 2px #1820331f; }
 .inline-search { display: flex; align-items: center; gap: var(--qn-space-2); color: var(--qn-muted); margin-left: auto; border-bottom: 1px solid var(--qn-line); }
 .inline-search input { border: 0; outline: none; background: transparent; width: 180px; min-height: 32px; font-size: 13px; }
-.transcript-turn { padding: var(--qn-space-3) 0; max-width: 72ch; }
-.quietnote-shell .transcript-turn h3 { display: flex; align-items: baseline; gap: var(--qn-space-2); font-size: 13px; font-weight: 600; color: var(--qn-ink); }
-/* A voice's label, pressed to name it. */
-.speaker-name { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; border-radius: 3px; }
-.speaker-name:hover { text-decoration: underline; text-decoration-color: var(--qn-line); text-underline-offset: 3px; }
+/* The transcript as the live one shows it: your bubbles on the right, the others' on the left, each with its time. */
+.transcript-turns { display: flex; flex-direction: column; gap: var(--qn-space-2); }
+.transcript-turn { display: flex; flex-direction: column; align-items: flex-start; align-self: flex-start; max-width: 82%; }
+.transcript-turn.you { align-items: flex-end; align-self: flex-end; }
+.transcript-turn.speaks:not(:first-child) { margin-top: var(--qn-space-3); }
+.turn-meta { display: flex; align-items: baseline; gap: var(--qn-space-2); margin: 0 var(--qn-space-1) 2px; color: var(--qn-ink); font-size: 12px; font-weight: 600; }
+.quietnote-shell .transcript-turn p { padding: var(--qn-space-2) var(--qn-space-3); border-radius: 12px 12px 12px 4px; background: var(--qn-bubble); color: var(--qn-ink); font-size: 15px; line-height: 24px; }
+.quietnote-shell .transcript-turn.you p { border-radius: 12px 12px 4px 12px; background: var(--qn-blue-soft); }
+/* A voice's label, pressed to name it: underlined on hover, so it reads as something to press. */
+.speaker-name { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; border-radius: 3px; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; transition: text-decoration-color var(--qn-dur-quick) var(--qn-ease-out); }
+.speaker-name:hover { text-decoration-color: var(--qn-muted); }
 .speaker-name:focus-visible { outline: 2px solid var(--qn-blue); outline-offset: 2px; }
+/* Who spoke?: each voice's name field beside the first thing it said. */
+.who-spoke-body { flex: 1; min-width: 0; }
+.who-spoke ul { display: flex; flex-direction: column; gap: var(--qn-space-3); margin-top: var(--qn-space-3); }
+.who-spoke li { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); align-items: end; gap: var(--qn-space-4); }
+.quietnote-shell .who-spoke .field { gap: 2px; margin: 0; font-size: 12px; font-weight: 600; }
+.quietnote-shell .who-spoke .field input { min-height: 32px; }
+.who-line { display: flex; align-items: baseline; gap: var(--qn-space-2); min-height: 32px; padding-top: 7px; color: var(--qn-text); font-size: 13px; }
+.who-line .citation { display: inline-flex; flex-shrink: 0; margin: 0; }
+.who-spoke .button-row { margin-top: var(--qn-space-4); }
+/* Recording more into a finished meeting is there, but quiet: reading it comes first. */
+.quietnote-shell .record-more { gap: 6px; color: var(--qn-muted); }
+.quietnote-shell .record-more:hover:not(:disabled) { color: var(--qn-ink); }
+.quietnote-shell .record-more .record-dot { background: var(--qn-red); }
 .name-speaker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--qn-space-2); margin-bottom: var(--qn-space-4); padding: var(--qn-space-3); border: 1px solid var(--qn-line); border-radius: 10px; }
 .name-speaker label { display: inline-flex; align-items: center; gap: var(--qn-space-2); font-weight: 600; }
 .name-speaker .subtle { flex-basis: 100%; font-size: 12px; }
@@ -313,10 +351,11 @@
 .quietnote-shell .title-form input { width: 100%; padding: 0 var(--qn-space-1); margin-left: calc(-1 * var(--qn-space-1)); border: 1px solid var(--qn-line); border-radius: 6px; font: inherit; letter-spacing: inherit; color: inherit; background: var(--qn-card); }
 .title-form .field-error { font-size: 13px; font-weight: 400; letter-spacing: 0; }
 .timestamp { color: var(--qn-muted); font-weight: 400; font-size: 12px; font-variant-numeric: tabular-nums; }
-.quietnote-shell .transcript-turn p { color: var(--qn-text); font-size: 14px; line-height: 1.65; margin-top: 2px; }
-.transcript-turn.cited { animation: cited 1.6s var(--qn-ease-out); border-radius: 6px; }
+/* A cited line rings once, since its bubble already has a background. */
+.transcript-turn.cited p { animation: cited-ring 1.6s var(--qn-ease-out); }
 @keyframes cited { from { background: var(--qn-blue-soft); } to { background: transparent; } }
-@media (prefers-reduced-motion: reduce) { .transcript-turn.cited { animation: none; background: var(--qn-blue-soft); } }
+@keyframes cited-ring { from { box-shadow: 0 0 0 3px var(--qn-blue); } to { box-shadow: 0 0 0 3px transparent; } }
+@media (prefers-reduced-motion: reduce) { .transcript-turn.cited p { animation: none; box-shadow: 0 0 0 2px var(--qn-blue); } }
 .suggest-row { display: flex; align-items: center; gap: var(--qn-space-2); margin-bottom: var(--qn-space-4); }
 .suggest-row .text-button { padding-left: 0; }
 .suggest-row .text-button + .text-button { padding-left: var(--qn-space-2); }
@@ -460,7 +499,7 @@
 .meeting-content .live-turns { max-height: none; overflow: visible; gap: var(--qn-space-2); }
 .live-turn { max-width: 82%; align-self: flex-start; padding: 6px 10px; border-radius: 12px 12px 12px 4px; background: var(--qn-bubble); color: var(--qn-ink); line-height: 1.45; }
 .live-turn.you { align-self: flex-end; border-radius: 12px 12px 4px 12px; background: var(--qn-blue-soft); }
-.meeting-content .live-turn { padding: var(--qn-space-2) var(--qn-space-3); font-size: 14px; }
+.meeting-content .live-turn { padding: var(--qn-space-2) var(--qn-space-3); font-size: 15px; line-height: 24px; }
 .live-speaker { display: block; margin-bottom: 1px; font-size: 11px; font-weight: 600; color: var(--qn-muted); }
 .live-turn.listening { display: inline-flex; align-items: center; gap: 3px; padding: 10px 12px; }
 .live-turn.listening i { width: 5px; height: 5px; border-radius: 50%; background: var(--qn-muted); animation: qn-dots 1.2s var(--qn-ease-in-out) infinite; }
@@ -623,7 +662,7 @@
 
 @media (max-width: 1000px) {
   .page, .settings-page { padding-left: var(--qn-space-6); padding-right: var(--qn-space-6); }
-  .meeting-detail { padding: 0 var(--qn-space-6) var(--qn-space-8); }
+  .meeting-detail { --gutter: var(--qn-space-6); padding-bottom: var(--qn-space-8); }
   .meeting-row { grid-template-columns: minmax(0, 1fr) minmax(60px, 110px) 64px 118px; }
   .meeting-row.no-project { grid-template-columns: minmax(0, 1fr) 64px 118px; }
   .row-duration { display: none; }
@@ -637,7 +676,7 @@
   .window-bar, .banner { padding-left: var(--qn-space-4); padding-right: var(--qn-space-4); }
   .banner { flex-wrap: wrap; }
   .page, .settings-page { padding: var(--qn-space-5) var(--qn-space-4) var(--qn-space-7); }
-  .meeting-detail { padding: 0 var(--qn-space-4) var(--qn-space-7); }
+  .meeting-detail { --gutter: var(--qn-space-4); padding-bottom: var(--qn-space-7); }
   .meeting-row, .meeting-row.no-project { grid-template-columns: minmax(0, 1fr) 60px auto; gap: var(--qn-space-3); }
   .row-project { display: none; }
   .meeting-title-row { flex-direction: column; }
@@ -645,6 +684,8 @@
   .settings-nav { position: static; width: 100%; flex-direction: row; overflow-x: auto; }
   .settings-nav .sidebar-item { width: auto; flex-shrink: 0; padding: 0 var(--qn-space-3); }
   .notice { flex-wrap: wrap; }
+  .who-spoke li { grid-template-columns: minmax(0, 1fr); gap: var(--qn-space-1); }
+  .who-line { min-height: 0; padding-top: 0; }
   .quietnote-shell .mic-picker select { max-width: 14ch; }
   .capture-card { flex-wrap: wrap; padding: var(--qn-space-4); }
   .capture-card .notice-actions { width: 100%; padding-left: 20px; }

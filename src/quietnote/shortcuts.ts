@@ -19,7 +19,7 @@ export const bound = (values: PrivacyPreferences, action: Action) => {
 };
 /** Always the same: search's and the sidebar's other keys, projects, Markdown source mode, and what the editor and the window use. */
 export const fixed = ['CmdOrCtrl+P', 'CmdOrCtrl+Shift+F', 'CmdOrCtrl+Shift+Enter', 'CmdOrCtrl+Shift+M', ...'123456789'.split('').map(n => `CmdOrCtrl+${n}`)];
-const taken = [...fixed, ...['A', 'B', 'C', 'F', 'H', 'I', 'M', 'Q', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z', 'Shift+Z'].map(k => `CmdOrCtrl+${k}`)];
+const taken = [...fixed, ...['A', 'B', 'C', 'F', 'H', 'I', 'M', 'Q', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z', 'Shift+H', 'Shift+Z'].map(k => `CmdOrCtrl+${k}`)];
 
 const mac = device === 'Mac';
 const keys = /^(F\d{1,2}|Enter|Space|Tab|Backspace|Delete|Arrow(Up|Down|Left|Right)|Home|End|PageUp|PageDown|Comma|Period|Slash|Backslash|Semicolon|Quote|BracketLeft|BracketRight|Minus|Equal|Backquote)$/;
