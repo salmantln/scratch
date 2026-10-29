@@ -105,7 +105,7 @@ export function ConnectionsDialog({ detectsCalls = false, calendarOn = false, co
     if (account) next[service] = account; else delete next[service];
     onChange(next);
   };
-  return <Modal title="Connections" onEscape={onClose} className="wide connections">
+  return <Modal title="Connections" onEscape={onClose} onOutside={onClose} className="wide connections">
     <p className="lede">Connect only the services you use. QuietNote never joins your calls, and nothing leaves this Mac until you choose to send it.</p>
     <label className="search-field"><Icon name="search" size={16} /><input type="search" data-autofocus aria-label="Search connections" placeholder="Search connections" value={query} onChange={e => setQuery(e.target.value)} /></label>
     <div className="connector-groups">

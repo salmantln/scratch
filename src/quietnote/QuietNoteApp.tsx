@@ -9,7 +9,7 @@ import { Folder, Icon } from './Icon';
 import { Hush, HushYield, showHush } from './Hush';
 import { DeleteMeetingDialog, NewMeetingDialog, NewProjectDialog } from './Dialogs';
 import { ConnectionsDialog, SendDialog, type IssueLink } from './Connectors';
-import { Settings, type SettingsSection } from './Settings';
+import { Settings, SettingsNav, diskAtRisk, settingsSections, useDisk, type SettingsSection } from './Settings';
 import { MeetingDetail } from './MeetingDetail';
 import { People } from './People';
 import { ActionItems, Home, MeetingList } from './Library';
@@ -50,7 +50,7 @@ function RecordingBar({ recording, onOpen, onStop, onResume, onKeep }: { recordi
     <button className="text-button recording-title" title="Open meeting" onClick={onOpen}>{recording.title}</button>
     <span className="recording-time" aria-hidden="true">{elapsed}</span>
     {recording.problem && <span className="recording-problem" role="img" aria-label={recording.problem} title={recording.problem}><Icon name="info" size={14} /></span>}
-    {recording.ending && <><span className="recording-ending" role="status">{recording.ending.reason} {stopsIn(recording.ending.stopsAt, now)}</span><button className="text-button" onClick={onKeep}>Keep recording</button></>}
+    {recording.ending && <><span className="recording-ending" role="status">{recording.ending.reason} {stopsIn(recording.ending.stopsAt, now)}.</span><button className="text-button" onClick={onKeep}>Keep recording</button></>}
     {paused && <button className="text-button" onClick={onResume}>Resume</button>}
     <button className="text-button" aria-label="Stop recording" title="Stop recording" onClick={onStop}>Stop</button>
   </div>;
@@ -77,7 +77,7 @@ function Shell() {
   const [person, setPerson] = useState(initial.person ?? '');
   // Summary, Decisions and Action items were tabs in earlier builds; they're in the enhanced notes now.
   const [tab, setTab] = useState<MeetingTab>(initial.tab === 'Notes' || initial.tab === 'Transcript' ? initial.tab : 'Enhanced');
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>(initial.section ?? 'Privacy');
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>(initial.section ?? 'General');
   const [query, setQuery] = useState('');
   const [indexedIds, setIndexedIds] = useState<string[]>([]);
   const [dialog, setDialog] = useState<'' | 'project' | 'meeting' | 'connections' | 'send' | 'delete'>('');
@@ -263,6 +263,11 @@ function Shell() {
     return typeof model === 'string' && model ? { local: true, label: model } : null;
   }, [live.available, preferences.summaryProvider, preferences.ollamaModel, summaryKey]);
   const go = useCallback((next: View, nextProject = '') => { setView(next); setProject(nextProject); }, []);
+  // Where Back to meetings returns to: the last place outside Settings.
+  const beforeSettings = useRef<{ view: View; project: string }>({ view: 'home', project: '' });
+  useEffect(() => { if (view !== 'settings') beforeSettings.current = { view, project }; }, [view, project]);
+  // FileVault, read while Settings is open: Privacy warns, and its nav item has a dot, while the disk isn't encrypted.
+  const disk = useDisk(view === 'settings');
   const [find, setFind] = useState('');
   const openMeeting = useCallback((id: string, nextTab?: MeetingTab, nextFind = '') => {
     const meeting = records.current.find(m => m.metadata.id === id);
@@ -522,7 +527,10 @@ function Shell() {
     toast(`Removed “${found.item.text}”`, { id: `removed:${id}:${found.item.key}`, duration: 5000, action: { label: 'Undo', onClick: () => { const latest = records.current.find(m => m.metadata.id === id); if (latest) void persist(id, restoreAction(latest.markdown, line, index)); } } });
     return persist(id, removeAction(found.latest.markdown, index));
   };
-  // Settings → Privacy → Your name: action items they own come first.
+  // Settings shows only the pages this copy has something on; a remembered page it doesn't have opens General.
+  const can = { recording: live.available, detectsCalls: live.detectsCalls === true };
+  const shownSection = settingsSections(can).some(([name]) => name === settingsSection) ? settingsSection : 'General';
+  // Settings → General → Your name: action items they own come first.
   const me = typeof preferences.userName === 'string' ? preferences.userName : '';
   const count = (n: number) => `${n} ${n === 1 ? 'meeting' : 'meetings'}`;
   const openItems = meetings.reduce((n, m) => n + actionItems(m.markdown).filter(a => !a.done).length, 0);
@@ -537,6 +545,7 @@ function Shell() {
       onKeyDownCapture={e => { if (e.key === 'Enter' && onDivider(e)) { e.preventDefault(); e.stopPropagation(); setRail(r => !r); } }}
       onPointerDownCapture={e => { if (rail && onDivider(e)) e.stopPropagation(); }}>
       <div className="sidebar-drag" data-tauri-drag-region />
+      {view === 'settings' ? <SettingsNav can={can} section={shownSection} attention={diskAtRisk(disk)} onSection={setSettingsSection} onBack={() => go(beforeSettings.current.view, beforeSettings.current.project)} /> : <>
       <div className="sidebar-top">
         <button className="secondary new-meeting" title={`New meeting (${keyLabel('newMeeting')})`} onClick={() => newMeeting()}><Icon name="plus" size={16} /><span className="label">New meeting</span><kbd aria-hidden="true">{keyLabel('newMeeting')}</kbd></button>
       </div>
@@ -553,8 +562,8 @@ function Shell() {
         {navItem(false, 'feedback', 'Give feedback', () => void storage.giveFeedback().catch(e => setProblem(`Couldn’t open your mail app. ${String(e)}`)))}
         {navItem(dialog === 'connections', 'plug', 'Connections', () => setDialog('connections'))}
         {navItem(view === 'search', 'search', 'Search', () => setView('search'), <kbd aria-hidden="true">{keyLabel('search')}</kbd>)}
-        {navItem(view === 'settings', 'settings', 'Settings', () => setView('settings'), <kbd aria-hidden="true">{keyLabel('settings')}</kbd>)}
-      </div>
+        {navItem(false, 'settings', 'Settings', () => setView('settings'), <kbd aria-hidden="true">{keyLabel('settings')}</kbd>)}
+      </div></>}
       <SidebarResizeHandle />
     </aside>
     <div className="qn-workspace">
@@ -584,7 +593,7 @@ function Shell() {
       {external && !unsaved && <div className="banner" role="status"><div><strong>Files changed outside QuietNote.</strong><span>Refresh to load the latest version from disk.</span></div><div className="banner-actions"><button className="secondary" onClick={() => void reload()}>Refresh</button></div></div>}
       {problem && <div className="banner warning" role="alert"><div><strong>{problem}</strong></div><div className="banner-actions"><button className="text-button" onClick={() => setProblem('')}>Dismiss</button></div></div>}
       <main className="qn-main" ref={main}><HushYield.Provider value={bannerHush}>
-        {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} connections={connections} summaryKey={summaryKey} onSummaryKey={setSummaryKey} section={settingsSection} onSection={setSettingsSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
+        {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} disk={disk} summaryKey={summaryKey} onSummaryKey={setSummaryKey} section={shownSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
         : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={index => toggleItem(previous!.metadata.id, index)} onToggle={index => toggleItem(current.metadata.id, index)} onEdit={(index, text) => editItem(current.metadata.id, index, text)} onRemove={index => removeItem(current.metadata.id, index)} me={me} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} deleteAudio={preferences.deleteAudio === true} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onExportAudio={() => void exportAudio(current)} onMarkEnded={() => void markEnded(current)} onDelete={() => setDialog('delete')} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
           const latest = records.current.find(m => m.metadata.id === current.metadata.id);
           // The editor can save once more as it closes, after its meeting was deleted.
@@ -601,9 +610,9 @@ function Shell() {
           </button></li>)}</ul></>
           : <div className="empty-inline" role="status"><Hush mood="resting" size={72} /><h2>No meetings found for ‘{query.trim()}’.</h2><p>Try another term.</p></div>}
         </div>
-        : view === 'people' ? <People meetings={meetings} selected={person} calendar={calendarOn} move={move} onSelect={setPerson} onOpen={openMeeting} onToggle={toggleItem} onSettings={() => go('settings')} />
+        : view === 'people' ? <People meetings={meetings} selected={person} calendar={calendarOn} move={move} onSelect={setPerson} onOpen={openMeeting} onToggle={toggleItem} onSettings={() => { setSettingsSection('Privacy'); go('settings'); }} />
         : view === 'actions' ? <ActionItems meetings={sorted} me={me} onOpen={openMeeting} onToggle={toggleItem} />
-        : view === 'home' ? <Home meetings={sorted} me={me} live={live} events={events} move={move} onPrepare={event => void (allProjects.length ? createMeeting(event.title, projectOf(event), false, event) : Promise.resolve(newMeeting(event))).catch(e => setProblem(`Couldn’t create the meeting. ${String(e)}`))} onOpen={openMeeting} onNewMeeting={() => newMeeting()} onRecord={() => void quickRecord()} onName={() => { setSettingsSection('Privacy'); setView('settings'); }} onSearch={text => { setQuery(text); setView('search'); }} onToggle={toggleItem} onAll={() => go('all')} onAllActions={() => go('actions')} />
+        : view === 'home' ? <Home meetings={sorted} me={me} live={live} events={events} move={move} onPrepare={event => void (allProjects.length ? createMeeting(event.title, projectOf(event), false, event) : Promise.resolve(newMeeting(event))).catch(e => setProblem(`Couldn’t create the meeting. ${String(e)}`))} onOpen={openMeeting} onNewMeeting={() => newMeeting()} onRecord={() => void quickRecord()} onName={() => { setSettingsSection('General'); setView('settings'); }} onSearch={text => { setQuery(text); setView('search'); }} onToggle={toggleItem} onAll={() => go('all')} onAllActions={() => go('actions')} />
         : <div className="page library-page">
           <header className="page-header"><div><h1>{view === 'project' ? project : 'All meetings'}</h1>{libraryMeetings.length > 0 && <p className="subtle">{count(libraryMeetings.length)}</p>}</div></header>
           {libraryMeetings.length ? <MeetingList meetings={libraryMeetings} showProject={view !== 'project'} onOpen={openMeeting} move={move} />

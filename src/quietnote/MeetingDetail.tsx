@@ -268,8 +268,8 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
             : <ul key={i}>{b.items.map((item, j) => <li key={j} className={item.at ? 'added' : undefined}>{item.text}{item.at && <> <button className="citation" title="Show this line in the transcript" onClick={() => cite(item.at!)}><span className="timestamp">{item.at}</span></button></>}</li>)}</ul>)}</div>
           : <div className="empty-inline">{calm && <Hush mood="resting" size={72} />}<h2>No enhanced notes yet.</h2><p>{example ? 'Example meetings can’t be enhanced. Record a meeting to enhance its notes.'
             : !live.available ? 'Enhancing needs a transcript, and recording isn’t available on this computer.'
-            : recorded ? `Highlight what matters in your notes (${label('CmdOrCtrl+Shift+H')}). ${summarizer ? 'Enhancing them' : 'With summary suggestions on in Settings → Privacy, enhancing them'} fills them in from the transcript, each added line in grey with the moment it came from.`
-            : summarizer ? 'Once it’s recorded, you can enhance your notes from its transcript.' : 'Turn on summary suggestions in Settings → Privacy to enhance your notes from the transcript.'}</p>{recorded && <EnhanceDemo />}<button className="secondary" onClick={() => onTab('Notes')}>Open my notes</button></div>}
+            : recorded ? `Highlight what matters in your notes (${label('CmdOrCtrl+Shift+H')}). ${summarizer ? 'Enhancing them' : 'With suggestions on in Settings → Suggestions, enhancing them'} fills them in from the transcript, each added line in grey with the moment it came from.`
+            : summarizer ? 'Once it’s recorded, you can enhance your notes from its transcript.' : 'Turn on suggestions in Settings → Suggestions to enhance your notes from the transcript.'}</p>{recorded && <EnhanceDemo />}<button className="secondary" onClick={() => onTab('Notes')}>Open my notes</button></div>}
           {!actions.length && todo}
         </>;
       })()}

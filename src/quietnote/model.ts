@@ -265,10 +265,11 @@ export function shortDate(date: string, now = new Date()): string {
 }
 export function timeLabel(date: string): string { return new Date(date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
 /** Elapsed recording time, the same in the window and the tray: `mm:ss`, then `h:mm:ss`. */
-/** How a recording about to stop by itself counts down: the time left, then waiting for quiet (Rust stops it only once nobody's talking). */
+/** How a recording about to stop by itself counts down, the same words in the recorder, the header bar and the call panel: the time
+ * left, then waiting for quiet (Rust stops it only once nobody's talking). */
 export function stopsIn(stopsAt: string, now: number): string {
   const left = Math.ceil((Date.parse(stopsAt) - now) / 1000);
-  return left > 0 ? `Recording stops in ${clock(left)}.` : 'Recording stops once it’s quiet.';
+  return left > 0 ? `Stops in ${clock(left)}` : 'Stops once it’s quiet';
 }
 export function clock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds)), pad = (n: number) => String(n).padStart(2, '0');

@@ -90,7 +90,7 @@ Use a signed build (`npm run tauri build`) for anything involving permissions. D
 | Close the lid (no external display) mid-recording: it's paused before the Mac sleeps, with "Paused because the Mac went to sleep" in the recorder, and it waits for Resume after waking; with an external display it keeps recording | ☐ |
 | Music playing in Music, Spotify or a browser pauses when recording starts or resumes (Settings → "Pause music when recording starts"), and nothing starts playing afterwards | ✓ live 2026-10-23 (the pause command is accepted on macOS 26.6) ☐ (with music playing) |
 | Copy message (beside "Let everyone know you're recording") copies the consent message; pasted into Zoom, Meet and Teams chat it reads correctly | ✓ auto (copy) ☐ (pasted) |
-| Leave a Zoom or Meet call while recording: within about 6 s the call panel (also with QuietNote's window hidden), the recorder and the tray show "The Zoom call ended. Recording stops in 0:59" with Keep recording; it stops a minute later once nobody's talking, and Keep recording cancels it | ✓ auto (UI, countdown logic) ☐ (real call) |
+| Leave a Zoom or Meet call while recording: within about 6 s the call panel (also with QuietNote's window hidden), the recorder and the tray show "The Zoom call ended" and "Stops in 00:59" with Keep recording (the recorder's one cobalt button); it stops a minute later once nobody's talking, and Keep recording cancels it | ✓ auto (UI, countdown logic) ☐ (real call) |
 | Mute yourself in Zoom, Meet and Teams while recording: that alone never counts as the call ending | ☐ |
 | Leave a recording running in silence for 15 minutes: a 2-minute countdown starts, and speaking cancels it | ✓ auto (logic) ☐ (real) |
 

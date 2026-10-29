@@ -1,9 +1,35 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { timeLabel, validProjectName, type CalendarEvent } from './model';
 import { bin, desktop } from './storage';
-export function Modal({ title, onEscape, children, className = '' }: { title: ReactNode; onEscape?: () => void; children: ReactNode; className?: string }) {
+export function Modal({ title, onEscape, onOutside, children, className = '' }: { title: ReactNode; onEscape?: () => void; onOutside?: () => void; children: ReactNode; className?: string }) {
   const panel = useRef<HTMLDivElement>(null);
+  // A click outside closes only when it also began outside, so selecting text that ends past the panel doesn't.
+  const outside = useRef(false);
+  const backdrop = useRef<HTMLDivElement>(null);
   const heading = useId();
+  // React removes a dialog at once, however it's closed, so a copy of it plays the way out in its place (`.leaving`).
+  // Checked after the commit: StrictMode's practice unmount keeps the node, a real one has removed it.
+  useLayoutEffect(() => {
+    const node = backdrop.current!, parent = node.parentNode!;
+    return () => {
+      // Where it is now (still opening, perhaps), so closing carries on from there instead of jumping.
+      const shown = getComputedStyle(node).opacity, { opacity, transform } = getComputedStyle(node.firstElementChild!);
+      queueMicrotask(() => {
+        if (node.isConnected) return;
+        const ghost = node.cloneNode(true) as HTMLElement, copy = ghost.firstElementChild as HTMLElement;
+        ghost.classList.add('leaving'); ghost.inert = true; ghost.setAttribute('aria-hidden', 'true');
+        ghost.style.opacity = shown; copy.style.opacity = opacity; copy.style.transform = transform;
+        // Copying a node doesn't copy what was typed or picked, so the fields keep showing it as they fade.
+        const fields = node.querySelectorAll<HTMLInputElement>('input, select, textarea');
+        ghost.querySelectorAll<HTMLInputElement>('input, select, textarea').forEach((field, i) => { field.value = fields[i].value; field.checked = fields[i].checked; });
+        // Its labels become spans (styled by class, so they look the same), so its fields aren't found by their labels.
+        for (const label of ghost.querySelectorAll('label')) { const span = document.createElement('span'); span.className = label.className; span.append(...label.childNodes); label.replaceWith(span); }
+        parent.appendChild(ghost);
+        // Only the backdrop's and the panel's own (Reduce Motion keeps just the fade); something inside may animate forever.
+        void Promise.allSettled([ghost, copy].flatMap(e => e.getAnimations()).map(a => a.finished)).then(() => ghost.remove());
+      });
+    };
+  }, []);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     panel.current?.querySelector<HTMLElement>('[data-autofocus], input, button:not(:disabled)')?.focus();
@@ -13,14 +39,14 @@ export function Modal({ title, onEscape, children, className = '' }: { title: Re
   useEffect(() => {
     if (!onEscape) return;
     const escape = (e: KeyboardEvent) => {
-      const modals = document.querySelectorAll('.modal');
+      const modals = document.querySelectorAll('.modal-backdrop:not(.leaving) > .modal');
       if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || modals[modals.length - 1] !== panel.current) return;
       e.preventDefault(); onEscape();
     };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
   }, [onEscape]);
-  return <div className="modal-backdrop"><div className={`modal ${className}`} role="dialog" aria-modal="true" aria-labelledby={heading} ref={panel} onKeyDown={e => {
+  return <div className="modal-backdrop" ref={backdrop} onMouseDown={e => { outside.current = e.target === e.currentTarget; }} onClick={e => { if (onOutside && outside.current && e.target === e.currentTarget) onOutside(); }}><div className={`modal ${className}`} role="dialog" aria-modal="true" aria-labelledby={heading} ref={panel} onKeyDown={e => {
     if (e.key === 'Tab') {
       const focusable = [...e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),a[href],summary')];
       const first = focusable[0], last = focusable[focusable.length - 1];

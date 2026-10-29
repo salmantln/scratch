@@ -25,7 +25,7 @@ export type Category = typeof categories[number];
 export interface Connector { id: string; name: string; category: Category; blurb: string; logo?: string; app?: true; color?: string; monogram?: string; service?: Service; setup?: { url: string; hint: string }; detects?: true; calendar?: true }
 const call = 'Notice a call on this Mac and offer to start capture. Never joins the call.';
 const events = 'Fill in a meeting’s title, time and attendees from an event. Never joins or starts capture.';
-export const calendarBlurb = (on: boolean) => `Fills in a meeting’s title, time and who’s invited from the calendars on this Mac, including Google and Outlook accounts added to it.${on ? '' : ' Turn on Use your calendar in Settings → Privacy.'}`;
+export const calendarBlurb = (on: boolean) => `Fills in a meeting’s title, time and who’s invited from the calendars on this Mac, including Google and Outlook accounts added to it.${on ? '' : ' Turn on Your calendar in Settings → Privacy.'}`;
 export const connectors: Connector[] = [
   { id: 'linear', name: 'Linear', category: 'Tasks', blurb: 'Send action items to a team as Linear issues.', logo: linear, service: 'linear', setup: { url: 'https://linear.app/settings/account/security', hint: 'Create a personal API key in Linear under Settings → Security & access.' } },
   { id: 'github', name: 'GitHub', category: 'Tasks', blurb: 'Send action items to a repository as issues.', logo: github, service: 'github', setup: { url: 'https://github.com/settings/personal-access-tokens/new', hint: 'Create a fine-grained token with Issues set to “Read and write” for the repositories you want.' } },

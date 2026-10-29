@@ -1,4 +1,4 @@
-.quietnote-shell { --qn-space-1: 4px; --qn-space-2: 8px; --qn-space-3: 12px; --qn-space-4: 16px; --qn-space-5: 20px; --qn-space-6: 24px; --qn-space-7: 32px; --qn-space-8: 40px; --qn-space-9: 48px; --qn-paper: #fcf9f3; --qn-side: #f4f1ea; --qn-hover: #ece9e2; --qn-ink: #182033; --qn-muted: #5f6573; --qn-control: #e3dfd6; --qn-blue: #315cff; --qn-blue-hover: #2247d6; --qn-blue-soft: #e7ecfd; --qn-mint: #4f7a61; --qn-red: #a2432c; --qn-red-soft: #f7e6de; --qn-line: #e7e5de; --qn-line-soft: #efede7; --qn-edge: #dcd9d1; --qn-card: #fffdfa; --qn-well: #f3f1eb; --qn-chip: #edebe5; --qn-bubble: #f0eee7; --qn-row-hover: #f4f1ea; --qn-active: #e4e7ef; --qn-active-ink: #1f3470; --qn-blue-text: #315cff; --qn-blue-ink: #3150b8; --qn-red-line: #efd3c8; --qn-red-edge: #e3bfb2; --qn-red-ink: #7c3522; --qn-mark: #fbeaa0; --qn-ease-out: cubic-bezier(0.23, 1, 0.32, 1); --qn-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1); --qn-ease-pop: cubic-bezier(0.2, 0.8, 0.2, 1); --qn-dur-instant: 80ms; --qn-dur-quick: 160ms; --qn-dur-medium: 240ms; --qn-float-edge: #1820330f; --qn-glass: #fffdfad9; --qn-shadow-control: 0 1px 3px -1px #1820331a; --qn-shadow-glass: inset 0 1px 0 #ffffffe6, 0 1px 2px #1820330a, 0 12px 32px #18203324; --qn-shadow-float: 0 1px 2px #1820330f, 0 8px 24px #18203326; --qn-shadow-modal: inset 0 1px 0 #ffffff, 0 4px 14px #18203314, 0 24px 60px #1820332e; --color-bg: #fcf9f3; --color-bg-secondary: #f4f1ea; --color-bg-muted: #eceae3; --color-bg-emphasis: #e5e5de; --color-text: #182033; --color-text-muted: #6b707b; --color-text-inverse: #fcf9f3; --color-border: #e7e5de; --color-accent: #315cff; color: var(--qn-ink); background: var(--qn-paper); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5; height: 100dvh; display: flex; overflow: hidden; color-scheme: light; -webkit-font-smoothing: antialiased; }
+.quietnote-shell { --qn-space-1: 4px; --qn-space-2: 8px; --qn-space-3: 12px; --qn-space-4: 16px; --qn-space-5: 20px; --qn-space-6: 24px; --qn-space-7: 32px; --qn-space-8: 40px; --qn-space-9: 48px; --qn-paper: #fcf9f3; --qn-side: #f4f1ea; --qn-hover: #ece9e2; --qn-ink: #182033; --qn-muted: #5f6573; --qn-control: #e3dfd6; --qn-blue: #315cff; --qn-blue-hover: #2247d6; --qn-blue-soft: #e7ecfd; --qn-mint: #4f7a61; --qn-red: #a2432c; --qn-red-soft: #f7e6de; --qn-line: #e7e5de; --qn-line-soft: #efede7; --qn-edge: #dcd9d1; --qn-card: #fffdfa; --qn-well: #f3f1eb; --qn-chip: #edebe5; --qn-bubble: #f0eee7; --qn-row-hover: #f4f1ea; --qn-active: #e4e7ef; --qn-active-ink: #1f3470; --qn-blue-text: #315cff; --qn-blue-ink: #3150b8; --qn-red-line: #efd3c8; --qn-red-edge: #e3bfb2; --qn-red-ink: #7c3522; --qn-mark: #fbeaa0; --qn-ease-out: cubic-bezier(0.23, 1, 0.32, 1); --qn-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1); --qn-ease-pop: cubic-bezier(0.2, 0.8, 0.2, 1); --qn-ease-spring: linear(0, .041, .134, .248, .364, .473, .569, .652, .722, .780, .827, .864, .894, .918, .937, .951, .963, .971, .978, .983, .987, .990, .993, .995, .996, .997, .998, .998, .999, 1); --qn-dur-instant: 80ms; --qn-dur-quick: 160ms; --qn-dur-medium: 240ms; --qn-float-edge: #1820330f; --qn-glass: #fffdfad9; --qn-shadow-control: 0 1px 3px -1px #1820331a; --qn-shadow-glass: inset 0 1px 0 #ffffffe6, 0 1px 2px #1820330a, 0 12px 32px #18203324; --qn-shadow-float: 0 1px 2px #1820330f, 0 8px 24px #18203326; --qn-shadow-modal: inset 0 1px 0 #ffffff, 0 4px 14px #18203314, 0 24px 60px #1820332e; --color-bg: #fcf9f3; --color-bg-secondary: #f4f1ea; --color-bg-muted: #eceae3; --color-bg-emphasis: #e5e5de; --color-text: #182033; --color-text-muted: #6b707b; --color-text-inverse: #fcf9f3; --color-border: #e7e5de; --color-accent: #315cff; color: var(--qn-ink); background: var(--qn-paper); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5; height: 100dvh; display: flex; overflow: hidden; color-scheme: light; -webkit-font-smoothing: antialiased; }
 .quietnote-shell *, .quietnote-shell *::before, .quietnote-shell *::after { box-sizing: border-box; }
 :where(.quietnote-shell) :where(button, input, select) { font: inherit; color: inherit; }
 :where(.quietnote-shell) button { cursor: pointer; background: none; border: 0; padding: 0; }
@@ -71,7 +71,7 @@
 /* Icons only: chosen by double-clicking the divider, and always in narrow windows (`narrow`), which have no divider. */
 .rail .qn-sidebar { width: 56px; --qn-sidebar-pad: var(--qn-space-2); }
 .rail.sidebar-hidden .qn-sidebar { margin-left: -56px; }
-.rail .qn-sidebar :is(.label, kbd, .sidebar-count, .sidebar-label), .narrow .qn-sidebar > [role="separator"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.rail .qn-sidebar :is(.label, kbd, .sidebar-count, .sidebar-label, .settings-title, .attention-dot), .narrow .qn-sidebar > [role="separator"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .quietnote-shell.rail .qn-sidebar > [role="separator"] { cursor: default; }
 .rail .qn-sidebar .sidebar-label-row { justify-content: center; padding: var(--qn-space-3) 0 0; margin-top: var(--qn-space-3); }
 .rail .qn-sidebar .sidebar-label-row .icon-button { margin: 0; }
@@ -264,6 +264,12 @@
 .quietnote-shell .meeting-tabs button:hover { color: var(--qn-ink); }
 .quietnote-shell .meeting-tabs button[aria-selected="true"] { color: var(--qn-ink); border-bottom-color: var(--qn-blue); }
 .quietnote-shell .meeting-tabs button:active:not(:disabled) { transform: none; }
+/* Where anchor positioning exists (macOS 26), one underline follows the selected tab; elsewhere it's the tab's own border. */
+@supports (anchor-name: --qn-tab) {
+  .meeting-tabs { position: relative; }
+  .quietnote-shell .meeting-tabs button[aria-selected="true"] { anchor-name: --qn-tab; border-bottom-color: transparent; }
+  .meeting-tabs::after { content: ''; position: absolute; position-anchor: --qn-tab; left: anchor(left); right: anchor(right); bottom: anchor(bottom); height: 2px; background: var(--qn-blue); transition: left var(--qn-dur-medium) var(--qn-ease-out), right var(--qn-dur-medium) var(--qn-ease-out); }
+}
 .meeting-content { padding-top: var(--qn-space-6); }
 .summary-text { display: flex; flex-direction: column; gap: var(--qn-space-3); }
 .summary-text p { color: var(--qn-ink); font-size: 15px; line-height: 24px; text-wrap: pretty; }
@@ -323,9 +329,16 @@
 .quiet-editor .prose ul { margin: .8em 0; }
 .quiet-editor .bg-bg { background: var(--qn-paper); }
 .transcript-tools { display: flex; align-items: center; justify-content: space-between; gap: var(--qn-space-4); margin-bottom: var(--qn-space-3); }
-.segmented { display: inline-flex; padding: 2px; border-radius: 7px; background: var(--qn-chip); }
-.quietnote-shell .segmented button { min-height: 26px; padding: 0 var(--qn-space-3); border-radius: 5px; font-size: 12px; font-weight: 500; color: var(--qn-muted); transition: background-color 150ms var(--qn-ease-out), color 150ms var(--qn-ease-out); }
-.quietnote-shell .segmented button[aria-pressed="true"] { background: var(--qn-paper); color: var(--qn-ink); box-shadow: 0 1px 2px #1820331f; }
+/* Equal segments, so one pill can slide under the pressed one: --i is its index, --n how many there are. */
+.segmented { --n: 2; --i: 0; position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 2px; border-radius: 7px; background: var(--qn-chip); }
+.segmented:has(> button:nth-child(3)) { --n: 3; }
+.segmented:has(> button:nth-child(2)[aria-pressed="true"]) { --i: 1; }
+.segmented:has(> button:nth-child(3)[aria-pressed="true"]) { --i: 2; }
+.segmented::before { content: ''; position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 4px) / var(--n)); border-radius: 5px; background: var(--qn-paper); box-shadow: 0 1px 2px #1820331f; transform: translateX(calc(var(--i) * 100%)); transition: transform var(--qn-dur-medium) var(--qn-ease-out); }
+.segmented:not(:has(> [aria-pressed="true"]))::before { opacity: 0; }
+.quietnote-shell .segmented button { position: relative; min-height: 26px; padding: 0 var(--qn-space-3); border-radius: 5px; font-size: 12px; font-weight: 500; color: var(--qn-muted); transition: color var(--qn-dur-medium) var(--qn-ease-out); }
+.quietnote-shell .segmented button[aria-pressed="true"] { color: var(--qn-ink); }
+@media (prefers-reduced-motion: reduce) { .segmented::before, .meeting-tabs::after { transition: none; } }
 .inline-search { display: flex; align-items: center; gap: var(--qn-space-2); color: var(--qn-muted); margin-left: auto; padding: 0 var(--qn-space-3); border-radius: 10px; background: var(--qn-well); }
 .inline-search input { border: 0; outline: none; background: transparent; width: 180px; min-height: 32px; font-size: 13px; }
 /* The transcript as the live one shows it: your bubbles on the right, the others' on the left, each with its time. */
@@ -415,18 +428,37 @@
 .snippet { font-size: 14px; color: var(--qn-ink); line-height: 1.55; margin-top: 2px; }
 
 /* Settings */
-.settings-page { display: flex; gap: var(--qn-space-8); max-width: 960px; margin: 0 auto; padding: var(--qn-space-7) var(--qn-space-8) var(--qn-space-9); align-items: flex-start; }
-.settings-nav { position: sticky; top: 0; width: 180px; flex-shrink: 0; display: flex; flex-direction: column; }
-.settings-content { flex: 1; min-width: 0; max-width: 620px; }
+.settings-page { max-width: 720px; margin: 0 auto; padding: var(--qn-space-8) var(--qn-space-8) var(--qn-space-9); }
+.settings-content { min-width: 0; max-width: 640px; margin: 0 auto; }
+/* Settings' own sidebar, in place of the app's. */
+.settings-top { display: flex; flex-direction: column; gap: var(--qn-space-3); }
+.quietnote-shell .settings-back { color: var(--qn-muted); }
+.quietnote-shell .settings-title { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--qn-ink); padding: 0 var(--qn-space-3); }
+.attention-dot { width: 7px; height: 7px; flex-shrink: 0; margin-left: auto; border-radius: 50%; background: var(--qn-red); }
+/* What stays, what leaves when you ask, and what never happens: the answer before the switches. */
+.verdict { margin-top: var(--qn-space-6); padding: var(--qn-space-1) 22px; border-radius: 14px; background: var(--qn-well); }
+.verdict > div { display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: var(--qn-space-4); padding: 14px 0; }
+.verdict dt { font-size: 13px; font-weight: 500; line-height: 20px; color: var(--qn-muted); }
+.verdict dd { display: flex; flex-direction: column; gap: var(--qn-space-1); font-size: 14px; line-height: 20px; color: var(--qn-ink); }
+/* The one thing to fix, when there is one. */
+.attention { display: flex; align-items: center; gap: 14px; margin-top: var(--qn-space-4); padding: var(--qn-space-4) var(--qn-space-4) var(--qn-space-4) var(--qn-space-5); border-radius: 14px; background: var(--qn-red-soft); color: var(--qn-red); }
+.attention > div { flex: 1; min-width: 0; }
+.quietnote-shell .attention :is(.setting-title, p) { color: var(--qn-red-ink); }
+.quietnote-shell .attention .setting-title { font-weight: 600; }
+.quietnote-shell .attention p { font-size: 13px; margin-top: 2px; }
+.attention .secondary { flex-shrink: 0; min-height: 32px; }
 .quietnote-shell .lede { color: var(--qn-muted); font-size: 14px; margin-top: var(--qn-space-1); max-width: 60ch; }
 .settings-content section { margin-top: var(--qn-space-7); }
 .settings-content section h2 { display: flex; align-items: center; gap: var(--qn-space-2); padding-bottom: var(--qn-space-1); }
-.setting-row { display: flex; align-items: center; justify-content: space-between; gap: var(--qn-space-5); padding: var(--qn-space-3) 0; }
-.setting-row.fact { justify-content: flex-start; align-items: flex-start; gap: var(--qn-space-3); }
-.setting-row.fact svg { color: var(--qn-mint); margin-top: 2px; }
+.setting-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--qn-space-6); padding: var(--qn-space-3) 0; }
+.setting-row.nested { padding-left: var(--qn-space-5); }
+.quietnote-shell .setting-row.nested .setting-title { font-weight: 400; }
 .setting-title { font-size: 14px; font-weight: 500; color: var(--qn-ink); }
 .quietnote-shell .setting-row p { color: var(--qn-muted); font-size: 13px; margin-top: 2px; }
-.quietnote-shell .setting-row .fact-list { display: grid; gap: 2px; margin-top: 4px; padding-left: 1.2em; list-style: disc; color: var(--qn-muted); font-size: 13px; }
+/* A setting that's on but not working yet, and errors: red, as the row's own text is grey. */
+.quietnote-shell .setting-row p:is(.setting-status, .field-error) { color: var(--qn-red); }
+.quietnote-shell .setting-row .setting-status { margin-top: var(--qn-space-2); }
+.quietnote-shell .setting-status .text-button { min-height: 0; padding: 0; margin-left: var(--qn-space-1); color: var(--qn-ink); font-weight: 600; }
 .quietnote-shell .group-note { color: var(--qn-muted); font-size: 13px; padding: var(--qn-space-3) 0 var(--qn-space-1); }
 .planned-group .setting-title { color: var(--qn-ink); }
 .key-controls { display: flex; align-items: center; gap: var(--qn-space-3); flex-shrink: 0; }
@@ -446,8 +478,8 @@
 .quietnote-shell .body-copy p + p { margin-top: var(--qn-space-3); }
 
 /* Dialogs and capture */
-.modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: var(--qn-space-6); background: #18203333; transition: opacity 200ms ease-out; }
-.modal { width: 420px; max-width: 100%; background: var(--qn-paper); border-radius: 14px; padding: var(--qn-space-6); box-shadow: var(--qn-shadow-modal); transition: opacity var(--qn-dur-medium) var(--qn-ease-pop), transform var(--qn-dur-medium) var(--qn-ease-pop); }
+.modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: var(--qn-space-6); background: #18203333; transition: opacity 400ms cubic-bezier(0, 0, .58, 1); }
+.modal { width: 420px; max-width: 100%; background: var(--qn-paper); border-radius: 14px; padding: var(--qn-space-6); box-shadow: var(--qn-shadow-modal); transition: opacity 300ms var(--qn-ease-spring), transform 300ms var(--qn-ease-spring); }
 .quietnote-shell .modal h2 { font-size: 18px; overflow-wrap: anywhere; }
 .modal form { margin-top: var(--qn-space-4); }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: var(--qn-ink); margin-bottom: var(--qn-space-4); }
@@ -472,7 +504,7 @@
    consent line, the microphone) or something needs attention, and when a start needs explaining. The meeting
    becomes a column so the bar sits at the bottom of the window even when the notes are short. */
 .meeting-detail.docked { min-height: 100%; display: flex; flex-direction: column; padding-bottom: 0; }
-.recorder-dock { position: sticky; bottom: var(--qn-space-4); z-index: 5; align-self: flex-start; max-width: 100%; margin: auto 0 var(--qn-space-4); padding: 6px; border-radius: 24px; background: var(--qn-paper); box-shadow: var(--qn-shadow-float); font-size: 13px; transition: border-radius var(--qn-dur-medium) var(--qn-ease-out); }
+.recorder-dock { position: sticky; bottom: var(--qn-space-4); z-index: 5; align-self: center; max-width: 100%; margin: auto 0 var(--qn-space-4); padding: 6px; border-radius: 24px; background: var(--qn-paper); box-shadow: var(--qn-shadow-float); font-size: 13px; transition: border-radius var(--qn-dur-medium) var(--qn-ease-out); }
 .recorder-dock.wide, .recorder-dock.expanded { align-self: stretch; border-radius: 16px; }
 .meeting-detail.docked > .meeting-content { flex-shrink: 0; padding-bottom: var(--qn-space-6); }
 .recorder-dock.expanded { padding: var(--qn-space-4); }
@@ -526,6 +558,10 @@
 .recorder-actions { display: flex; justify-content: flex-end; gap: var(--qn-space-2); margin-top: var(--qn-space-3); }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--qn-red); animation: qn-live 1.6s var(--qn-ease-in-out) infinite alternate; }
 @keyframes qn-live { to { opacity: .3; } }
+/* The stop countdown: a question, not a problem, so no well; Keep recording is the one cobalt while recording. */
+.recorder-ending { display: flex; flex-wrap: wrap; align-items: center; gap: var(--qn-space-1) var(--qn-space-2); margin: 0 0 var(--qn-space-1); padding: var(--qn-space-1) var(--qn-space-2); font-size: 14px; color: var(--qn-muted); }
+.recorder-ending strong { font-weight: 600; color: var(--qn-ink); font-variant-numeric: tabular-nums; }
+.quietnote-shell .recorder-ending .primary { margin-left: auto; min-height: 32px; padding: 0 var(--qn-space-4); }
 .capture-alert { margin-top: var(--qn-space-2); padding: 6px var(--qn-space-3); border-radius: 6px; background: var(--qn-red-soft); color: var(--qn-ink); }
 .capture-alert strong { font-weight: 600; color: var(--qn-ink); }
 .quietnote-shell .capture-alert .text-button { min-height: 24px; padding: 0 0 0 var(--qn-space-2); color: var(--qn-ink); }
@@ -615,8 +651,14 @@
 .send-results .action-link { display: inline-block; margin: 2px 0 0; }
 @starting-style {
   .modal-backdrop { opacity: 0; }
-  .modal { opacity: 0; transform: translateY(6px) scale(.98); }
+  .modal { opacity: 0; transform: scale(.95); }
 }
+/* Dialogs move as Linear's do (measured there): the panel scales from 95% and fades on one 300ms spring curve, both
+   ways; the backdrop eases in over 400ms and out over 280ms. Closing runs on Modal's copy, from wherever it was. */
+.modal-backdrop.leaving { pointer-events: none; transition: none; animation: qn-fade-out 280ms cubic-bezier(0, 0, .58, 1) forwards; }
+.modal-backdrop.leaving .modal { transition: none; animation: qn-modal-out 300ms var(--qn-ease-spring) forwards; }
+@keyframes qn-fade-out { to { opacity: 0; } }
+@keyframes qn-modal-out { to { opacity: 0; transform: scale(.95); } }
 
 /* First run and archive errors */
 .onboarding { width: min(100%, 520px); display: flex; flex-direction: column; gap: var(--qn-space-6); }
@@ -677,8 +719,6 @@
   .meeting-row { grid-template-columns: minmax(0, 1fr) minmax(60px, 110px) 64px 118px; }
   .meeting-row.no-project { grid-template-columns: minmax(0, 1fr) 64px 118px; }
   .row-duration { display: none; }
-  .settings-page { gap: var(--qn-space-6); }
-  .settings-nav { width: 150px; }
 }
 /* Narrow windows: the sidebar becomes an icon rail and secondary columns drop away. */
 @media (max-width: 720px) {
@@ -691,9 +731,8 @@
   .meeting-row, .meeting-row.no-project { grid-template-columns: minmax(0, 1fr) 60px auto; gap: var(--qn-space-3); }
   .row-project { display: none; }
   .meeting-title-row { flex-direction: column; }
-  .settings-page { flex-direction: column; }
-  .settings-nav { position: static; width: 100%; flex-direction: row; overflow-x: auto; }
-  .settings-nav .sidebar-item { width: auto; flex-shrink: 0; padding: 0 var(--qn-space-3); }
+  .verdict > div { grid-template-columns: minmax(0, 1fr); gap: var(--qn-space-1); }
+  .attention { flex-wrap: wrap; }
   .notice { flex-wrap: wrap; }
   .who-spoke li { grid-template-columns: minmax(0, 1fr); gap: var(--qn-space-1); }
   .who-line { min-height: 0; padding-top: 0; }
@@ -706,6 +745,7 @@
 @media (prefers-reduced-motion: reduce) {
   .quietnote-shell *, .quietnote-shell *::before, .quietnote-shell *::after { transition: none !important; animation: none !important; }
   .quietnote-shell :is(.modal-backdrop, .modal, .banner:not(.warning), .suggestions, .live-latest, .text-button.swap > span) { transition: opacity 200ms ease-out !important; }
+  .quietnote-shell .modal-backdrop.leaving { transition: none !important; animation: qn-fade-out 200ms ease-out forwards !important; }
   .quietnote-shell .action-row.fresh { animation: cited 1.6s var(--qn-ease-out) !important; }
 }
 
@@ -859,7 +899,7 @@ svg.hush-transcribing { overflow: visible; }
 .dark .row-menu { background: var(--qn-bubble); box-shadow: inset 0 1px 0 #ffffff0f, var(--qn-shadow-float); }
 .dark .row-menu button:hover, .dark .row-menu button:focus-visible { background: var(--qn-control); }
 .dark .modal-backdrop { background: #00000080; }
-.dark .quietnote-shell .segmented button[aria-pressed="true"] { background: var(--qn-edge); box-shadow: none; }
+.dark .segmented::before { background: var(--qn-edge); box-shadow: none; }
 .dark .qn-sidebar [role="separator"] > div:first-child { background: #3b3734; }
 .dark .qn-sidebar [role="separator"]:focus-visible > div:first-child { background: #78716c; }
 .dark .rail .qn-sidebar .initial { background: var(--qn-chip); }

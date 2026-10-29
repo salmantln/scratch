@@ -24,6 +24,9 @@ async function newMeeting(page: Page, title: string) {
 const tab = (page: Page, name: string) => page.getByRole('tab', { name: new RegExp(`^${name}`) });
 async function myNotes(page: Page) { await tab(page, 'My notes').click(); }
 const home = (page: Page) => page.getByRole('button', { name: 'Home', exact: true });
+// Settings has its own sidebar: a page is opened from it, and Back to meetings returns to where you were.
+const settingsPage = (page: Page, name: string) => page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name }).click();
+const leaveSettings = (page: Page) => page.getByRole('button', { name: 'Back to meetings' }).click();
 // Home also names meetings beside their action items, so rows are found by their own class.
 const row = (page: Page, title: string) => page.locator('.meeting-row', { hasText: title });
 
@@ -384,9 +387,12 @@ test('D: search finds what was agreed weeks later and opens the right place', as
 test('E: privacy separates active from planned, and starting takes one press', async ({ page }) => {
   await firstProject(page, 'Internal');
   await page.getByRole('button', { name: 'Settings' }).click();
-  await expect(page.getByRole('heading', { name: 'Active now' })).toBeVisible();
+  // The preview can't record, so Settings has no Recording or Suggestions page.
+  const sections = page.getByRole('navigation', { name: 'Settings sections' });
+  await expect(sections.getByRole('button')).toHaveText(['General', 'Privacy', 'Appearance', 'Shortcuts', 'Local archive', 'About']);
+  await settingsPage(page, 'Privacy');
   await expect(page.getByRole('heading', { name: /Planned/ })).toBeVisible();
-  await expect(page.getByText('Stored in this browser')).toBeVisible();
+  await expect(page.locator('.verdict dt').first()).toHaveText('Stays in this browser');
   await expect(page.getByRole('switch', { name: 'Allow cloud processing' })).toBeDisabled();
   await expect(page.getByRole('switch', { name: 'Confirm before capture' })).toHaveCount(0);
   await page.getByRole('combobox', { name: 'Keep meeting data' }).selectOption('30');
@@ -395,6 +401,7 @@ test('E: privacy separates active from planned, and starting takes one press', a
   await expect(page.getByRole('combobox', { name: 'Keep meeting data' })).toHaveValue('30');
   await page.getByRole('button', { name: 'Local archive' }).click();
   await expect(page.getByText('This browser preview keeps meetings in this browser only.', { exact: false })).toBeVisible();
+  await leaveSettings(page);
   await newMeeting(page, 'Standup');
   await page.getByRole('button', { name: 'Start capture' }).click();
   await expect(page.getByRole('region', { name: 'Recorder' })).toContainText('Capturing');
@@ -469,8 +476,9 @@ test('H: shortcut hints stay hidden until ⌘ is held on its own', async ({ page
   await page.keyboard.down('Meta');
   await page.keyboard.press(',');
   await page.keyboard.up('Meta');
-  await expect(page.getByRole('heading', { level: 1, name: 'Privacy' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'General' })).toBeVisible();
   for (const hint of await hints.all()) await expect(hint).toBeHidden();
+  await leaveSettings(page);
   await page.keyboard.down('Meta');
   await expect(page.locator('.project-item', { hasText: 'Internal' }).locator('kbd')).toHaveText('⌘2');
   await expect(page.locator('.project-item', { hasText: 'Internal' }).locator('.sidebar-count')).toBeHidden();
@@ -500,6 +508,18 @@ test('I: connections are a directory; only Linear and GitHub connect, and only i
   await expect(dialog.getByText('No connections match “fax machine”.')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
+  // A click outside closes it too, but not a click inside or a drag that only ends outside.
+  await page.getByRole('button', { name: 'Connections' }).click();
+  await dialog.getByRole('heading', { name: 'Connections' }).click();
+  const box = (await dialog.boundingBox())!;
+  await page.mouse.move(box.x + 40, box.y + 20); await page.mouse.down(); await page.mouse.move(5, 5); await page.mouse.up();
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(5, 5);
+  await expect(dialog).toHaveCount(0);
+  // Closing plays out on a copy that's hidden from assistive tech, lets clicks through, and is removed when it ends.
+  const leaving = page.locator('.modal-backdrop.leaving');
+  await expect(leaving).toHaveAttribute('aria-hidden', 'true');
+  await expect(leaving).toHaveCount(0);
   await page.evaluate(() => {
     const key = 'quietnote.preview.archive.v1';
     const meetings = JSON.parse(localStorage.getItem(key)!);
@@ -700,6 +720,9 @@ test('J: desktop recording runs in the background, then shows a clean transcript
   await expect(recorder.getByRole('button', { name: 'Recording details' }).locator('.live-dot')).toBeVisible();
   await expect(recorder.getByRole('button', { name: 'Stop recording' })).toHaveText('Stop');
   await expect(recorder.locator('.recorder-time')).toHaveText(/^00:0\d$/);
+  // Folded, the pill sits in the middle of the meeting column, not at its left edge.
+  const [pill, column] = await Promise.all([recorder.boundingBox(), page.locator('.meeting-content').boundingBox()]);
+  expect(Math.abs(pill!.x + pill!.width / 2 - (column!.x + column!.width / 2))).toBeLessThan(2);
   // Recording opens Notes and nothing covers it. Here the strip is the recorder, so the window bar steps aside.
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
@@ -786,18 +809,25 @@ test('K: New meeting records with one press, or creates without recording; recor
   await expect(page.getByText(/Transcribing on this (Mac|PC)… 40%/)).toBeVisible();
   await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('button', { name: 'Settings' }).click();
-  await expect(page.getByRole('heading', { name: 'Active now' })).toBeVisible();
+  await settingsPage(page, 'Privacy');
+  await expect(page.getByRole('heading', { name: 'Recordings' })).toBeVisible();
   // Where recording is real, every privacy setting shown is enforced: nothing planned or inert.
   await expect(page.getByRole('heading', { name: /Planned/ })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Keep audio on this device' })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Allow cloud processing' })).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: 'Keep meeting data' })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Confirm before capture' })).toHaveCount(0);
-  await expect(page.getByText('for meetings transcribed after you turn this on. Audio you already have is kept. If transcription fails, the audio is kept so you can retry.', { exact: false })).toBeVisible();
+  // A row says what the setting does as it's set now.
+  const deleteAudio = page.getByRole('switch', { name: 'Delete audio after transcribing' });
+  await expect(deleteAudio).not.toBeChecked();
+  await expect(page.getByText('Off: audio is kept, so you can export it or transcribe it again.')).toBeVisible();
+  await deleteAudio.click();
+  await expect(page.getByText('On: audio is deleted once its transcript is saved', { exact: false })).toBeVisible();
+  await deleteAudio.click();
+  await settingsPage(page, 'Recording');
   await page.getByRole('switch', { name: 'Remove filler words' }).click();
   await expect(page.getByRole('switch', { name: 'Remove filler words' })).not.toBeChecked();
   await expect.poll(() => qn(page, q => q.state.calls.includes('render_transcripts'))).toBe(true);
-  await expect(page.getByRole('switch', { name: 'Delete audio after transcribing' })).not.toBeChecked();
 });
 
 test('L: the first recording explains permissions before macOS asks, and a denied microphone is clear', async ({ page }) => {
@@ -996,9 +1026,11 @@ test('Q0: Home asks for your name to put your items first, and its Recent list h
   // The sidebar's New meeting isn't cobalt, so a screen has one primary action at most.
   await expect(page.locator('.new-meeting')).toHaveClass(/secondary/);
   await items.getByRole('button', { name: 'Add your name' }).click();
-  await expect(page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Privacy' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'General' })).toHaveAttribute('aria-current', 'page');
   await page.getByRole('textbox', { name: 'Your name' }).fill('Maya Chen');
-  await home(page).click();
+  // Back to meetings returns to Home, where it was opened from.
+  await leaveSettings(page);
+  await expect(home(page)).toHaveAttribute('aria-current', 'page');
   // Maya's items now lead, and the hint is gone.
   await expect(items.locator('.home-hint')).toHaveCount(0);
   await expect(items.locator('.action-owner').first()).toHaveText('Maya');
@@ -1059,6 +1091,7 @@ test('Q3: your own action items come first, and in a meeting an item can be edit
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('textbox', { name: 'Your name' }).fill('Tom Rivera');
   await page.keyboard.press('Enter');
+  await leaveSettings(page);
   await home(page).click();
   const items = page.locator('.home-section', { has: page.getByRole('heading', { name: /^Open action items/ }) });
   await expect(items.locator('.action-row').first().locator('.action-text')).toHaveText('share analytics credentials by 1 October');
@@ -1083,9 +1116,8 @@ test('Q3: your own action items come first, and in a meeting an item can be edit
   await launch.locator('input[type=checkbox]').check();
   await rows.filter({ hasText: 'send the revised onboarding plan' }).getByRole('button', { name: /^Remove/ }).click();
   await expect(rows).toHaveCount(3);
-  // The two toasts stack; hovering spreads them out.
-  await page.locator('[data-sonner-toast][data-front="true"]').hover();
-  await page.locator('[data-sonner-toast]', { hasText: 'Marked done' }).getByRole('button', { name: 'Undo' }).click();
+  // The two toasts stack, so the one behind is reached with the keyboard (a pointer lands on the front one while they spread out).
+  await page.locator('[data-sonner-toast]', { hasText: 'Marked done' }).getByRole('button', { name: 'Undo' }).press('Enter');
   await expect(launch.locator('input[type=checkbox]')).not.toBeChecked();
   await expect(rows.locator('input:checked')).toHaveCount(0);
   // Undo on the removal puts back only that line, where it was.
@@ -1262,7 +1294,7 @@ test('R3: Show Hush turns him off everywhere in the window, brings the status do
   await expect(show).toHaveAttribute('aria-checked', 'false');
   await expect(page.locator('.hush')).toHaveCount(0);
   await expect.poll(() => qn(page, q => q.state.preferences.showHush)).toBe(false);
-  await page.getByRole('button', { name: 'Home' }).click();
+  await leaveSettings(page);
   await expect(card.locator('.hush')).toHaveCount(0);
   await expect(card.locator('.ready-dot')).toBeVisible();
   // The window follows the saved preference, as it does when another window changes it.
@@ -1374,26 +1406,31 @@ test('T: a detected call records from the panel in a meeting named after the app
   // Going anywhere else (here ⌘, for Settings) brings the full window back.
   await page.keyboard.press('ControlOrMeta+,');
   await expect.poll(() => qn(page, q => q.state.compact)).toBe(false);
-  await expect(navigation).toBeVisible();
-  // "Don't notify for Chrome" is written by Rust; Settings picks it up and can undo it.
+  await expect(page.getByRole('navigation', { name: 'Settings sections' })).toBeVisible();
+  await settingsPage(page, 'Recording');
+  // "Don't notify for Chrome" is written by Rust; Settings picks it up, under Offer to record calls, and can undo it.
   await expect(page.getByRole('switch', { name: 'Offer to record calls' })).toHaveAttribute('aria-checked', 'true');
   await qn(page, q => { q.state.preferences = { ...q.state.preferences, mutedCallApps: ['Chrome'] }; q.emit('quietnote://preferences-changed', null); });
-  const muted = page.locator('.setting-row').filter({ hasText: 'Not offered for Chrome' });
+  const muted = page.locator('.setting-row.nested').filter({ hasText: 'Not offered for Chrome' });
   await muted.getByRole('button', { name: 'Notify again' }).click();
   await expect(muted).toHaveCount(0);
   await expect.poll(() => qn(page, q => q.state.preferences.mutedCallApps)).toEqual([]);
-  // Recognizing meetings in browsers is opt-in and needs macOS's Accessibility permission, which it asks for.
-  const recognize = page.getByRole('switch', { name: 'Recognize meetings in browsers' });
+  await expect(page.getByRole('switch', { name: 'Remove call audio from your microphone' })).toHaveAttribute('aria-checked', 'true');
+  // Reading browser tab titles (on Privacy) is opt-in and needs macOS's Accessibility permission, which it asks for.
+  await settingsPage(page, 'Privacy');
+  const recognize = page.getByRole('switch', { name: 'Browser tab titles' });
   await expect(recognize).toHaveAttribute('aria-checked', 'false');
   await recognize.click();
   await expect.poll(() => qn(page, q => q.state.preferences.confirmMeetings)).toBe(true);
-  const notAllowed = page.getByRole('alert').filter({ hasText: 'macOS hasn’t allowed this yet' });
+  // On but not working yet: the switch stays on and a red line says why, with where to fix it.
+  const notAllowed = page.getByRole('alert').filter({ hasText: 'Not working yet: macOS hasn’t allowed it' });
   await expect(notAllowed).toBeVisible();
-  await expect(notAllowed.getByRole('button', { name: 'Open System Settings' })).toBeVisible();
+  await expect(notAllowed).toHaveCSS('color', 'rgb(162, 67, 44)');
+  await expect(notAllowed.getByRole('button', { name: 'Allow in System Settings' })).toBeVisible();
   // Allowed in System Settings: coming back to QuietNote clears the message.
   await qn(page, q => { q.state.accessibility = true; window.dispatchEvent(new Event('focus')); });
   await expect(notAllowed).toHaveCount(0);
-  await expect(page.getByRole('switch', { name: 'Remove call audio from your microphone' })).toHaveAttribute('aria-checked', 'true');
+  await settingsPage(page, 'Recording');
   // Open at login is on unless turned off, so calls are noticed without opening QuietNote first.
   const login = page.getByRole('switch', { name: 'Open at login' });
   await expect(login).toHaveAttribute('aria-checked', 'true');
@@ -1577,7 +1614,7 @@ test('X: summary suggestions ask before sending, cite the transcript, and write 
   // Off by default: nothing to ask, and the empty state shows what highlighting and enhancing do and where to turn it on.
   await expect(page.getByRole('button', { name: 'Suggest from transcript…' })).toHaveCount(0);
   await expect(tab(page, 'Enhanced notes')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByText('With summary suggestions on in Settings → Privacy', { exact: false })).toBeVisible();
+  await expect(page.getByText('With suggestions on in Settings → Suggestions', { exact: false })).toBeVisible();
   // An example, played once: the next time it's the last frame.
   const demo = page.getByRole('img', { name: /^Example: you highlight/ });
   await expect(demo).toHaveClass(/play/);
@@ -1586,11 +1623,12 @@ test('X: summary suggestions ask before sending, cite the transcript, and write 
   await expect(demo).toBeVisible();
   await expect(demo).not.toHaveClass(/play/);
   await page.keyboard.press('ControlOrMeta+,');
+  await settingsPage(page, 'Suggestions');
   await page.getByLabel('Drafted by').selectOption('anthropic');
   await page.getByLabel('Anthropic API key').fill('sk-ant-test');
   await page.getByRole('button', { name: 'Save key' }).click();
   await expect(page.getByText('Anthropic key saved')).toBeVisible();
-  await expect(page.getByText('goes to Claude when you ask for suggestions', { exact: false })).toBeVisible();
+  await expect(page.getByText('the meeting’s transcript text is sent to Anthropic', { exact: false })).toBeVisible();
   await qn(page, q => {
     q.state.transcriptData = [
       { startMs: 0, speaker: 'Others', text: 'Maya will send the pricing draft by Friday.', clean: 'Maya will send the pricing draft by Friday.' },
@@ -1602,6 +1640,7 @@ test('X: summary suggestions ask before sending, cite the transcript, and write 
       dropped: 1,
     };
   });
+  await leaveSettings(page);
   await page.getByRole('button', { name: 'All meetings' }).click();
   await page.getByRole('button', { name: /Pricing sync/ }).click();
   await page.getByRole('button', { name: 'Suggest from transcript…' }).click();
@@ -1647,8 +1686,11 @@ test('Y: a recording about to stop by itself counts down where you are, and Keep
     q.state.capture = { ...q.state.capture, recording: { ...r, ending: { reason: 'The Zoom call ended.', stopsAt: new Date(Date.now() + 45_000).toISOString() } } };
     q.emit('quietnote://capture-state', q.state.capture);
   });
-  const alert = recorder.getByRole('alert').filter({ hasText: 'The Zoom call ended.' });
-  await expect(alert).toContainText(/Recording stops in 00:4\d\./);
+  // A question rather than a problem: no alert, the time left first, and Keep recording as the one cobalt button.
+  const ending = recorder.getByRole('status').filter({ hasText: 'The Zoom call ended.' });
+  await expect(ending).toContainText(/Stops in 00:4\d/);
+  await expect(recorder.getByRole('alert')).toHaveCount(0);
+  await expect(recorder.getByRole('button', { name: 'Keep recording' })).toHaveClass(/primary/);
   // Elsewhere the recording bar says so too, and can keep it.
   await home(page).click();
   const bar = page.locator('.recording-bar');
@@ -1662,7 +1704,7 @@ test('Y: a recording about to stop by itself counts down where you are, and Keep
     q.state.capture = { ...q.state.capture, recording: { ...r, ending: { reason: 'Nothing has been heard for 15 minutes.', stopsAt: new Date(Date.now() - 1000).toISOString() } } };
     q.emit('quietnote://capture-state', q.state.capture);
   });
-  await expect(bar).toContainText('Recording stops once it’s quiet.');
+  await expect(bar).toContainText('Stops once it’s quiet.');
 });
 
 test('Z: the next meeting of a series shows what the last one left open, and ticking it updates that meeting', async ({ page }) => {
@@ -1742,11 +1784,13 @@ test('AA: the calendar names meetings and says who is invited, and never starts 
   // Off until turned on: nothing about the calendar shows, and nothing is read.
   await expect(page.getByRole('heading', { name: 'Up next' })).toHaveCount(0);
   await page.keyboard.press('ControlOrMeta+,');
-  const use = page.getByRole('switch', { name: 'Use your calendar' });
+  await settingsPage(page, 'Privacy');
+  const use = page.getByRole('switch', { name: 'Your calendar' });
   await use.click();
   await expect(use).toHaveAttribute('aria-checked', 'true');
   expect(await qn(page, q => q.state.calendarAccess)).toBe('granted');
   // Home lists what's next; Prepare notes makes the meeting from the event, in the series' project, without recording.
+  await leaveSettings(page);
   await home(page).click();
   const next = page.getByRole('region', { name: 'Up next' });
   await expect(next).toContainText('Weekly sync');
@@ -1780,6 +1824,7 @@ test('AA: the calendar names meetings and says who is invited, and never starts 
   expect(await qn(page, q => q.meetings.some(m => m.metadata.title === 'Chrome call'))).toBe(false);
   // People: everyone invited, grouped by company, each with the meetings they were in.
   await page.keyboard.press('ControlOrMeta+,');
+  await leaveSettings(page);
   await page.getByRole('button', { name: 'People' }).click();
   const globex = page.getByRole('region', { name: 'globex.com' });
   await expect(globex).toContainText('Maria Lopez');
@@ -2105,8 +2150,10 @@ test('AK: Privacy says whether FileVault encrypts the disk, and recordings stay 
   await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')] });
   await page.goto('/');
   await page.getByRole('button', { name: 'Settings' }).click();
-  await expect(page.getByText('Encrypted by FileVault')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Open System Settings' })).toHaveCount(0);
+  await settingsPage(page, 'Privacy');
+  await expect(page.locator('.verdict')).toContainText('FileVault encrypts the disk they’re on.');
+  await expect(page.getByRole('button', { name: 'Turn on FileVault…' })).toHaveCount(0);
+  await expect(page.getByRole('img', { name: 'Needs attention' })).toHaveCount(0);
   // Recordings are encrypted unless turned off.
   const encrypt = page.getByRole('switch', { name: 'Encrypt recordings' });
   await expect(encrypt).toBeChecked();
@@ -2119,9 +2166,10 @@ test('AK: Privacy says whether FileVault encrypts the disk, and recordings stay 
   // Turned off, it says what that means and where to turn it on, checked again on coming back.
   await qn(page, q => { (q.state as unknown as { disk: string }).disk = 'off'; });
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(page.getByText('FileVault is off')).toBeVisible();
-  await expect(page.getByText('Encrypted by FileVault')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Open System Settings' }).click();
+  await expect(page.locator('.attention')).toContainText('FileVault is off');
+  await expect(page.locator('.verdict')).not.toContainText('FileVault');
+  await expect(page.getByRole('navigation', { name: 'Settings sections' }).getByRole('img', { name: 'Needs attention' })).toBeVisible();
+  await page.getByRole('button', { name: 'Turn on FileVault…' }).click();
   expect(await qn(page, q => q.state.calls.includes('open_privacy_settings'))).toBe(true);
 });
 
@@ -2141,14 +2189,16 @@ test('AM: copy says what’s true in each situation', async ({ page }) => {
   await expect(page.getByText('The audio is deleted once the transcript is saved.', { exact: false })).toBeVisible();
   // Settings lists everything that can leave the Mac, whether or not it's set up.
   await page.getByRole('button', { name: 'Settings' }).click();
-  const stored = page.locator('.setting-row.fact', { hasText: 'Stored on this device' });
-  await expect(stored.locator('li')).toHaveText([/Linear or GitHub/, /goes to Claude when you ask for suggestions/, /Lemon Squeezy/, /Everything else stays on this (Mac|PC)/]);
-  await expect(page.getByText('There’s no QuietNote account and no cloud sync.')).toBeVisible();
+  await settingsPage(page, 'Privacy');
+  await expect(page.locator('.verdict dt')).toHaveText([/^Stays on this (Mac|PC)$/, 'Leaves when you ask', 'Never']);
+  await expect(page.locator('.verdict dd').nth(1).locator('span')).toHaveText([/to Claude when you ask for suggestions/, /Linear or GitHub/, /Lemon Squeezy/]);
+  await expect(page.locator('.verdict dd').nth(2)).toHaveText('A meeting bot, an account, cloud sync, or recording before you press Start.');
   // The Mac's calendars are built in, and say how to turn them on while they're off.
+  await leaveSettings(page);
   await page.getByRole('button', { name: 'Connections' }).click();
   const calendar = page.getByRole('dialog', { name: 'Connections' }).locator('.connector', { hasText: 'Apple Calendar' });
   await expect(calendar.getByText('Built in')).toBeVisible();
-  await expect(calendar).toContainText('Turn on Use your calendar in Settings → Privacy.');
+  await expect(calendar).toContainText('Turn on Your calendar in Settings → Privacy.');
 });
 
 test('AN: in the browser preview a right-click moves a meeting to another project, with Undo', async ({ page }) => {

@@ -204,7 +204,8 @@ function Recorder({ meeting, autoStart, live, onUpdated, onClose }: Props) {
         <p className="subtle transcript-caption">{liveText === 'off' ? `Transcribed on this ${device} when you stop` : 'Live draft on the Transcript tab'}</p>
         <p className="recorder-consent"><Icon name="info" size={13} />{consent}<CopyConsent /></p>
       </div>}>
-      {recording?.ending && <Alert title={recording.ending.reason} action={['Keep recording', () => void run(storage.captureKeep, 'Couldn’t keep recording.')]}>{stopsIn(recording.ending.stopsAt, now)}</Alert>}
+      {/* The countdown is a question, not a problem: doing nothing already stops, so Keep recording is the one strong action here. */}
+      {recording?.ending && <div className="recorder-ending" role="status"><strong>{stopsIn(recording.ending.stopsAt, now)}</strong><span>{recording.ending.reason}</span><button className="primary" disabled={busy} onClick={() => void run(storage.captureKeep, 'Couldn’t keep recording.')}>Keep recording</button></div>}
       {recording?.problem && <Alert title="Needs attention.">{recording.problem}</Alert>}
       {recording && !paused && !recording.problem && recording.mic === 'silent' && <Alert title="Your microphone is silent." action={settings('microphone')}>{`No sound has come from ${recording.micDevice ?? 'the microphone'}. Check that it isn’t muted, and that QuietNote is allowed to use it.`}</Alert>}
       {recording && !paused && recording.system === 'silent' && <Alert title="No call audio yet." action={mac ? settings('systemAudio') : undefined}>{mac ? 'If others are talking, allow QuietNote under Screen & System Audio Recording. If you just allowed it, stop and start recording again.' : 'If others are talking, check that the call plays through your default speakers or headset.'}</Alert>}

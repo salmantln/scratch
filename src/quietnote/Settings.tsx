@@ -2,14 +2,45 @@ import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from 'r
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Icon } from './Icon';
 import { Hush } from './Hush';
-import { serviceName } from './catalog';
 import { getVersion } from '@tauri-apps/api/app';
 import { dateLabel } from './model';
 import { accelerator, actions, bound, globalDefault, globalRecord, label, problem } from './shortcuts';
-import { activateLicense, appearance, calendarAccess, callAccessibility, checkout, cliSetupCommand, desktop, device, diskEncryption, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openLink, openPrivacySettings, removeLicense, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type Connections, type LicenseStatus, type PrivacyPreferences, type Service } from './storage';
-export type SettingsSection = 'Privacy' | 'Appearance' | 'Shortcuts' | 'Local archive' | 'About';
+import { activateLicense, appearance, calendarAccess, callAccessibility, checkout, cliSetupCommand, desktop, device, diskEncryption, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openLink, openPrivacySettings, removeLicense, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type LicenseStatus, type PrivacyPreferences } from './storage';
+export type SettingsSection = 'General' | 'Privacy' | 'Recording' | 'Suggestions' | 'Appearance' | 'Shortcuts' | 'Local archive' | 'About';
 const mac = /Mac/.test(navigator.userAgent);
-const sections: [SettingsSection, 'privacy' | 'appearance' | 'keyboard' | 'archive' | 'info'][] = [['Privacy', 'privacy'], ['Appearance', 'appearance'], ['Shortcuts', 'keyboard'], ['Local archive', 'archive'], ['About', 'info']];
+/** What this copy can do, which decides the pages Settings has: a page with nothing on it isn't listed. */
+export type SettingsCan = { recording: boolean; detectsCalls: boolean };
+const pages: [SettingsSection, Parameters<typeof Icon>[0]['name'], (can: SettingsCan) => boolean][] = [
+  ['General', 'person', () => true], ['Privacy', 'privacy', () => true], ['Recording', 'mic', can => can.recording || can.detectsCalls],
+  ['Suggestions', 'sparkle', can => can.recording && desktop], ['Appearance', 'appearance', () => true], ['Shortcuts', 'keyboard', () => true],
+  ['Local archive', 'archive', () => true], ['About', 'info', () => true],
+];
+export const settingsSections = (can: SettingsCan) => pages.filter(([, , shown]) => shown(can));
+/** Whether FileVault encrypts the disk (macOS), checked while `active` and again on coming back from System Settings. */
+export function useDisk(active: boolean) {
+  const [disk, setDisk] = useState('');
+  useEffect(() => {
+    if (!active || !desktop || !mac) return;
+    let cancelled = false;
+    const check = () => { diskEncryption().then(d => { if (!cancelled) setDisk(d); }).catch(() => { if (!cancelled) setDisk('unknown'); }); };
+    check();
+    window.addEventListener('focus', check);
+    return () => { cancelled = true; window.removeEventListener('focus', check); };
+  }, [active]);
+  return disk;
+}
+export const diskAtRisk = (disk: string) => disk === 'off' || disk === 'decrypting';
+/** Settings' own sidebar, in place of the app's while Settings is open. Privacy has a dot while something there needs attention. */
+export function SettingsNav({ can, section, attention, onSection, onBack }: { can: SettingsCan; section: SettingsSection; attention: boolean; onSection: (section: SettingsSection) => void; onBack: () => void }) {
+  return <>
+    <div className="sidebar-top settings-top">
+      <button className="sidebar-item settings-back" title="Back to meetings" onClick={onBack}><Icon name="back" size={16} /><span className="label">Back to meetings</span></button>
+      <h2 className="settings-title">Settings</h2>
+    </div>
+    <nav className="sidebar-scroll" aria-label="Settings sections">{settingsSections(can).map(([name, icon]) => <button key={name} className={`sidebar-item ${section === name ? 'active' : ''}`} aria-current={section === name ? 'page' : undefined} title={name} onClick={() => onSection(name)}>
+      <Icon name={icon} size={16} /><span className="label">{name}</span>{name === 'Privacy' && attention && <i className="attention-dot" role="img" aria-label="Needs attention" />}</button>)}</nav>
+  </>;
+}
 /** One shortcut: click, then press the keys (Esc cancels). `optional` adds a switch, for the one that works from any app. */
 function KeyRow({ name, description, value, fallback, check, onSet, optional }: {
   name: string; description?: string; value: string; fallback: string; check: (accel: string) => string; onSet: (accel: string) => Promise<void> | void;
@@ -61,7 +92,6 @@ function Shortcuts({ values, onChange, anyApp }: { values: PrivacyPreferences; o
     </section>}
   </>;
 }
-/** Who drafts summary suggestions. The Anthropic key is checked, then kept in the Keychain; Ollama runs on this computer. */
 /** Your name, saved when you leave the field, so action items you own come first (with those for “You”). */
 function NameRow({ value, onChange }: { value: string; onChange: (name: string) => void }) {
   const [name, setName] = useState(value);
@@ -69,6 +99,7 @@ function NameRow({ value, onChange }: { value: string; onChange: (name: string) 
   return <div className="setting-row"><div><div className="setting-title">Your name</div><p>Puts your action items first. {desktop ? `Stays on this ${device}.` : 'Stays in this browser.'}</p></div>
     <label className="field name-field"><input aria-label="Your name" value={name} maxLength={60} placeholder="Optional" autoComplete="name" onChange={e => setName(e.target.value)} onBlur={save} onKeyDown={e => { if (e.key === 'Enter') save(); }} /></label></div>;
 }
+/** Who drafts summary suggestions. The Anthropic key is checked, then kept in the Keychain; Ollama runs on this computer. */
 function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; summaryKey: boolean; onSummaryKey: (saved: boolean) => void }) {
   const provider = values.summaryProvider === 'anthropic' || values.summaryProvider === 'ollama' ? values.summaryProvider : '';
   const [key, setKey] = useState('');
@@ -92,8 +123,7 @@ function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { value
     try { await removeSummaryKey(); onSummaryKey(false); } catch (e) { setError(String(e).replace(/^Error: /, '')); }
   }
   const model = typeof values.ollamaModel === 'string' ? values.ollamaModel : '';
-  return <section><h2>Summary suggestions</h2>
-    <p className="group-note">When you ask, a model drafts a summary and action items from a recorded transcript, or writes up your notes under a template and fills them in from it. Each line quotes the transcript or your notes, and nothing is saved until you add it. Your own templates are Markdown files in the archive’s .templates folder (Enhance notes → Edit templates).</p>
+  return <section>
     <div className="setting-row"><div><div className="setting-title">Drafted by</div><p>{provider === 'anthropic' ? 'Claude, with your own Anthropic key. When you ask, the meeting’s transcript text is sent to Anthropic, with your notes when you enhance them and the invited people’s names when you ask for names. Audio and titles are never sent.' : provider === 'ollama' ? 'A model in Ollama on this computer. Nothing leaves this computer.' : 'Off. Nothing is drafted and nothing is sent.'}</p></div>
       <select aria-label="Drafted by" value={provider} onChange={e => { setError(''); onChange('summaryProvider', e.target.value); }}><option value="">Off</option><option value="anthropic">Claude (your Anthropic key)</option><option value="ollama">Ollama on this computer</option></select></div>
     {provider === 'anthropic' && (summaryKey
@@ -194,8 +224,8 @@ function AiApps() {
     <div className="setting-row"><div><div className="setting-title">{agents?.length ? 'Another app' : 'Any MCP app'}</div><p>Paste the copied configuration into the app’s MCP settings. ChatGPT connects only to servers on the internet, so it can’t use QuietNote on this computer.</p>{mcp === 'failed' && <p className="field-error" role="alert">Couldn’t copy the configuration.</p>}</div><button className="text-button" onClick={() => void copyMcp()}><Icon name="copy" size={15} />{mcp === 'copied' ? 'Copied' : 'Copy configuration'}</button></div>
   </section>;
 }
-export function Settings({ recording, detectsCalls = false, liveTranscript = false, connections, summaryKey = false, onSummaryKey = () => {}, section, onSection, values, onChange, root, hasAllExamples, onOpenArchive, onReload, onWorkspace, onExamples }: {
-  recording: boolean; detectsCalls?: boolean; liveTranscript?: boolean; connections: Connections; summaryKey?: boolean; onSummaryKey?: (saved: boolean) => void; section: SettingsSection; onSection: (section: SettingsSection) => void; values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; root: string; hasAllExamples: boolean;
+export function Settings({ recording, detectsCalls = false, liveTranscript = false, disk = '', summaryKey = false, onSummaryKey = () => {}, section, values, onChange, root, hasAllExamples, onOpenArchive, onReload, onWorkspace, onExamples }: {
+  recording: boolean; detectsCalls?: boolean; liveTranscript?: boolean; disk?: string; summaryKey?: boolean; onSummaryKey?: (saved: boolean) => void; section: SettingsSection; values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; root: string; hasAllExamples: boolean;
   onOpenArchive: () => void; onReload: () => void; onWorkspace: () => void; onExamples: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -225,34 +255,27 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
     window.addEventListener('focus', check);
     return () => { cancelled = true; window.removeEventListener('focus', check); };
   }, [confirming]);
-  // Whether FileVault encrypts the disk, checked again on coming back from System Settings.
-  const [disk, setDisk] = useState('');
-  useEffect(() => {
-    if (!desktop || !mac) return;
-    let cancelled = false;
-    const check = () => { diskEncryption().then(d => { if (!cancelled) setDisk(d); }).catch(() => { if (!cancelled) setDisk('unknown'); }); };
-    check();
-    window.addEventListener('focus', check);
-    return () => { cancelled = true; window.removeEventListener('focus', check); };
-  }, []);
   // Whether this build sells licenses, for the list of what leaves the device.
   const [licenses, setLicenses] = useState(false);
   useEffect(() => { if (desktop) licenseStatus().then(s => setLicenses(s.available)).catch(() => setLicenses(false)); }, []);
-  const connected = (Object.keys(connections) as Service[]).map(s => `${serviceName(s)} (as ${connections[s]!.account})`);
   const flag = (key: string, fallback: boolean) => typeof values[key] === 'boolean' ? values[key] as boolean : fallback;
   const theme = appearance(values);
-  function toggle(key: string, title: string, description: string, fallback: boolean, disabled = false) {
+  /** A switch with one sentence, which can say what the setting does as it's set now. */
+  function toggle(key: string, title: string, description: string | ((on: boolean) => string), fallback: boolean, disabled = false) {
     const checked = flag(key, fallback);
-    return <div className="setting-row" key={key}><div><div className="setting-title">{title}</div><p>{description}</p></div><button type="button" className={`toggle ${checked ? 'on' : ''}`} role="switch" aria-checked={checked} aria-label={title} disabled={disabled} onClick={() => onChange(key, !checked)}><span /></button></div>;
+    return <div className="setting-row" key={key}><div><div className="setting-title">{title}</div><p>{typeof description === 'string' ? description : description(checked)}</p></div><button type="button" className={`toggle ${checked ? 'on' : ''}`} role="switch" aria-checked={checked} aria-label={title} disabled={disabled} onClick={() => onChange(key, !checked)}><span /></button></div>;
   }
   const muted = Array.isArray(values.mutedCallApps) ? values.mutedCallApps : [];
-  const fact = (title: string, description: string, list?: string[]) => <div className="setting-row fact" key={title}><Icon name="check" size={16} /><div><div className="setting-title">{title}</div><p>{description}</p>{list && <ul className="fact-list">{list.map(line => <li key={line}>{line}</li>)}</ul>}</div></div>;
-  // Everything this copy of QuietNote can send, set up or not: Claude needs a transcript, a license a build that sells one.
+  const offering = detectsCalls && flag('detectCalls', true);
+  const allow = (pane: 'calendars' | 'accessibility') => <button className="text-button" onClick={() => void openPrivacySettings(pane).catch(() => { /* The line says what's missing. */ })}>Allow in System Settings</button>;
+  // Everything this copy of QuietNote can send, set up or not: Claude needs recording, a license a build that sells one.
   const sends = [
-    'Action items you send go to Linear or GitHub.',
-    ...recording ? ['A meeting’s transcript text goes to Claude when you ask for suggestions, with your notes and the template when you enhance them, and the invited people’s names when you suggest names. Ollama on this computer sends nothing.'] : [],
-    ...licenses ? ['A license key and the name “QuietNote for Mac” go to Lemon Squeezy when you activate a license.'] : [],
+    ...recording ? ['A transcript’s text to Claude when you ask for suggestions, with your notes when you enhance them'] : [],
+    'Action items you send to Linear or GitHub',
+    ...licenses ? ['A license key to Lemon Squeezy, once'] : [],
   ];
+  const kept = recording ? 'Recordings, transcripts and notes. Audio is transcribed here, by a model bundled with the app.' : 'Your meetings, as files in a local archive.';
+  const encrypted = disk === 'on' ? ' FileVault encrypts the disk they’re on.' : disk === 'encrypting' ? ' FileVault is encrypting the disk.' : '';
   async function copyCli() {
     try { await writeText(await cliSetupCommand()); setCli('copied'); window.setTimeout(() => setCli('idle'), 2500); }
     catch { setCli('failed'); }
@@ -262,47 +285,41 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
     catch { setCopied(false); }
   }
   return <div className="settings-page">
-    <nav className="settings-nav" aria-label="Settings sections">{sections.map(([name, icon]) => <button key={name} className={`sidebar-item ${section === name ? 'active' : ''}`} aria-current={section === name ? 'page' : undefined} onClick={() => onSection(name)}><Icon name={icon} size={16} />{name}</button>)}</nav>
     <div className="settings-content">
+      {section === 'General' && <>
+        <h1>General</h1>
+        <p className="lede">Who you are in your meetings.</p>
+        <section><NameRow value={typeof values.userName === 'string' ? values.userName : ''} onChange={name => onChange('userName', name)} /></section>
+      </>}
       {section === 'Privacy' && <>
         <h1>Privacy</h1>
-        <p className="lede">{recording ? 'What QuietNote does with your meetings.' : 'What QuietNote does with your meetings today, and what is still planned.'}</p>
-        <section><h2>Active now</h2>
-          {desktop ? fact('Stored on this device', 'Meeting files live in a local archive on this computer. Something leaves it only when you ask:', [...sends, `Everything else stays on this ${device}.`]) : fact('Stored in this browser', 'This browser preview keeps meetings in this browser’s local storage. Nothing is uploaded.')}
-          {recording ? fact('Recording starts only when you choose', 'Nothing records automatically. QuietNote hears your microphone and what this computer plays, only while you record.') : fact('Capture starts only when you choose', 'Nothing begins capturing automatically.')}
-          {recording && fact('Transcribed on this device', 'Audio and transcripts are made and kept on this computer with a bundled speech model. Nothing is uploaded.')}
-          {disk === 'on' && fact('Encrypted by FileVault', `macOS encrypts this Mac’s disk, ${recording ? 'recordings, transcripts and notes' : 'meetings'} included, so no one can read them from the disk without your password.`)}
-          {disk === 'encrypting' && fact('FileVault is encrypting this disk', 'Once it’s done, no one can read your meetings from this Mac’s disk without your password.')}
-          {(disk === 'off' || disk === 'decrypting') && <div className="setting-row"><div><div className="setting-title">{disk === 'off' ? 'FileVault is off' : 'FileVault is being turned off'}</div><p>{`Anyone with this Mac’s disk could read your ${recording ? 'recordings, transcripts and notes' : 'meetings'}. FileVault encrypts the whole disk with your login password. Turn it on under Privacy & Security → FileVault.`}</p></div><button className="text-button" onClick={() => void openPrivacySettings('fileVault').catch(() => { /* The text says where to go. */ })}>Open System Settings</button></div>}
-          <NameRow value={typeof values.userName === 'string' ? values.userName : ''} onChange={name => onChange('userName', name)} />
-          {fact('No meeting bot', 'QuietNote never joins a call or adds an attendee.')}
-          {fact('No account required', 'There’s no QuietNote account and no cloud sync.')}
-          {desktop && fact(connected.length ? `Connected to ${connected.join(' and ')}` : 'No connections', connected.length ? 'Action items are sent only when you choose Send. Keys are kept in your macOS Keychain.' : 'Connect Linear or GitHub from Connections in the sidebar to send action items as issues.')}
-          {detectsCalls && toggle('detectCalls', 'Offer to record calls', 'When Zoom, Teams, FaceTime, Slack or a browser starts using the microphone, a small panel offers to record. QuietNote only checks which app is using the microphone, on this Mac. Nothing records until you press Start recording.', true)}
-          {desktop && mac && <div className="setting-row"><div><div className="setting-title">Use your calendar</div><p>Your meetings are named after their calendar events and know who’s invited; Home and the menu bar show what’s next, and People lists who you meet. QuietNote reads the calendars on this Mac (including Google and Outlook accounts added to it). It never changes them, never starts recording, and nothing is sent anywhere.</p>
-            {calendarOn && (calendar === 'denied' || calendar === 'restricted') && <p className="field-error" role="alert">{calendar === 'restricted' ? 'Calendar access is restricted on this Mac.' : 'macOS hasn’t allowed QuietNote to read your calendar yet. Allow it under Privacy & Security → Calendars.'} {calendar === 'denied' && <button className="text-button" onClick={() => void openPrivacySettings('calendars').catch(() => { /* The message says where to go. */ })}>Open System Settings</button>}</p>}</div>
-            <button type="button" className={`toggle ${calendarOn ? 'on' : ''}`} role="switch" aria-checked={calendarOn} aria-label="Use your calendar" onClick={() => {
+        <p className="lede">{desktop ? `What stays on this ${device}, and what leaves it only when you ask.` : 'What QuietNote does with your meetings today, and what is still planned.'}</p>
+        <dl className="verdict">
+          <div><dt>{desktop ? `Stays on this ${device}` : 'Stays in this browser'}</dt><dd>{desktop ? kept + encrypted : 'Your meetings, in this browser’s local storage. Nothing is uploaded.'}</dd></div>
+          {desktop && <div><dt>Leaves when you ask</dt><dd>{sends.map(line => <span key={line}>{line}</span>)}</dd></div>}
+          <div><dt>Never</dt><dd>A meeting bot, an account, cloud sync, or recording before you press Start.</dd></div>
+        </dl>
+        {diskAtRisk(disk) && <div className="attention"><Icon name="warning" size={20} /><div><div className="setting-title">{disk === 'off' ? 'FileVault is off' : 'FileVault is being turned off'}</div><p>{`Anyone with this Mac’s disk could read your ${recording ? 'recordings, transcripts and notes' : 'meetings'}.`}</p></div>
+          <button className="secondary" onClick={() => void openPrivacySettings('fileVault').catch(() => { /* The line says what's wrong. */ })}>Turn on FileVault…</button></div>}
+        {recording && <section><h2>Recordings</h2>
+          {mac && toggle('encryptAudio', 'Encrypt recordings', 'Only QuietNote can play them, with a key kept in your Keychain. Applies to new recordings.', true)}
+          {mac && toggle('backupAudio', 'Back up recordings with Time Machine', on => on ? 'On: backups hold your recordings too.' : 'Off: backups hold your transcripts and notes, never the audio.', false)}
+          {toggle('deleteAudio', 'Delete audio after transcribing', on => on ? 'On: audio is deleted once its transcript is saved, and can’t be transcribed again.' : 'Off: audio is kept, so you can export it or transcribe it again.', false)}
+        </section>}
+        {(desktop && mac || offering) && <section><h2>What QuietNote reads</h2>
+          {desktop && mac && <div className="setting-row"><div><div className="setting-title">Your calendar</div><p>Names meetings after their events and knows who’s invited. Never changed, never sent.</p>
+            {calendarOn && (calendar === 'denied' || calendar === 'restricted') && <p className="setting-status" role="alert">{calendar === 'restricted' ? 'Not working: calendar access is restricted on this Mac.' : 'Not working yet: macOS hasn’t allowed it.'} {calendar === 'denied' && allow('calendars')}</p>}</div>
+            <button type="button" className={`toggle ${calendarOn ? 'on' : ''}`} role="switch" aria-checked={calendarOn} aria-label="Your calendar" onClick={() => {
               onChange('calendar', !calendarOn);
               if (!calendarOn) void calendarAccess(true).then(setCalendar).catch(() => setCalendar('denied'));
             }}><span /></button></div>}
-          {detectsCalls && flag('detectCalls', true) && <div className="setting-row"><div><div className="setting-title">Recognize meetings in browsers</div><p>Offer to record a browser only while one of its windows or tabs is a meeting (Google Meet, Teams, Zoom, Webex, Whereby or Jitsi), and name it after the service. QuietNote reads the window and tab titles of the browser using the microphone, on this Mac, through macOS Accessibility. Nothing is kept or sent.</p>
-            {confirming && allowed === false && <p className="field-error" role="alert">macOS hasn’t allowed this yet, so every browser using the microphone is still offered. Allow QuietNote under Privacy &amp; Security → Accessibility. <button className="text-button" onClick={() => void openPrivacySettings('accessibility').catch(() => { /* The message says where to go. */ })}>Open System Settings</button></p>}</div>
-            <button type="button" className={`toggle ${confirming ? 'on' : ''}`} role="switch" aria-checked={confirming} aria-label="Recognize meetings in browsers" onClick={() => {
+          {offering && <div className="setting-row"><div><div className="setting-title">Browser tab titles</div><p>Read only while a browser uses the microphone, to tell a Meet or Teams call from a video. Nothing is kept.</p>
+            {confirming && allowed === false && <p className="setting-status" role="alert">Not working yet: macOS hasn’t allowed it, so every browser is offered. {allow('accessibility')}</p>}</div>
+            <button type="button" className={`toggle ${confirming ? 'on' : ''}`} role="switch" aria-checked={confirming} aria-label="Browser tab titles" onClick={() => {
               onChange('confirmMeetings', !confirming);
               if (!confirming) void callAccessibility(true).then(setAllowed).catch(() => setAllowed(false));
             }}><span /></button></div>}
-          {detectsCalls && flag('detectCalls', true) && muted.map(app => <div className="setting-row" key={`muted-${app}`}><div><div className="setting-title">Not offered for {app}</div><p>You chose not to be notified when {app} uses the microphone.</p></div><button className="text-button" onClick={() => onChange('mutedCallApps', muted.filter(a => a !== app))}>Notify again</button></div>)}
-          {detectsCalls && toggle('openAtLogin', 'Open at login', 'QuietNote starts in the menu bar when you log in, so it can offer to record your calls. It never records by itself.', true)}
-          {recording && liveTranscript && toggle('liveTranscript', 'Show the transcript while recording', 'Words appear a few seconds after they’re spoken, transcribed on this Mac; in English meetings, a faster model takes over and shows them about a second after. It’s a rough draft, and the full transcript is made again when you stop. While recording, it uses up to 1 GB more memory.', true)}
-          {recording && mac && toggle('separateSpeakers', 'Tell the others apart', 'After you stop, the call audio is split by voice on this Mac, so the transcript shows Speaker 1, Speaker 2… instead of one “Others”. It groups voices by how they sound; it doesn’t identify anyone. It adds about two minutes per hour of audio.', true)}
-          {recording && toggle('echoCancellation', 'Remove call audio from your microphone', 'On speakers, your microphone also hears the others. While recording, what this computer played is subtracted from your microphone track, so their words aren’t transcribed as yours and yours stay clearer when you talk at the same time. Turn it off if your own voice sounds cut off. Applies when you next start or resume recording.', true)}
-          {recording && mac && toggle('pauseMedia', 'Pause music when recording starts', 'Music or a video playing on this Mac would be recorded too, so it’s paused when you start or resume recording. Nothing is started again afterwards.', true)}
-          {recording && toggle('cleanTranscript', 'Remove filler words', 'Transcripts open in Clean view, without “um”, “uh” and repeated stutters. It changes how the transcript is shown, not what was recorded: Verbatim keeps the original transcription.', true)}
-          {recording && toggle('deleteAudio', 'Delete audio after transcribing', 'Audio is deleted only after its transcript is saved, for meetings transcribed after you turn this on. Audio you already have is kept. If transcription fails, the audio is kept so you can retry. Deleted audio can’t be transcribed again.', false)}
-          {recording && mac && toggle('encryptAudio', 'Encrypt recordings', 'Recordings are encrypted with a key kept in your macOS Keychain, so other apps and copies of the archive can’t play them. QuietNote still transcribes them, and Export audio on a meeting saves a playable copy where you choose. Applies to recordings you start after changing it; transcripts and notes stay readable files.', true)}
-          {recording && mac && toggle('backupAudio', 'Back up recordings with Time Machine', 'Recordings are left out of Time Machine, so a backup drive never holds the audio of your meetings. Transcripts and notes are backed up as usual. Turn this on to back up recordings too.', false)}
-        </section>
-        {recording && desktop && <SummarySettings values={values} onChange={onChange} summaryKey={summaryKey} onSummaryKey={onSummaryKey} />}
+        </section>}
         {!recording && <section className="planned-group"><h2>Planned <span className="h2-note">Not active yet</span></h2>
           <p className="group-note">These choices are saved for when audio capture and processing exist. They have no effect in this version.</p>
           {toggle('audio', 'Keep audio on this device', 'No audio files are created today.', true)}
@@ -311,6 +328,29 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
           {toggle('cloud', 'Allow cloud processing', 'Unavailable. No processing service is connected.', false, true)}
           <div className="setting-row"><div><div className="setting-title">Keep meeting data</div><p>Saved preference only. QuietNote never deletes files automatically.</p></div><select aria-label="Keep meeting data" value={String(values.retention ?? 'forever')} onChange={e => onChange('retention', e.target.value)}><option value="forever">Forever</option><option value="30">30 days</option><option value="7">7 days</option></select></div>
         </section>}
+      </>}
+      {section === 'Recording' && <>
+        <h1>Recording</h1>
+        <p className="lede">When QuietNote offers to record, and what it does while it records.</p>
+        {detectsCalls && <section><h2>Calls</h2>
+          {toggle('detectCalls', 'Offer to record calls', 'A small panel offers to record when Zoom, Teams, FaceTime, Slack or a browser uses the microphone. Nothing records until you press Start.', true)}
+          {offering && muted.map(app => <div className="setting-row nested" key={`muted-${app}`}><div><div className="setting-title">Not offered for {app}</div><p>You turned the panel off for {app} calls.</p></div><button className="text-button" onClick={() => onChange('mutedCallApps', muted.filter(a => a !== app))}>Notify again</button></div>)}
+          {toggle('openAtLogin', 'Open at login', 'Starts in the menu bar, so it can notice your calls. It never records by itself.', true)}
+        </section>}
+        {recording && <section><h2>While recording</h2>
+          {liveTranscript && toggle('liveTranscript', 'Show the transcript while recording', 'A rough draft a few seconds behind, made again in full when you stop. Uses up to 1 GB more memory.', true)}
+          {toggle('echoCancellation', 'Remove call audio from your microphone', 'Keeps the others’ words out of your track. Turn it off if your voice sounds cut off; it applies from the next recording.', true)}
+          {mac && toggle('pauseMedia', 'Pause music when recording starts', 'So it isn’t recorded too. Nothing starts playing again afterwards.', true)}
+        </section>}
+        {recording && <section><h2>Transcripts</h2>
+          {toggle('cleanTranscript', 'Remove filler words', 'Opens in Clean view, without “um” and “uh”. Verbatim keeps every word.', true)}
+          {mac && toggle('separateSpeakers', 'Tell the others apart', 'Speaker 1, Speaker 2… by how voices sound, never who they are. About two minutes per hour of audio.', true)}
+        </section>}
+      </>}
+      {section === 'Suggestions' && <>
+        <h1>Suggestions</h1>
+        <p className="lede">When you ask, a model drafts a summary and action items from a recorded transcript, or writes up your notes under a template. Each line quotes the transcript or your notes, and nothing is saved until you add it. Your own templates are Markdown files in the archive’s .templates folder.</p>
+        <SummarySettings values={values} onChange={onChange} summaryKey={summaryKey} onSummaryKey={onSummaryKey} />
       </>}
       {section === 'Appearance' && <>
         <h1>Appearance</h1>

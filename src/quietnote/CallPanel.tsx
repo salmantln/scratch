@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Menu } from '@tauri-apps/api/menu';
 import { Icon, Logo } from './Icon';
 import { Hush, showHush } from './Hush';
-import { clock } from './model';
+import { stopsIn } from './model';
 import type { CalendarEvent } from './model';
 import { appearance, type Appearance, type CaptureState, type PrivacyPreferences } from './storage';
 import './quietnote.css';
@@ -56,10 +56,9 @@ export default function CallPanel() {
     await menu.popup();
   }
   if (ending) {
-    const left = Math.ceil((Date.parse(ending.stopsAt) - now) / 1000);
     return <div className="quietnote-shell call-panel ending" role="dialog" aria-label="Recording stops soon">
       <Hush mood="winding" size={36} fallback={<Logo size={20} />} />
-      <div className="call-text"><strong>{left > 0 ? `Stops in ${clock(left)}` : 'Stops once it’s quiet'}</strong><span>{ending.reason}</span></div>
+      <div className="call-text"><strong>{stopsIn(ending.stopsAt, now)}</strong><span>{ending.reason}</span></div>
       <div className="call-actions">
         <button className="text-button" onClick={() => void invoke('capture_stop')}>Stop</button>
         <button className="primary" onClick={() => void invoke('capture_keep')}>Keep recording</button>
