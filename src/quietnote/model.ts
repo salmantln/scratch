@@ -145,6 +145,15 @@ export function owns(person: Person, owner: string): boolean {
   return Boolean(o) && (o === name || o === name.split(/\s+/)[0] || (Boolean(person.email) && o === person.email));
 }
 /** The meeting file with a new title on its `# ` line. */
+/** The header's `Project:` line (before the first section), for a meeting moved to `project`. */
+export function reproject(markdown: string, project: string): string {
+  const lines = markdown.split('\n');
+  const end = lines.findIndex(l => l.startsWith('## '));
+  const at = lines.slice(0, end < 0 ? lines.length : end).findIndex(l => l.startsWith('Project: '));
+  if (at < 0) return markdown;
+  lines[at] = `Project: ${project}`;
+  return lines.join('\n');
+}
 export function retitle(markdown: string, title: string): string {
   const lines = markdown.split('\n');
   const at = lines.findIndex(l => l.startsWith('# '));

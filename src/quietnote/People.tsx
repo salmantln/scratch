@@ -1,18 +1,18 @@
 import { useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { Hush } from './Hush';
-import { MeetingList } from './Library';
+import { MeetingList, type Move } from './Library';
 import { actionItems, owns, people, shortDate, type Meeting, type MeetingTab, type Person } from './model';
 /** Who the user meets, from calendar invites: everyone, grouped by company (their email's domain), and a page for
  * each person or company with the meetings they were in and the action items they own. `selected` is a person's
  * key or `@domain`. Built from the meetings on this device only. */
-export function People({ meetings, selected, calendar, onSelect, onOpen, onToggle, onSettings }: {
-  meetings: Meeting[]; selected: string; calendar: boolean; onSelect: (key: string) => void; onOpen: (id: string, tab?: MeetingTab) => void;
+export function People({ meetings, selected, calendar, move, onSelect, onOpen, onToggle, onSettings }: {
+  meetings: Meeting[]; selected: string; calendar: boolean; move: Move; onSelect: (key: string) => void; onOpen: (id: string, tab?: MeetingTab) => void;
   onToggle: (id: string, index: number) => Promise<void>; onSettings: () => void;
 }) {
   const everyone = useMemo(() => people(meetings), [meetings]);
   const [query, setQuery] = useState('');
-  if (selected) return <Detail key={selected} everyone={everyone} meetings={meetings} selected={selected} onSelect={onSelect} onOpen={onOpen} onToggle={onToggle} />;
+  if (selected) return <Detail key={selected} everyone={everyone} meetings={meetings} selected={selected} move={move} onSelect={onSelect} onOpen={onOpen} onToggle={onToggle} />;
   const q = query.trim().toLowerCase();
   const shown = everyone.filter(p => !q || `${p.name} ${p.email} ${p.company}`.toLowerCase().includes(q));
   const companies = [...new Set(shown.map(p => p.company))].sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a.localeCompare(b));
@@ -35,8 +35,8 @@ export function People({ meetings, selected, calendar, onSelect, onOpen, onToggl
   </div>;
 }
 /** One person, or everyone at one company: their meetings, newest first, and the open action items they own. */
-function Detail({ everyone, meetings, selected, onSelect, onOpen, onToggle }: {
-  everyone: Person[]; meetings: Meeting[]; selected: string; onSelect: (key: string) => void; onOpen: (id: string, tab?: MeetingTab) => void; onToggle: (id: string, index: number) => Promise<void>;
+function Detail({ everyone, meetings, selected, move, onSelect, onOpen, onToggle }: {
+  everyone: Person[]; meetings: Meeting[]; selected: string; move: Move; onSelect: (key: string) => void; onOpen: (id: string, tab?: MeetingTab) => void; onToggle: (id: string, index: number) => Promise<void>;
 }) {
   const company = selected.startsWith('@') ? selected.slice(1) : '';
   const group = company ? everyone.filter(p => p.company === company) : everyone.filter(p => p.key === selected);
@@ -64,7 +64,7 @@ function Detail({ everyone, meetings, selected, onSelect, onOpen, onToggle }: {
     </section>}
     <section className="home-section" aria-labelledby="person-meetings">
       <h2 id="person-meetings">Meetings</h2>
-      <MeetingList meetings={theirs} showProject onOpen={id => onOpen(id)} />
+      <MeetingList meetings={theirs} showProject onOpen={id => onOpen(id)} move={move} />
     </section>
   </div>;
 }

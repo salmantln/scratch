@@ -136,7 +136,7 @@ mod tests {
         for (start, end, voice) in &voices { println!("{:>7.1}–{:>7.1}s  voice {voice}", *start as f64 / 1000.0, *end as f64 / 1000.0); }
         if std::env::var("QUIETNOTE_TEST_TRANSCRIBE").is_ok() {
             use crate::transcribe::{MODEL, VAD};
-            let [mic, mut system] = crate::transcribe::recognize(&models.join(MODEL), &models.join(VAD), &audio, 0, std::sync::Arc::new(|_| {})).unwrap();
+            let [mic, mut system] = crate::transcribe::recognize(&models.join(MODEL), &models.join(VAD), &|name| crate::transcribe::track(&audio, name), 0, std::sync::Arc::new(|_| {})).unwrap();
             label(&mut system, &voices, 1);
             let (turns, echo) = crate::transcript::merge(mic, system);
             println!("{}", crate::transcript::markdown(&crate::transcript::Transcript { version: 1, model: MODEL.into(), turns, echo }, true));

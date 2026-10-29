@@ -1,6 +1,7 @@
 //! QuietNote meeting bundles. Existing Scratch Markdown commands remain available.
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -59,6 +60,10 @@ pub struct Meeting {
 #[derive(Serialize)]
 pub struct Archive { root: String, projects: Vec<String>, meetings: Vec<Meeting> }
 
+/// Held from looking a meeting's folder up to the end of reading or writing its files, so a move
+/// (`move_meeting`) lands wholly before or after: whoever looks it up next finds it where it is now.
+static FILES: Mutex<()> = Mutex::new(());
+pub(crate) fn files() -> MutexGuard<'static, ()> { FILES.lock().unwrap_or_else(|e| e.into_inner()) }
 pub(crate) fn root(app: &AppHandle) -> Result<PathBuf, String> {
     let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("meetings");
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
@@ -116,8 +121,14 @@ pub(crate) fn read_metadata(root: &Path) -> Result<Vec<(Metadata, PathBuf)>, Str
     for entry in walkdir::WalkDir::new(root).min_depth(3).max_depth(3).follow_links(false) {
         let entry = entry.map_err(|e| e.to_string())?;
         if entry.file_name() != "metadata.json" || !entry.file_type().is_file() { continue; }
-        let metadata: Metadata = serde_json::from_slice(&std::fs::read(entry.path()).map_err(|e| e.to_string())?)
+        let mut metadata: Metadata = serde_json::from_slice(&std::fs::read(entry.path()).map_err(|e| e.to_string())?)
             .map_err(|e| format!("Invalid metadata at {}: {}", entry.path().display(), e))?;
+        // A move stopped between renaming the folder and rewriting its metadata: the folder says where it is.
+        let folder = |path: Option<&Path>| path.and_then(Path::file_name).map(|n| n.to_string_lossy().into_owned());
+        let (meeting, project) = (folder(entry.path().parent()), folder(entry.path().parent().and_then(Path::parent)));
+        if let (Some(meeting), Some(project)) = (meeting, project) {
+            if meeting == metadata.id && project != metadata.project && safe_component(&project) { relocate(&mut metadata, &project); }
+        }
         let dir = bundle(root, &metadata)?;
         if dir.join("metadata.json") != entry.path() { return Err("Meeting metadata does not match its directory".into()); }
         for name in ["meeting.md", "transcript.md"] {
@@ -132,6 +143,29 @@ pub(crate) fn read_metadata(root: &Path) -> Result<Vec<(Metadata, PathBuf)>, Str
 /// A meeting's metadata and folder.
 pub(crate) fn find(root: &Path, id: &str) -> Result<(Metadata, PathBuf), String> {
     read_metadata(root)?.into_iter().find(|(m, _)| m.id == id).ok_or_else(|| "This meeting no longer exists".into())
+}
+/// Points a meeting's paths into `project`.
+fn relocate(metadata: &mut Metadata, project: &str) {
+    let id = metadata.id.clone();
+    metadata.project = project.into();
+    metadata.meeting_path = format!("{project}/{id}/meeting.md");
+    metadata.transcript_path = format!("{project}/{id}/transcript.md");
+    if metadata.audio_path.is_some() { metadata.audio_path = Some(format!("{project}/{id}/audio")); }
+}
+/// Moves a meeting's folder (notes, transcript, audio) into another project. The folder is renamed
+/// before its metadata is rewritten, so if QuietNote stops in between, `read_metadata` follows the folder.
+/// A recording carries on into the moved files, which stay open.
+fn move_bundle(root: &Path, id: &str, project: &str) -> Result<Metadata, String> {
+    let _files = files();
+    let (mut metadata, dir) = find(root, id)?;
+    if metadata.project == project { return Ok(metadata); }
+    if !list_projects(root)?.iter().any(|p| p == project) { return Err("That project no longer exists.".into()); }
+    relocate(&mut metadata, project);
+    let target = bundle(root, &metadata)?;
+    if target.exists() { return Err(format!("{project} already has a meeting folder with this name.")); }
+    std::fs::rename(&dir, &target).map_err(|e| e.to_string())?;
+    write_metadata(&target, &metadata)?;
+    Ok(metadata)
 }
 pub(crate) fn write_metadata(dir: &Path, metadata: &Metadata) -> Result<(), String> {
     atomic_write(&dir.join("metadata.json"), &serde_json::to_vec_pretty(metadata).map_err(|e| e.to_string())?)
@@ -215,12 +249,14 @@ pub async fn save_meeting_metadata(app: AppHandle, metadata: Metadata) -> Result
     // While recording or transcribing, the Rust side owns the meeting's status.
     if app.state::<crate::capture::Capture>().owns(&metadata.id) { return Err("This meeting is recording or being transcribed".into()); }
     let root = root(&app)?;
+    let _files = files();
     let dir = bundle(&root, &metadata)?;
     if !dir.join("metadata.json").exists() { return Err("Meeting does not exist".into()); }
     write_metadata(&dir, &metadata)
 }
 /// Moves a meeting's folder (notes, transcript, audio) to the Trash, or the Recycle Bin, where it can be put back until emptied.
 fn trash_bundle(root: &Path, id: &str) -> Result<(), String> {
+    let _files = files();
     let (_, dir) = find(root, id)?;
     // Through NSFileManager: the crate's default asks Finder, which needs Automation permission and plays a sound.
     #[cfg(target_os = "macos")]
@@ -238,6 +274,14 @@ fn trash_bundle(root: &Path, id: &str) -> Result<(), String> {
 pub async fn trash_meeting(app: AppHandle, id: String) -> Result<(), String> {
     if app.state::<crate::capture::Capture>().owns(&id) { return Err("This meeting is recording or being transcribed".into()); }
     tauri::async_runtime::spawn_blocking(move || trash_bundle(&root(&app)?, &id))
+        .await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub async fn move_meeting(app: AppHandle, id: String, project: String) -> Result<Metadata, String> {
+    // Windows can't rename a folder while files inside it are open.
+    #[cfg(target_os = "windows")]
+    if app.state::<crate::capture::Capture>().records(&id) { return Err("On Windows a meeting can’t be moved while it records. Move it after you stop.".into()); }
+    tauri::async_runtime::spawn_blocking(move || move_bundle(&root(&app)?, &id, &project))
         .await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
@@ -315,6 +359,39 @@ mod tests {
         assert_eq!(projects, vec!["Acme", "Empty", "Northstar"]);
         assert_eq!(recent.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), vec!["m4", "m2", "m3"]);
         assert_eq!(recent[0].1, "Meeting m4");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn meetings_move_between_projects_with_their_files() {
+        let root = std::env::temp_dir().join(format!("quietnote-move-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        make_project(&root, "Northstar").unwrap();
+        let meeting = |id: &str| -> Meeting { serde_json::from_value(serde_json::json!({"metadata":{"id":id,"title":"Call","date":"2026-09-01T10:00:00Z","duration":0,"project":"Acme","participants":[],"status":"processing","captureStartedAt":null,"captureEndedAt":null,"audioPath":format!("Acme/{id}/audio"),"transcriptPath":format!("Acme/{id}/transcript.md"),"meetingPath":format!("Acme/{id}/meeting.md"),"tags":[]},"markdown":"# Call","transcript":""})).unwrap() };
+        write_bundle(&root, &meeting("m1"), true).unwrap();
+        std::fs::create_dir(root.join("Acme/m1/audio")).unwrap();
+        std::fs::write(root.join("Acme/m1/audio/mic.wav"), b"audio").unwrap();
+        // An open file (a recording) carries on into the moved folder.
+        let mut recording = std::fs::OpenOptions::new().append(true).open(root.join("Acme/m1/audio/mic.wav")).unwrap();
+        let moved = move_bundle(&root, "m1", "Northstar").unwrap();
+        std::io::Write::write_all(&mut recording, b" more").unwrap();
+        assert_eq!((moved.project.as_str(), moved.meeting_path.as_str(), moved.audio_path.as_deref()), ("Northstar", "Northstar/m1/meeting.md", Some("Northstar/m1/audio")));
+        assert_eq!(find(&root, "m1").unwrap().1, root.join("Northstar/m1"));
+        assert_eq!(std::fs::read(root.join("Northstar/m1/audio/mic.wav")).unwrap(), b"audio more");
+        assert!(!root.join("Acme/m1").exists());
+        // Its own project, one that doesn't exist, and a folder already there.
+        assert_eq!(move_bundle(&root, "m1", "Northstar").unwrap().project, "Northstar");
+        assert!(move_bundle(&root, "m1", "Nowhere").is_err());
+        assert!(move_bundle(&root, "m1", "../Escape").is_err());
+        write_bundle(&root, &meeting("m1-copy"), true).unwrap();
+        std::fs::create_dir_all(root.join("Northstar/m1-copy")).unwrap();
+        assert!(move_bundle(&root, "m1-copy", "Northstar").is_err());
+        assert!(root.join("Acme/m1-copy/metadata.json").exists());
+        // Stopped after the rename, before the metadata: reading follows the folder.
+        std::fs::remove_dir(root.join("Northstar/m1-copy")).unwrap();
+        std::fs::rename(root.join("Acme/m1-copy"), root.join("Northstar/m1-copy")).unwrap();
+        let (followed, _) = find(&root, "m1-copy").unwrap();
+        assert_eq!((followed.project.as_str(), followed.transcript_path.as_str()), ("Northstar", "Northstar/m1-copy/transcript.md"));
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -22,9 +22,7 @@ async function newMeeting(page: Page, title: string) {
   await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
 }
 const tab = (page: Page, name: string) => page.getByRole('tab', { name: new RegExp(`^${name}`) });
-// The Notes tab shows the enhanced notes or your own.
-const view = (page: Page, name: 'Enhanced notes' | 'My notes') => page.getByRole('group', { name: 'Notes view' }).getByRole('button', { name });
-async function myNotes(page: Page) { await tab(page, 'Notes').click(); await view(page, 'My notes').click(); }
+async function myNotes(page: Page) { await tab(page, 'My notes').click(); }
 const home = (page: Page) => page.getByRole('button', { name: 'Home', exact: true });
 // Home also names meetings beside their action items, so rows are found by their own class.
 const row = (page: Page, title: string) => page.locator('.meeting-row', { hasText: title });
@@ -220,15 +218,21 @@ test('A: first launch creates a project, then a meeting', async ({ page }) => {
   await expect(page.getByLabel('Project', { exact: true })).toHaveValue('Acme');
   await page.getByRole('button', { name: 'Create meeting' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Untitled meeting' })).toBeVisible();
-  // Two tabs; a new meeting opens on your own notes.
-  await expect(page.getByRole('tab')).toHaveText(['Notes', 'Transcript']);
-  await expect(view(page, 'My notes')).toHaveAttribute('aria-pressed', 'true');
-  await tab(page, 'Transcript').click();
+  // One row of three tabs, with no second switch under it; a new meeting opens on your own notes.
+  await expect(page.getByRole('tab')).toHaveText(['Enhanced notes', 'My notes', 'Transcript']);
+  await expect(page.getByRole('group', { name: 'Notes view' })).toHaveCount(0);
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
+  // The arrow keys move across all three, wrapping round.
+  await tab(page, 'My notes').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(tab(page, 'Transcript')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'Transcript')).toBeFocused();
   await expect(page.getByText('Transcript unavailable.')).toBeVisible();
-  // Back on Notes, it's the notes you were on.
-  await tab(page, 'Notes').click();
-  await expect(view(page, 'My notes')).toHaveAttribute('aria-pressed', 'true');
-  await view(page, 'Enhanced notes').click();
+  await page.keyboard.press('ArrowRight');
+  await expect(tab(page, 'Enhanced notes')).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('ArrowLeft');
+  await expect(tab(page, 'Transcript')).toHaveAttribute('aria-selected', 'true');
+  await tab(page, 'Enhanced notes').click();
   await expect(page.getByText('No enhanced notes yet.')).toBeVisible();
   await expect(page.locator('.empty-inline .hush')).toHaveClass(/hush-resting/);
   await page.getByRole('textbox', { name: 'Add an action item' }).fill('Maya — send the plan');
@@ -237,8 +241,22 @@ test('A: first launch creates a project, then a meeting', async ({ page }) => {
   await expect(page.locator('.action-owner')).toHaveText('Maya');
   await page.reload();
   await expect(page.getByRole('heading', { level: 1, name: 'Untitled meeting' })).toBeVisible();
-  await expect(view(page, 'Enhanced notes')).toHaveAttribute('aria-pressed', 'true');
+  await expect(tab(page, 'Enhanced notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.action-text')).toHaveText('send the plan');
+  // A made-up name rests in grey with its pencil showing; once named, the pencil shows only on hover.
+  const title = page.getByRole('button', { name: 'Untitled meeting' });
+  await expect(title).toHaveClass(/made-up/);
+  await expect(title.locator('svg')).toHaveCSS('opacity', '1');
+  await title.click();
+  await page.getByRole('textbox', { name: 'Meeting title' }).fill('Acme kickoff');
+  await page.keyboard.press('Enter');
+  const named = page.getByRole('button', { name: 'Acme kickoff' });
+  await expect(named).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(named).not.toHaveClass(/made-up/);
+  await expect(named.locator('svg')).toHaveCSS('opacity', '0');
+  await named.hover();
+  await expect(named.locator('svg')).toHaveCSS('opacity', '1');
 });
 
 test('A1: onboarding ends by asking your name, optionally, and keeps the kind of meeting chosen too', async ({ page }) => {
@@ -266,16 +284,17 @@ test('B: prototype capture is labelled honestly and invents nothing', async ({ p
   await expect(recorder.getByRole('status')).toContainText('Capturing');
   // The recorder is a strip in the meeting, not a dialog: Notes opens and stays usable while it runs.
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   await page.locator('.tiptap').click();
   await page.keyboard.type('Ship on Friday.');
   await page.screenshot({ path: 'docs/screenshots/03-capture.png' });
   await recorder.getByRole('button', { name: 'Stop capture' }).click();
   await expect(recorder).toHaveCount(0);
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.tiptap')).toContainText('Ship on Friday.');
-  await view(page, 'Enhanced notes').click();
+  await tab(page, 'Enhanced notes').click();
   await expect(page.getByText('No enhanced notes yet.')).toBeVisible();
+  await expect(page.getByText('Enhancing needs a transcript, and recording isn’t available on this computer.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start capture' })).toHaveCount(0);
   await tab(page, 'Transcript').click();
   await expect(page.getByText('Transcript unavailable.')).toBeVisible();
@@ -288,12 +307,12 @@ test('C: review an example meeting, toggle actions, edit notes, read the transcr
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message));
   await examples(page);
-  await expect(page.locator('.meeting-row .badge.example')).toHaveCount(6);
+  await expect(page.locator('.meeting-row .example-note')).toHaveCount(6);
   await page.screenshot({ path: 'docs/screenshots/01-library.png' });
   await row(page, 'Acme onboarding call').click();
   await expect(page.getByText('Acme is ready to move into implementation.', { exact: false })).toBeVisible();
   // A meeting with enhanced notes opens on them, led by its action items, and nothing about decisions.
-  await expect(view(page, 'Enhanced notes')).toHaveAttribute('aria-pressed', 'true');
+  await expect(tab(page, 'Enhanced notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.note-actions .action-row')).toHaveCount(4);
   expect(await page.locator('.note-actions').evaluate(el => Boolean(el.compareDocumentPosition(document.querySelector('.summary-text')!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await expect(page.locator('.meeting-content')).not.toContainText('Decisions');
@@ -306,7 +325,7 @@ test('C: review an example meeting, toggle actions, edit notes, read the transcr
   await page.reload();
   await expect(page.locator('.action-row input').first()).toBeChecked();
   await expect(page.locator('.action-row.complete')).toHaveCount(1);
-  await view(page, 'My notes').click();
+  await tab(page, 'My notes').click();
   const editor = page.locator('.tiptap');
   await editor.click();
   await page.keyboard.press('ControlOrMeta+End');
@@ -518,6 +537,10 @@ async function mockDesktop(page: Page, fixture: Fixture) {
       summaryKey: false,
       suggestions: null as unknown,
       saved: '',
+      savedPath: '',
+      // The last native menu (`Menu.new`) and how many times one popped up; `choose` clicks one of its items.
+      menu: null as null | { items: unknown[] },
+      menus: 0,
       clipboard: '',
       templates: [{ name: 'General', sections: [{ heading: 'Overview', description: '' }, { heading: 'Next steps', description: '' }], builtIn: true }, { name: '1:1', sections: [{ heading: 'Updates', description: '' }], builtIn: true }],
       enhanced: null as unknown,
@@ -552,7 +575,9 @@ async function mockDesktop(page: Page, fixture: Fixture) {
     const emit = (event: string, payload: unknown) => (listeners[event] ?? []).forEach(id => callbacks.get(id)?.({ event, id: 0, payload }));
     const update = (id: string, change: Partial<Meta>) => { const m = find(id); m.metadata = { ...m.metadata, ...change }; return m.metadata; };
     w.isTauri = true;
-    w.__qn = { state, emit, meetings };
+    type Item = { text: string; items?: Item[]; handler?: { id: number } };
+    const choose = (text: string, items = (state.menu?.items ?? []) as Item[]): boolean => items.some(i => i.text === text && i.handler ? (callbacks.get(i.handler.id)?.({ index: 0, message: text }), true) : choose(text, i.items ?? []));
+    w.__qn = { state, emit, meetings, choose };
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     w.__TAURI_INTERNALS__ = {
       metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } },
@@ -578,6 +603,12 @@ async function mockDesktop(page: Page, fixture: Fixture) {
           case 'create_meeting_bundle': meetings.push(args.meeting); return null;
           case 'save_meeting_metadata': { const m = find((args.metadata as Meta).id); m.metadata = args.metadata; return null; }
           case 'trash_meeting': meetings.splice(meetings.indexOf(find(args.id)), 1); return null;
+          case 'move_meeting': {
+            const at = (file: string) => `${args.project}/${args.id}/${file}`;
+            return update(args.id, { project: args.project, meetingPath: at('meeting.md'), transcriptPath: at('transcript.md'), audioPath: find(args.id).metadata.audioPath && at('audio') });
+          }
+          case 'plugin:menu|new': state.menu = args.options; return [1, 'menu'];
+          case 'plugin:menu|popup': state.menus++; return null;
           case 'capture_start': {
             if (startFailure) throw startFailure;
             const m = find(args.meetingId);
@@ -606,7 +637,7 @@ async function mockDesktop(page: Page, fixture: Fixture) {
           case 'capture_set_device': state.devices = { ...state.devices, selected: args.name }; return null;
           case 'transcribe_meeting': return update(args.meetingId, { status: 'processing', error: null });
           case 'transcript_data': return state.transcriptData;
-          case 'save_file_direct': state.saved = args.content; return { path: args.path, content: args.content, title: '', modified: 0 };
+          case 'save_file_direct': state.saved = args.content; state.savedPath = args.path; return { path: args.path, content: args.content, title: '', modified: 0 };
           case 'license_status': return state.license;
           case 'license_activate': if (typeof state.licenseAnswer === 'string') throw state.licenseAnswer; state.license = { available: true, license: state.licenseAnswer }; return state.licenseAnswer;
           case 'license_remove': state.license = { available: true, license: null }; return null;
@@ -641,7 +672,7 @@ async function mockDesktop(page: Page, fixture: Fixture) {
     };
   }, fixture);
 }
-type Mock = { state: { calls: string[]; preferences: Record<string, unknown>; capture: Record<string, unknown>; transcriptData: unknown; devices: { devices: string[]; selected: string | null }; draft: unknown; compact: boolean; summaryKey: boolean; suggestions: unknown; saved: string }; emit: (event: string, payload: unknown) => void; meetings: ReturnType<typeof makeMeeting>[] };
+type Mock = { state: { calls: string[]; preferences: Record<string, unknown>; capture: Record<string, unknown>; transcriptData: unknown; devices: { devices: string[]; selected: string | null }; draft: unknown; compact: boolean; summaryKey: boolean; suggestions: unknown; saved: string; savedPath: string; menu: null | { items: { text: string; items?: { text: string }[] }[] }; menus: number }; emit: (event: string, payload: unknown) => void; meetings: ReturnType<typeof makeMeeting>[]; choose: (text: string) => boolean };
 /** Runs `fn` in the page with the mock. It's serialized, so it can't use variables from the test. */
 const qn = <T,>(page: Page, fn: (qn: Mock) => T) => page.evaluate(`(${fn.toString()})(window.__qn)`) as Promise<T>;
 const writes = ['save_meeting_metadata', 'render_transcripts', 'create_meeting_bundle', 'capture_start', 'capture_stop', 'transcribe_meeting'];
@@ -665,17 +696,13 @@ test('J: desktop recording runs in the background, then shows a clean transcript
   await expect(recorder.getByRole('status')).toContainText('Recording');
   expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
   await expect(recorder).not.toContainText('Prototype');
-  // The levels show at once that it's recording, from whichever side is louder; the word is for screen readers.
-  const levels = recorder.getByRole('button', { name: 'Recording details' }).locator('i.on');
-  await expect(levels).toHaveCount(0);
-  await qn(page, q => q.emit('quietnote://levels', [0.3, 0]));
-  await expect(levels).toHaveCount(5);
-  await qn(page, q => q.emit('quietnote://levels', [0.01, 0.05]));
-  await expect(levels).toHaveCount(3);
+  // The red dot shows it's recording; the word is for screen readers. Stop is labelled.
+  await expect(recorder.getByRole('button', { name: 'Recording details' }).locator('.live-dot')).toBeVisible();
+  await expect(recorder.getByRole('button', { name: 'Stop recording' })).toHaveText('Stop');
   await expect(recorder.locator('.recorder-time')).toHaveText(/^00:0\d$/);
   // Recording opens Notes and nothing covers it. Here the strip is the recorder, so the window bar steps aside.
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.tiptap')).toBeVisible();
   const bar = page.locator('.recording-bar');
   await expect(bar).toHaveCount(0);
@@ -699,7 +726,7 @@ test('J: desktop recording runs in the background, then shows a clean transcript
   await expect(page.getByRole('heading', { level: 1, name: 'Design review' })).toBeVisible();
   await expect(saved).toHaveCount(0);
   await expect(page.getByText(/Transcribing on this (Mac|PC)… 40%/)).toBeVisible();
-  await expect(page.getByText('The audio is kept until the transcript is saved.', { exact: false })).toBeVisible();
+  await expect(page.getByText('The audio stays saved on this', { exact: false })).toBeVisible();
   await qn(page, q => {
     const [m] = q.meetings;
     q.state.transcriptData = [
@@ -752,12 +779,12 @@ test('K: New meeting records with one press, or creates without recording; recor
   const recorder = page.getByRole('region', { name: 'Recorder' });
   await expect(recorder.getByRole('status')).toContainText('Recording');
   expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   await recorder.getByRole('button', { name: 'Stop recording' }).click();
   // Stopping needs no confirmation step: the strip goes and the meeting says it's transcribing.
   await expect(recorder).toHaveCount(0);
   await expect(page.getByText(/Transcribing on this (Mac|PC)… 40%/)).toBeVisible();
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Active now' })).toBeVisible();
   // Where recording is real, every privacy setting shown is enforced: nothing planned or inert.
@@ -852,7 +879,7 @@ test('N: one recording at a time, and device problems show everywhere', async ({
   await expect(bar.locator('.recording-problem')).toHaveAttribute('title', 'Microphone disconnected. Reconnecting…');
   await expect(bar.getByRole('img', { name: 'Microphone disconnected. Reconnecting…' })).toBeVisible();
   await bar.getByRole('button', { name: 'Acme onboarding' }).click();
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   const recorder = page.getByRole('region', { name: 'Recorder' });
   await expect(recorder.getByRole('alert')).toContainText('Microphone disconnected. Reconnecting…');
   await expect(recorder.locator('.recorder-time')).toHaveText(/^01:0[5-9]$/);
@@ -897,7 +924,7 @@ test('P: the sidebar hides and shows from the header button or ⌘\\, and stays 
   await page.getByRole('button', { name: 'Hide sidebar' }).click();
   await expect(sidebar).toBeHidden();
   await page.locator('.meeting-row').first().click();
-  await expect(tab(page, 'Notes')).toBeVisible();
+  await expect(tab(page, 'My notes')).toBeVisible();
   await expect(sidebar).toBeHidden();
   await page.keyboard.press('ControlOrMeta+\\');
   await expect(sidebar).toBeVisible();
@@ -932,7 +959,8 @@ test('Q: Home lists open action items from every meeting, and a tick is written 
   await examples(page);
   const card = page.getByRole('region', { name: 'Recording' });
   await expect(card).toContainText('Recording needs the desktop app.');
-  await expect(card.locator('.hush')).toHaveClass(/hush-resting/);
+  // Where nothing records, the card is one quiet line: no Hush and no cobalt button.
+  await expect(card.locator('.hush')).toHaveCount(0);
   await expect(card.getByRole('button', { name: 'New meeting' })).toHaveClass(/secondary/);
   const items = page.locator('.home-section', { has: page.getByRole('heading', { name: /^Open action items/ }) });
   const total = demoMeetings.reduce((n, m) => n + actionItems(m.markdown).length, 0);
@@ -948,7 +976,7 @@ test('Q: Home lists open action items from every meeting, and a tick is written 
   await expect(items.locator('.home-count')).toHaveText(String(total - 1));
   await expect(page.getByRole('status').filter({ hasText: 'Saved in this browser' })).toBeVisible();
   await first.getByRole('button', { name: 'Acme onboarding call' }).click();
-  await expect(view(page, 'Enhanced notes')).toHaveAttribute('aria-pressed', 'true');
+  await expect(tab(page, 'Enhanced notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.action-row', { hasText: 'send the revised onboarding plan' }).locator('input')).toBeChecked();
   await home(page).click();
   await expect(page.locator('.action-text', { hasText: 'send the revised onboarding plan' })).toHaveCount(0);
@@ -958,6 +986,22 @@ test('Q: Home lists open action items from every meeting, and a tick is written 
   await page.keyboard.type('phase two');
   await expect(page.getByRole('searchbox', { name: 'Search meetings' })).toHaveValue('phase two');
   await expect(page.locator('.result').first()).toContainText('Acme onboarding call');
+});
+
+test('Q0: Home asks for your name to put your items first, and its Recent list has no month headings', async ({ page }) => {
+  await examples(page);
+  const items = page.locator('.home-section', { has: page.getByRole('heading', { name: /^Open action items/ }) });
+  await expect(items.locator('.home-hint')).toHaveText('Add your name in Settings to see your items first.');
+  await expect(page.locator('.home-section', { has: page.getByRole('heading', { name: 'Recent' }) }).locator('.group-label')).toHaveCount(0);
+  // The sidebar's New meeting isn't cobalt, so a screen has one primary action at most.
+  await expect(page.locator('.new-meeting')).toHaveClass(/secondary/);
+  await items.getByRole('button', { name: 'Add your name' }).click();
+  await expect(page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Privacy' })).toHaveAttribute('aria-current', 'page');
+  await page.getByRole('textbox', { name: 'Your name' }).fill('Maya Chen');
+  await home(page).click();
+  // Maya's items now lead, and the hint is gone.
+  await expect(items.locator('.home-hint')).toHaveCount(0);
+  await expect(items.locator('.action-owner').first()).toHaveText('Maya');
 });
 
 test('Q1: a tick says so in a toast, and Undo puts the item back as it was', async ({ page }) => {
@@ -1006,7 +1050,7 @@ test('Q2: the Action items page lists every meeting’s items under the meeting,
   await expect(page.locator('.actions-page .action-text')).toHaveText('send the revised onboarding plan by 30 September');
   // The meeting's title opens its enhanced notes, where the item is ticked.
   await page.getByRole('region', { name: 'Acme onboarding call' }).getByRole('button', { name: 'Acme onboarding call' }).click();
-  await expect(view(page, 'Enhanced notes')).toHaveAttribute('aria-pressed', 'true');
+  await expect(tab(page, 'Enhanced notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.note-actions .action-row input').first()).toBeChecked();
 });
 
@@ -1064,7 +1108,7 @@ test('R: Home says whether recording is ready, and a recording never gets a seco
   await expect(card.getByRole('button', { name: 'Start recording' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Stop recording' })).toHaveCount(1);
   await card.getByRole('button', { name: 'Open meeting' }).click();
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('region', { name: 'Recorder' }).getByRole('status')).toContainText('Recording');
   await expect(page.getByRole('button', { name: 'Stop recording' })).toHaveCount(1);
   await home(page).click();
@@ -1088,7 +1132,7 @@ test('R: Home says whether recording is ready, and a recording never gets a seco
   await card.getByRole('button', { name: 'Start recording' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 1, name: 'Untitled meeting' })).toBeVisible();
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('region', { name: 'Recorder' }).getByRole('status')).toContainText('Recording');
   expect(await qn(page, q => q.meetings.filter(m => m.metadata.title === 'Untitled meeting').map(m => m.metadata.project))).toEqual(['Acme']);
   expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
@@ -1289,7 +1333,7 @@ test('S: if the notes editor fails to load, the window stays usable and Reload r
   await expect(page.getByRole('complementary', { name: 'Main navigation' })).toBeVisible();
   await page.unroute('**/src/components/editor/Editor.tsx*');
   await failure.getByRole('button', { name: 'Reload' }).click();
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.tiptap')).toBeVisible();
 });
 
@@ -1308,7 +1352,7 @@ test('T: a detected call records from the panel in a meeting named after the app
   await qn(page, q => q.emit('quietnote://record-call', 'Zoom'));
   await expect(page.getByRole('heading', { level: 1, name: 'Zoom call' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Recorder' }).getByRole('status')).toContainText('Recording');
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   expect(await qn(page, q => q.meetings.map(m => [m.metadata.title, m.metadata.project]).filter(([title]) => title === 'Zoom call'))).toEqual([['Zoom call', 'Acme']]);
   expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
   // Like a notepad beside the call: the window becomes a narrow column with only the meeting in it.
@@ -1377,11 +1421,23 @@ test('U: the recorder stays at the bottom while notes grow, pauses and resumes, 
   await page.goto('/');
   await page.locator('.recording-bar').getByRole('button', { name: 'Acme onboarding' }).click();
   const recorder = page.getByRole('region', { name: 'Recorder' });
+  // Folded by default, it's a small pill: the dot, the time, Pause and Stop. The notes keep the room.
+  const details = recorder.getByRole('button', { name: 'Recording details' });
+  await expect(details).toHaveAttribute('aria-expanded', 'false');
+  await expect(recorder.getByRole('button', { name: 'Copy message' })).toHaveCount(0);
+  await expect(recorder.getByLabel('Microphone')).toHaveCount(0);
+  expect((await recorder.boundingBox())!.width).toBeLessThan(300);
+  // The details open: the consent line, the microphone, and where the live draft is (not here).
+  await details.click();
+  await expect(details).toHaveAttribute('aria-expanded', 'true');
   await expect(recorder).toContainText('Let everyone know you’re recording.');
+  await expect(recorder).toContainText('Live draft on the Transcript tab');
+  await expect(recorder.getByRole('log')).toHaveCount(0);
   // A message to paste into the call's chat; QuietNote never types into the call app.
   await recorder.getByRole('button', { name: 'Copy message' }).click();
   await expect(recorder.getByRole('button', { name: 'Copied' })).toBeVisible();
   expect(await qn(page, q => q.state.clipboard)).toBe('Heads up: I’m recording this call for my notes. It’s transcribed on my computer, and no bot joins the call.');
+  await expect(recorder.getByLabel('Microphone')).toBeVisible();
   // Pinned to the bottom of the window, also once the notes are longer than the window.
   await page.locator('.tiptap').click();
   for (let i = 0; i < 30; i++) await page.keyboard.press('Enter');
@@ -1389,21 +1445,9 @@ test('U: the recorder stays at the bottom while notes grow, pauses and resumes, 
   const box = (await recorder.boundingBox())!;
   expect(box.y + box.height).toBeGreaterThan(640 - 40);
   expect(box.y + box.height).toBeLessThanOrEqual(640);
-  // Details fold away, and come back.
-  const details = recorder.getByRole('button', { name: 'Recording details' });
-  await details.click();
-  await expect(details).toHaveAttribute('aria-expanded', 'false');
-  // Folded, it's a small pill: no consent line or microphone, only the levels, the time, Pause and Stop.
-  await expect(recorder.getByRole('button', { name: 'Copy message' })).toHaveCount(0);
-  await expect(recorder.getByLabel('Microphone')).toHaveCount(0);
-  expect((await recorder.boundingBox())!.width).toBeLessThan(300);
-  await details.click();
-  await expect(recorder.getByRole('button', { name: 'Copy message' })).toBeVisible();
-  await expect(recorder.getByLabel('Microphone')).toBeVisible();
   // Pause: the clock stops, Resume is the one primary action, and Stop still ends the recording.
   await recorder.getByRole('button', { name: 'Pause' }).click();
   await expect(recorder.getByRole('status')).toHaveText('Paused');
-  await expect(recorder).toContainText('The microphone and call audio aren’t being recorded until you resume.');
   await expect(recorder.getByRole('button', { name: 'Resume' })).toHaveClass(/primary/);
   await expect(recorder.getByRole('button', { name: 'Stop recording' })).not.toHaveClass(/primary/);
   const time = recorder.locator('.recorder-time');
@@ -1434,13 +1478,19 @@ test('V: the live transcript follows the recording as a labelled draft, and the 
   await page.goto('/');
   await page.locator('.recording-bar').getByRole('button', { name: 'Acme onboarding' }).click();
   const recorder = page.getByRole('region', { name: 'Recorder' });
-  const log = recorder.getByRole('log', { name: 'Live transcript' });
+  // The draft lives on the Transcript tab only; the recorder stays a pill beside it.
+  await expect(recorder.getByRole('log')).toHaveCount(0);
+  await tab(page, 'Transcript').click();
+  const panel = page.getByRole('tabpanel');
+  const log = panel.getByRole('log', { name: 'Live transcript' });
   await expect(log).toContainText('Words appear here a few seconds after they’re spoken.');
+  await expect(panel).toContainText('Live draft, transcribed on this Mac. The full transcript is made when you stop.');
+  expect((await recorder.boundingBox())!.width).toBeLessThan(300);
   // Someone talking before their words arrive shows as dots, never as made-up words.
   await qn(page, q => q.emit('quietnote://levels', [0.3, 0]));
   await expect(log.locator('.listening.you')).toBeVisible();
   await expect(log.locator('.listening.others')).toHaveCount(0);
-  // Rust keeps the latest draft (for a view opened later) and sends it.
+  // Rust keeps the latest draft (for a view opened later) and sends it; only this meeting's.
   await qn(page, q => {
     q.state.draft = { meetingId: q.meetings[0].metadata.id, turns: [
       { startMs: 0, speaker: 'You', text: 'Um, so shall we start?', clean: 'So shall we start?' },
@@ -1450,13 +1500,7 @@ test('V: the live transcript follows the recording as a labelled draft, and the 
   });
   await expect(log.locator('.live-turn.you').first()).toHaveText('YouSo shall we start?');
   await expect(log.locator('.live-turn.others')).toHaveText('OthersYes, let’s start.');
-  await expect(recorder).toContainText('Live draft · the full transcript is made when you stop');
-  // The Transcript tab shows the same draft (once: the recorder leaves it to the tab), and only this meeting's.
-  await tab(page, 'Transcript').click();
-  const panel = page.getByRole('tabpanel');
-  await expect(panel).toContainText('So shall we start?');
   await expect(page.getByRole('log', { name: 'Live transcript' })).toHaveCount(1);
-  await expect(recorder.getByRole('log')).toHaveCount(0);
   await qn(page, q => q.emit('quietnote://live-transcript', { meetingId: 'another-meeting', turns: [{ startMs: 0, speaker: 'You', text: 'Wrong meeting', clean: 'Wrong meeting' }] }));
   await expect(panel).not.toContainText('Wrong meeting');
   // After Stop the draft stays, labelled, until the full transcript is ready; then that replaces it.
@@ -1488,7 +1532,7 @@ test('W: a finished meeting records more, and its transcript keeps the earlier p
   const recorder = page.getByRole('region', { name: 'Recorder' });
   await expect(recorder.getByRole('status')).toHaveText('Recording');
   expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
-  await expect(tab(page, 'Notes')).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 'My notes')).toHaveAttribute('aria-selected', 'true');
   await expect(header.getByRole('button', { name: 'Record more' })).toHaveCount(0);
   // The clock carries on from the earlier recording.
   await expect(recorder.locator('.recorder-time')).toHaveText(/^12:3[4-6]$/);
@@ -1512,7 +1556,7 @@ test('highlighting in My notes is saved as ==text==, which enhancing reads as wh
   await mockDesktop(page, { meetings: [done] });
   await page.goto('/');
   await page.getByRole('button', { name: /Acme pilot kickoff/ }).click();
-  await view(page, 'My notes').click();
+  await tab(page, 'My notes').click();
   await page.locator('.tiptap').click();
   await page.keyboard.press('ControlOrMeta+End');
   await page.keyboard.press('Enter');
@@ -1532,13 +1576,13 @@ test('X: summary suggestions ask before sending, cite the transcript, and write 
   await page.getByRole('button', { name: /Pricing sync/ }).click();
   // Off by default: nothing to ask, and the empty state shows what highlighting and enhancing do and where to turn it on.
   await expect(page.getByRole('button', { name: 'Suggest from transcript…' })).toHaveCount(0);
-  await expect(view(page, 'Enhanced notes')).toHaveAttribute('aria-pressed', 'true');
+  await expect(tab(page, 'Enhanced notes')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByText('With summary suggestions on in Settings → Privacy', { exact: false })).toBeVisible();
   // An example, played once: the next time it's the last frame.
   const demo = page.getByRole('img', { name: /^Example: you highlight/ });
   await expect(demo).toHaveClass(/play/);
-  await view(page, 'My notes').click();
-  await view(page, 'Enhanced notes').click();
+  await tab(page, 'My notes').click();
+  await tab(page, 'Enhanced notes').click();
   await expect(demo).toBeVisible();
   await expect(demo).not.toHaveClass(/play/);
   await page.keyboard.press('ControlOrMeta+,');
@@ -1546,7 +1590,7 @@ test('X: summary suggestions ask before sending, cite the transcript, and write 
   await page.getByLabel('Anthropic API key').fill('sk-ant-test');
   await page.getByRole('button', { name: 'Save key' }).click();
   await expect(page.getByText('Anthropic key saved')).toBeVisible();
-  await expect(page.getByText('or ask Claude for summary suggestions', { exact: false })).toBeVisible();
+  await expect(page.getByText('goes to Claude when you ask for suggestions', { exact: false })).toBeVisible();
   await qn(page, q => {
     q.state.transcriptData = [
       { startMs: 0, speaker: 'Others', text: 'Maya will send the pricing draft by Friday.', clean: 'Maya will send the pricing draft by Friday.' },
@@ -1574,7 +1618,7 @@ test('X: summary suggestions ask before sending, cite the transcript, and write 
   await expect(panel).toContainText('One more was left out because it couldn’t be traced to your notes or the transcript.');
   // Drafting writes nothing.
   expect(await qn(page, q => q.state.saved)).toBe('');
-  await panel.getByRole('button', { name: 'Use as summary' }).click();
+  await panel.getByRole('button', { name: 'Use in enhanced notes' }).click();
   await expect(page.locator('.summary-text')).toHaveText('The team settled on annual pricing.');
   await panel.getByRole('listitem').filter({ hasText: 'Send the pricing draft' }).getByRole('button', { name: 'Add' }).click();
   expect(await qn(page, q => q.state.saved)).toContain('- [ ] Maya — Send the pricing draft by Friday');
@@ -1628,7 +1672,7 @@ test('Z: the next meeting of a series shows what the last one left open, and tic
   await mockDesktop(page, { meetings: [last, next] });
   await page.goto('/');
   await row(page, 'Weekly sync').first().click();
-  await tab(page, 'Notes').click();
+  await tab(page, 'My notes').click();
   const card = page.locator('.last-time');
   await expect(card).toContainText('Last time');
   await expect(card).toContainText('send the pricing draft');
@@ -1712,7 +1756,7 @@ test('AA: the calendar names meetings and says who is invited, and never starts 
   const made = await qn(page, q => q.meetings.find(m => m.metadata.calendarEvent === 'ev-sync@1')?.metadata);
   expect(made).toMatchObject({ project: 'Beta', participants: ['Maria Lopez', 'Sam Lee'], calendarSeries: 'series-1', status: 'idle' });
   expect(await qn(page, q => q.state.calls.includes('capture_start'))).toBe(false);
-  await expect(page.getByRole('img', { name: 'Participants: Maria Lopez, Sam Lee' })).toBeVisible();
+  await expect(page.locator('.meeting-meta')).toContainText('Maria Lopez, Sam Lee');
   // Its Notes start with what last week's meeting in the series left open.
   await home(page).click();
   await expect(next.getByRole('button', { name: 'Open notes' })).toBeVisible();
@@ -2079,4 +2123,89 @@ test('AK: Privacy says whether FileVault encrypts the disk, and recordings stay 
   await expect(page.getByText('Encrypted by FileVault')).toHaveCount(0);
   await page.getByRole('button', { name: 'Open System Settings' }).click();
   expect(await qn(page, q => q.state.calls.includes('open_privacy_settings'))).toBe(true);
+});
+
+test('AM: copy says what’s true in each situation', async ({ page }) => {
+  // An example without enhanced notes, and a meeting transcribing with Delete audio on.
+  const example = makeMeeting('Acme onboarding call', 'Acme');
+  example.metadata = { ...example.metadata, id: demoMeetings[0].metadata.id };
+  const transcribing = meetingWith('Design review', { status: 'processing', audioPath: 'Acme/design-review/audio' });
+  await mockDesktop(page, { meetings: [example, transcribing] });
+  await page.addInitScript(() => { Object.assign((window as unknown as { __qn: { state: Record<string, unknown> } }).__qn.state, { preferences: { deleteAudio: true } }); });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Acme onboarding call/ }).click();
+  await tab(page, 'Enhanced notes').click();
+  await expect(page.getByText('Example meetings can’t be enhanced. Record a meeting to enhance its notes.')).toBeVisible();
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.getByRole('button', { name: /Design review/ }).click();
+  await expect(page.getByText('The audio is deleted once the transcript is saved.', { exact: false })).toBeVisible();
+  // Settings lists everything that can leave the Mac, whether or not it's set up.
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const stored = page.locator('.setting-row.fact', { hasText: 'Stored on this device' });
+  await expect(stored.locator('li')).toHaveText([/Linear or GitHub/, /goes to Claude when you ask for suggestions/, /Lemon Squeezy/, /Everything else stays on this (Mac|PC)/]);
+  await expect(page.getByText('There’s no QuietNote account and no cloud sync.')).toBeVisible();
+  // The Mac's calendars are built in, and say how to turn them on while they're off.
+  await page.getByRole('button', { name: 'Connections' }).click();
+  const calendar = page.getByRole('dialog', { name: 'Connections' }).locator('.connector', { hasText: 'Apple Calendar' });
+  await expect(calendar.getByText('Built in')).toBeVisible();
+  await expect(calendar).toContainText('Turn on Use your calendar in Settings → Privacy.');
+});
+
+test('AN: in the browser preview a right-click moves a meeting to another project, with Undo', async ({ page }) => {
+  await examples(page);
+  await page.getByRole('button', { name: 'All meetings' }).click();
+  await row(page, 'Acme onboarding call').click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: 'Move “Acme onboarding call” to' });
+  await expect(menu.getByRole('menuitem')).toHaveText(['Internal', 'Northstar', 'Personal']);
+  await expect(menu.getByRole('menuitem', { name: 'Internal' })).toBeFocused();
+  // Escape closes it without moving.
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(row(page, 'Acme onboarding call')).toContainText('Acme');
+  await row(page, 'Acme onboarding call').click({ button: 'right' });
+  await menu.getByRole('menuitem', { name: 'Northstar' }).click();
+  await expect(page.getByText('Moved “Acme onboarding call” to Northstar')).toBeVisible();
+  await expect(row(page, 'Acme onboarding call')).toContainText('Northstar');
+  const stored = () => page.evaluate(() => (JSON.parse(localStorage.getItem('quietnote.preview.archive.v1')!) as Meeting[]).find(m => m.metadata.title === 'Acme onboarding call')!);
+  await expect.poll(async () => (await stored()).markdown).toContain('Project: Northstar');
+  const { id } = (await stored()).metadata;
+  expect((await stored()).metadata).toMatchObject({ project: 'Northstar', meetingPath: `Northstar/${id}/meeting.md`, transcriptPath: `Northstar/${id}/transcript.md` });
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(row(page, 'Acme onboarding call')).toContainText('Acme');
+  await expect.poll(async () => (await stored()).markdown).toContain('Project: Acme');
+  // A project emptied by a move stays.
+  await row(page, 'Client strategy review').click({ button: 'right' });
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Personal' }).click();
+  await row(page, 'Acme onboarding call').click({ button: 'right' });
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Personal' }).click();
+  await page.reload();
+  await expect(page.locator('.project-item', { hasText: 'Acme' })).toBeVisible();
+  await page.locator('.project-item', { hasText: 'Personal' }).click();
+  await expect(row(page, 'Acme onboarding call')).toHaveCount(1);
+  await expect(row(page, 'Client strategy review')).toHaveCount(1);
+});
+
+test('AN2: on desktop the native menu moves a meeting even while it’s being transcribed, and later saves follow it', async ({ page }) => {
+  const busy = makeMeeting('Board prep', 'Acme');
+  busy.metadata.status = 'processing';
+  busy.metadata.audioPath = `Acme/${busy.metadata.id}/audio`;
+  await mockDesktop(page, { meetings: [busy, makeMeeting('Roadmap', 'Northstar')] });
+  await page.goto('/');
+  await row(page, 'Board prep').click({ button: 'right' });
+  await expect.poll(() => qn(page, q => q.state.menus)).toBe(1);
+  expect(await qn(page, q => q.state.menu!.items.map(i => [i.text, (i.items ?? []).map(x => x.text)]))).toEqual([['Move to', ['Northstar']]]);
+  expect(await qn(page, q => q.choose('Northstar'))).toBe(true);
+  await expect(page.getByText('Moved “Board prep” to Northstar')).toBeVisible();
+  await expect(row(page, 'Board prep')).toContainText('Northstar');
+  const moved = await qn(page, q => q.meetings.find(m => m.metadata.title === 'Board prep')!.metadata);
+  expect(moved).toMatchObject({ project: 'Northstar', status: 'processing', audioPath: `Northstar/${moved.id}/audio` });
+  await expect.poll(() => qn(page, q => q.state.saved)).toContain('Project: Northstar');
+  expect(await qn(page, q => q.state.savedPath)).toBe(`/archive/Northstar/${moved.id}/meeting.md`);
+  // Its notes save into the new folder.
+  await row(page, 'Board prep').click();
+  await myNotes(page);
+  await page.locator('.quiet-editor [contenteditable="true"]').click();
+  await page.keyboard.type('Moved notes');
+  await expect.poll(() => qn(page, q => q.state.saved)).toContain('Moved notes');
+  expect(await qn(page, q => q.state.savedPath)).toBe(`/archive/Northstar/${moved.id}/meeting.md`);
 });

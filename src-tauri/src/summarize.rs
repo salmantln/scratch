@@ -182,6 +182,7 @@ async fn ask(root: &Path, system: &str, content: &str, schema: Value) -> Result<
 /// A recorded meeting's transcript turns (none for a typed or example transcript), and its folder.
 fn recorded(app: &AppHandle, meeting_id: &str) -> Result<(PathBuf, Vec<Turn>, PathBuf), String> {
     let root = meetings::root(app)?;
+    let _files = meetings::files();
     let (_, dir) = meetings::find(&root, meeting_id)?;
     let turns = match std::fs::read(dir.join("transcript.json")) {
         Ok(bytes) => serde_json::from_slice::<Transcript>(&bytes).map_err(|e| e.to_string())?.turns,

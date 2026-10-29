@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Modal } from './Dialogs';
 import { Icon } from './Icon';
-import { categories, connectors, matchesConnector, serviceName, type Connector } from './catalog';
+import { calendarBlurb, categories, connectors, matchesConnector, serviceName, type Connector } from './catalog';
 import { actionItems, issueFor, type Meeting } from './model';
 import * as storage from './storage';
 const message = (e: unknown) => String(e).replace(/^Error: /, '');
@@ -33,7 +33,7 @@ function SignInWait({ name, waiting, onCancel, onKey }: { name: string; waiting:
     <p className="connector-note">Access is kept in your macOS Keychain, never on a QuietNote server. <button type="button" className="text-button" onClick={onKey}>Use a key instead</button></p>
   </div>;
 }
-function ConnectorRow({ connector: c, appIcon, account, detecting, signIn, onChange }: { connector: Connector; appIcon?: string; account?: { account: string }; detecting: boolean; signIn: boolean; onChange: (service: storage.Service, account?: { account: string }) => void }) {
+function ConnectorRow({ connector: c, appIcon, account, builtIn, signIn, onChange }: { connector: Connector; appIcon?: string; account?: { account: string }; builtIn: boolean; signIn: boolean; onChange: (service: storage.Service, account?: { account: string }) => void }) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState(false);
@@ -67,8 +67,8 @@ function ConnectorRow({ connector: c, appIcon, account, detecting, signIn, onCha
     try { await storage.disconnect(service); onChange(service); }
     catch (e) { setError(`Couldn’t disconnect ${c.name}. ${message(e)}`); setBusy(false); }
   }
-  const action = detecting ? <span className="badge">Built in</span>
-    : !c.service ? <span className="badge">Planned</span>
+  const action = builtIn ? <span className="connector-state">Built in</span>
+    : !c.service ? <span className="connector-state">Planned</span>
     : account ? <button className="text-button" disabled={busy} onClick={() => void disconnect(c.service!)}>Disconnect</button>
     : !storage.desktop ? <button className="secondary" disabled>Desktop only</button>
     : !form && !signing && <button className="secondary" onClick={() => signIn ? void browserSignIn(c.service!) : setForm(true)}>{error && signIn ? 'Try again' : 'Connect'}</button>;
@@ -88,12 +88,15 @@ function ConnectorRow({ connector: c, appIcon, account, detecting, signIn, onCha
     {error && <p className="field-error" role="alert">{error}{signIn && !form && <> <button type="button" className="text-button" onClick={() => { setError(''); setForm(true); }}>Use a key instead</button></>}</p>}
   </li>;
 }
-export function ConnectionsDialog({ detectsCalls = false, connections, onChange, onClose }: { detectsCalls?: boolean; connections: storage.Connections; onChange: (next: storage.Connections) => void; onClose: () => void }) {
+export function ConnectionsDialog({ detectsCalls = false, calendarOn = false, connections, onChange, onClose }: { detectsCalls?: boolean; calendarOn?: boolean; connections: storage.Connections; onChange: (next: storage.Connections) => void; onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [appIcons, setAppIcons] = useState<Record<string, string>>({});
   const [signIns, setSignIns] = useState<storage.Service[]>([]);
   useEffect(() => { storage.appIcons().then(setAppIcons).catch(() => { /* Letter tiles stand in. */ }); }, []);
   useEffect(() => { storage.signInServices().then(setSignIns).catch(() => { /* Keys still connect. */ }); }, []);
+  // Whether this Mac's calendars can be read (without asking), so the calendar entries are built in.
+  const [calendars, setCalendars] = useState(false);
+  useEffect(() => { storage.calendarAccess(false).then(a => setCalendars(a !== 'unavailable')).catch(() => { /* They stay planned. */ }); }, []);
   const shown = connectors.filter(c => matchesConnector(c, query));
   const isConnected = (c: Connector) => Boolean(c.service && connections[c.service]);
   const groups = [['Connected', shown.filter(isConnected)] as const, ...categories.map(name => [name, shown.filter(c => c.category === name && !isConnected(c))] as const)].filter(([, list]) => list.length);
@@ -106,7 +109,7 @@ export function ConnectionsDialog({ detectsCalls = false, connections, onChange,
     <p className="lede">Connect only the services you use. QuietNote never joins your calls, and nothing leaves this Mac until you choose to send it.</p>
     <label className="search-field"><Icon name="search" size={16} /><input type="search" data-autofocus aria-label="Search connections" placeholder="Search connections" value={query} onChange={e => setQuery(e.target.value)} /></label>
     <div className="connector-groups">
-      {groups.map(([name, list]) => <section key={name} aria-label={name}><h3>{name}</h3><ul>{list.map(c => <ConnectorRow key={c.id} connector={c} appIcon={c.app && appIcons[c.id]} account={c.service && connections[c.service]} detecting={Boolean(c.detects && detectsCalls)} signIn={Boolean(c.service && signIns.includes(c.service))} onChange={change} />)}</ul></section>)}
+      {groups.map(([name, list]) => <section key={name} aria-label={name}><h3>{name}</h3><ul>{list.map(c => <ConnectorRow key={c.id} connector={c.calendar && calendars ? { ...c, blurb: calendarBlurb(calendarOn) } : c} appIcon={c.app && appIcons[c.id]} account={c.service && connections[c.service]} builtIn={Boolean(c.detects && detectsCalls || c.calendar && calendars)} signIn={Boolean(c.service && signIns.includes(c.service))} onChange={change} />)}</ul></section>)}
       {!groups.length && <p className="subtle" role="status">No connections match “{query.trim()}”.</p>}
       <p className="connector-note directory-note">{signIns.length ? 'Services sign in through your browser, and access is kept in your macOS Keychain, never on a QuietNote server.' : 'Planned services that need a sign-in will sign in through your browser and keep access on this Mac, never on a QuietNote server.'}</p>
     </div>

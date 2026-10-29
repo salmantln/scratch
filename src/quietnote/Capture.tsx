@@ -19,9 +19,8 @@ function CopyConsent() {
   }
   return <button className="text-button" title={consentMessage} onClick={() => void copy()}><Icon name="copy" size={14} />{copied ? 'Copied' : 'Copy message'}</button>;
 }
-/** `transcript`: whether the recorder shows the live transcript (not while the Transcript tab shows it already).
- * `autoStart` 'call': the call panel's Record, which starts even before the first-run explanation. */
-type Props = { meeting: Meeting; autoStart: boolean | 'call'; live: storage.CaptureState; clean: boolean; transcript: boolean; onUpdated: (meeting: Meeting) => void; onClose: () => void };
+/** `autoStart` 'call': the call panel's Record, which starts even before the first-run explanation. */
+type Props = { meeting: Meeting; autoStart: boolean | 'call'; live: storage.CaptureState; onUpdated: (meeting: Meeting) => void; onClose: () => void };
 /** The recorder is pinned to the bottom of the meeting, so notes and the transcript stay usable above it while it runs. */
 export function Capture(props: Props) { return props.live.available ? <Recorder {...props} /> : <Prototype {...props} />; }
 function useAutoStart(autoStart: boolean, start: () => Promise<void>) {
@@ -40,10 +39,7 @@ function useNow(running: boolean) {
 export const track = (name: string, level: storage.Level, waiting = 'no sound yet') => level === 'heard' ? `${name} ✓` : `${name}: ${level === 'silent' ? 'silent' : waiting}`;
 /** Call audio is only what the others say, so until someone else speaks it's waiting, not failing. */
 export const othersWaiting = 'waiting for others';
-/** Five bars from a peak sample (0–1), about 9 dB each from −50 dB. */
-const bars = (peak: number) => peak <= 0 ? 0 : Math.max(0, Math.min(5, Math.ceil((20 * Math.log10(peak) + 50) / 9)));
-const Bars = ({ peak }: { peak: number }) => { const lit = bars(peak); return <span className="meter-bars" aria-hidden="true">{[0, 1, 2, 3, 4].map(i => <i key={i} className={i < lit ? 'on' : undefined} />)}</span>; };
-/** Live levels from Rust (`quietnote://levels`, ten a second), so it's clear at once that both tracks are recording. */
+/** Live levels from Rust (`quietnote://levels`, ten a second): who's talking, for the live transcript and Hush. */
 export function useLevels(running: boolean): [number, number] {
   const [levels, setLevels] = useState<[number, number]>([0, 0]);
   useEffect(() => {
@@ -55,8 +51,10 @@ export function useLevels(running: boolean): [number, number] {
   }, [running]);
   return levels;
 }
-/** Whether each track was loud enough to be speech in the last moment, for the "listening" dots of the live transcript. */
-function useSpeaking([mic, system]: [number, number], now: number): [boolean, boolean] {
+/** Whether each track was loud enough to be speech in the last 1.5 s, for the "listening" dots of the live transcript. */
+export function useListening(running: boolean): [boolean, boolean] {
+  const now = useNow(running);
+  const [mic, system] = useLevels(running);
   const heard = useRef<[number, number]>([0, 0]);
   if (mic > 0.02) heard.current[0] = Date.now();
   if (system > 0.02) heard.current[1] = Date.now();
@@ -96,10 +94,10 @@ export function LiveTranscript({ meetingId, clean, state, listening, empty, capt
     {!latest && <button className="text-button live-latest" onClick={() => setLatest(true)}>Jump to latest</button>}
   </div>;
 }
-/** Whether the recorder's details are shown; remembered in this window only, and shown when unknown. */
+/** Whether the recorder's details are shown; remembered in this window only, and folded when unknown. */
 const drawerKey = 'quietnote.drawer.v1';
 function useDrawer(): [boolean, () => void] {
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem(drawerKey) !== 'closed'; } catch { return true; } });
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem(drawerKey) === 'open'; } catch { return false; } });
   return [open, () => setOpen(o => { try { localStorage.setItem(drawerKey, o ? 'closed' : 'open'); } catch { /* Only a convenience. */ } return !o; })];
 }
 /** Chooses the microphone; a recording in progress switches at once, and later ones keep the choice. */
@@ -136,9 +134,9 @@ function FirstRun() {
 function Alert({ title, children, action }: { title: string; children: string; action?: [string, () => void] }) {
   return <div className="capture-alert" role="alert"><strong>{title}</strong> <span>{children}</span>{action && <button className="text-button" onClick={action[1]}>{action[0]}</button>}</div>;
 }
-/** The bar at the bottom of a recording meeting, as in Granola: a small pill with the levels, the time and the
- * controls. It widens into a card when details open above it or something needs attention. `quiet`: the levels
- * already say it's recording, so the word is left to screen readers. */
+/** The bar at the bottom of a recording meeting, as in Granola: a small pill with the red dot (which opens the
+ * details), the time, Pause and Stop. It widens into a card when details open above it or something needs attention.
+ * `quiet`: the dot already says it's recording, so the word is left to screen readers. */
 function Dock({ label, quiet, paused, elapsed, lead, detail, actions, drawer, children }: { label: string; quiet?: boolean; paused?: boolean; elapsed?: number; lead?: ReactNode; detail?: ReactNode; actions?: ReactNode; drawer?: ReactNode; children?: ReactNode }) {
   const wide = Boolean(drawer) || Children.toArray(children).length > 0;
   return <section className={`recorder-dock${paused ? ' paused' : ''}${wide ? ' wide' : ''}`} aria-label="Recorder">
@@ -161,7 +159,7 @@ function StartCard({ children, busy, label, disabled, onStart, onCancel }: { chi
   </section>;
 }
 /** Real capture: Rust records the mic and system audio, then transcribes on this device. */
-function Recorder({ meeting, autoStart, live, clean, transcript, onUpdated, onClose }: Props) {
+function Recorder({ meeting, autoStart, live, onUpdated, onClose }: Props) {
   const { id, status } = meeting.metadata;
   const [failure, setFailure] = useState<(storage.CaptureFailure & { title: string }) | null>(null);
   const [busy, setBusy] = useState(false);
@@ -175,8 +173,6 @@ function Recorder({ meeting, autoStart, live, clean, transcript, onUpdated, onCl
   const firstRun = live.microphone === 'undetermined';
   const denied = !capturing && (failure?.code === 'mic-denied' || live.microphone === 'denied');
   const now = useNow(Boolean(recording) && !paused);
-  const [mic, system] = useLevels(Boolean(recording) && !paused);
-  const speaking = useSpeaking([mic, system], now);
   const liveText = recording?.liveText ?? 'off';
   async function run(action: () => Promise<void>, title: string) {
     setBusy(true); setFailure(null);
@@ -193,20 +189,19 @@ function Recorder({ meeting, autoStart, live, clean, transcript, onUpdated, onCl
   useAutoStart(auto, start);
   if (capturing) {
     return <Dock label={stopping ? 'Stopping…' : paused ? 'Paused' : 'Recording'} quiet={Boolean(recording) && !paused && !stopping} paused={paused} elapsed={recording ? recorded(recording, now) : undefined}
-      lead={recording && <button className="level-button" aria-expanded={open} aria-controls={drawerId} title={open ? 'Hide details' : 'Show details'} onClick={toggle}>
-        <Bars peak={Math.max(mic, system)} /><Icon name="chevron" size={14} style={open ? undefined : { transform: 'rotate(180deg)' }} /><span className="sr-only">Recording details</span></button>}
+      lead={recording && <button className="drawer-button" aria-expanded={open} aria-controls={drawerId} title={open ? 'Hide details' : 'Show details'} onClick={toggle}>
+        <i className={paused ? 'paused-dot' : 'live-dot'} aria-hidden="true" /><Icon name="chevron" size={14} style={open ? undefined : { transform: 'rotate(180deg)' }} /><span className="sr-only">Recording details</span></button>}
       // The microphone is chosen with the details open, as in Granola, so the folded bar stays small.
       detail={recording && open && <MicPicker current={recording.micDevice} />}
       // Pause and Resume are one button whose icon morphs, and Stop keeps its own, so switching never moves a button
       // under the pointer.
       actions={recording && <>
         <button className={paused ? 'primary resume' : 'icon-button'} aria-label={paused ? undefined : 'Pause recording'} title={paused ? undefined : 'Pause recording'} disabled={busy} onClick={() => void (paused ? run(storage.captureResume, 'Recording didn’t resume.') : run(storage.capturePause, 'Recording didn’t pause.'))}><MorphIcon name={paused ? 'play' : 'pause'} size={14} />{paused && 'Resume'}</button>
-        <button className="icon-button stop" aria-label="Stop recording" title="Stop recording" disabled={busy} onClick={() => void stop()}><Icon name="stop" size={14} /></button>
+        <button className="stop" aria-label="Stop recording" title="Stop recording" disabled={busy} onClick={() => void stop()}>Stop</button>
       </>}
+      // The live draft is on the Transcript tab, so the notes keep the room; the drawer only points there.
       drawer={recording && open && <div className="recorder-drawer" id={drawerId}>
-        {transcript && liveText !== 'off' ? <LiveTranscript meetingId={id} clean={clean} state={liveText} listening={paused ? undefined : speaking} caption="Live draft · the full transcript is made when you stop" />
-          : <p className="subtle transcript-caption">{liveText === 'off' ? `Transcribed on this ${device} when you stop` : 'Live draft · the full transcript is made when you stop'}</p>}
-        {paused && <p className="subtle recorder-paused">Paused. The microphone and call audio aren’t being recorded until you resume.</p>}
+        <p className="subtle transcript-caption">{liveText === 'off' ? `Transcribed on this ${device} when you stop` : 'Live draft on the Transcript tab'}</p>
         <p className="recorder-consent"><Icon name="info" size={13} />{consent}<CopyConsent /></p>
       </div>}>
       {recording?.ending && <Alert title={recording.ending.reason} action={['Keep recording', () => void run(storage.captureKeep, 'Couldn’t keep recording.')]}>{stopsIn(recording.ending.stopsAt, now)}</Alert>}

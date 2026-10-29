@@ -79,7 +79,7 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
     <div><span className="suggestion-text">{item.text}</span>{item.owner && <span className="action-owner">{item.owner}</span>}{cite(item.atMs, item.quote)}</div>
     <div className="suggestion-actions"><button className="text-button" onClick={() => void accept(item)}>Add</button><button className="text-button" aria-label={`Dismiss “${item.text}”`} onClick={() => drop(item)}>Dismiss</button></div>
   </li>;
-  const replaces = section(markdown, 'Summary') ? 'Replace summary' : 'Use as summary';
+  const replaces = section(markdown, 'Summary') ? 'Replace enhanced notes' : 'Use in enhanced notes';
   const usesNotes = section(markdown, 'Summary') ? 'Replace enhanced notes' : 'Use these notes';
   if (phase === 'confirm') return <div className="notice" role="dialog" aria-label="Suggest from transcript"><Icon name="info" size={16} /><div>
     <strong>{summarizer.local ? `Draft suggestions with ${who}?` : 'Send this transcript to Anthropic?'}</strong>

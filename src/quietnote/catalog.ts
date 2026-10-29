@@ -20,11 +20,12 @@ export type Category = typeof categories[number];
  * A directory entry. Only entries with `service` actually connect; the rest are planned and do nothing.
  * `logo` is a bundled brand mark. `app` entries show the icon of the app installed on this Mac (Apple doesn't
  * publish its icons for reuse), falling back to a `monogram` tile in `color`. `detects` entries are covered by
- * call detection where it's available.
+ * call detection where it's available, `calendar` entries by the Mac's calendars (`calendarBlurb` then).
  */
-export interface Connector { id: string; name: string; category: Category; blurb: string; logo?: string; app?: true; color?: string; monogram?: string; service?: Service; setup?: { url: string; hint: string }; detects?: true }
+export interface Connector { id: string; name: string; category: Category; blurb: string; logo?: string; app?: true; color?: string; monogram?: string; service?: Service; setup?: { url: string; hint: string }; detects?: true; calendar?: true }
 const call = 'Notice a call on this Mac and offer to start capture. Never joins the call.';
 const events = 'Fill in a meeting’s title, time and attendees from an event. Never joins or starts capture.';
+export const calendarBlurb = (on: boolean) => `Fills in a meeting’s title, time and who’s invited from the calendars on this Mac, including Google and Outlook accounts added to it.${on ? '' : ' Turn on Use your calendar in Settings → Privacy.'}`;
 export const connectors: Connector[] = [
   { id: 'linear', name: 'Linear', category: 'Tasks', blurb: 'Send action items to a team as Linear issues.', logo: linear, service: 'linear', setup: { url: 'https://linear.app/settings/account/security', hint: 'Create a personal API key in Linear under Settings → Security & access.' } },
   { id: 'github', name: 'GitHub', category: 'Tasks', blurb: 'Send action items to a repository as issues.', logo: github, service: 'github', setup: { url: 'https://github.com/settings/personal-access-tokens/new', hint: 'Create a fine-grained token with Issues set to “Read and write” for the repositories you want.' } },
@@ -36,9 +37,9 @@ export const connectors: Connector[] = [
   { id: 'zoom', name: 'Zoom', category: 'Meetings', blurb: call, logo: zoom, detects: true },
   { id: 'meet', name: 'Google Meet', category: 'Meetings', blurb: call, logo: googleMeet, detects: true },
   { id: 'teams', name: 'Microsoft Teams', category: 'Meetings', blurb: call, logo: teams, detects: true },
-  { id: 'gcal', name: 'Google Calendar', category: 'Calendars', blurb: events, logo: googleCalendar },
-  { id: 'outlook', name: 'Outlook Calendar', category: 'Calendars', blurb: events, logo: outlook },
-  { id: 'ical', name: 'Apple Calendar', category: 'Calendars', blurb: events, app: true, color: 'FF3B30', monogram: '31' },
+  { id: 'gcal', name: 'Google Calendar', category: 'Calendars', blurb: events, logo: googleCalendar, calendar: true },
+  { id: 'outlook', name: 'Outlook Calendar', category: 'Calendars', blurb: events, logo: outlook, calendar: true },
+  { id: 'ical', name: 'Apple Calendar', category: 'Calendars', blurb: events, app: true, color: 'FF3B30', monogram: '31', calendar: true },
   { id: 'gmail', name: 'Gmail', category: 'Email & chat', blurb: 'Draft a follow-up email for you to review and send yourself.', logo: gmail },
   { id: 'slack', name: 'Slack', category: 'Email & chat', blurb: 'Draft a post of a meeting’s notes for you to review before sending.', logo: slack },
   { id: 'notion', name: 'Notion', category: 'Notes & docs', blurb: 'Export a meeting to a Notion page when you choose.', logo: notion },

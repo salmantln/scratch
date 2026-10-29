@@ -112,6 +112,9 @@ impl Capture {
         self.session.lock().is_ok_and(|s| s.as_ref().is_some_and(|s| s.meeting_id == id))
             || self.jobs.lock().is_ok_and(|j| j.queue.iter().any(|q| q == id) || j.current.as_ref().is_some_and(|c| c.meeting_id == id))
     }
+    /// Whether meeting `id` is recording (or paused), rather than being transcribed.
+    #[cfg(target_os = "windows")]
+    pub fn records(&self, id: &str) -> bool { self.session.lock().is_ok_and(|s| s.as_ref().is_some_and(|s| s.meeting_id == id)) }
     /// One recording at a time: refused while one runs or is starting.
     fn claim(&self) -> Result<Claim<'_>, String> {
         if self.session.lock().map_err(|e| e.to_string())?.is_some() || self.starting.swap(true, Ordering::SeqCst) { return Err(BUSY.into()); }
@@ -271,6 +274,8 @@ fn begin(app: &AppHandle, id: &str) -> Result<Metadata, Failure> {
     let capture = app.state::<Capture>();
     if capture.owns(id) { return Err("This meeting is being transcribed.".to_string().into()); }
     let root = meetings::root(app)?;
+    // Until the files are open and the metadata says where: a move then carries the recording with it.
+    let files = meetings::files();
     let (mut metadata, dir) = meetings::find(&root, id)?;
     let resuming = match metadata.status.as_str() {
         "idle" => false,
@@ -316,6 +321,7 @@ fn begin(app: &AppHandle, id: &str) -> Result<Metadata, Failure> {
         discard(&audio);
         return Err(e.into());
     }
+    drop(files);
     // The clock carries on from the earlier recording.
     let at = resume.map_or(0, |r| r.at_ms);
     *capture.session.lock().map_err(|e| e.to_string())? = Some(Session {
@@ -395,6 +401,7 @@ pub fn resume(app: &AppHandle) -> Result<(), Failure> {
     }
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
+        let _files = meetings::files();
         let (_, dir) = meetings::find(&root, &session.meeting_id)?;
         let audio = dir.join(AUDIO);
         // Why it paused no longer applies.
@@ -448,11 +455,15 @@ pub fn stop(app: &AppHandle, reason: Option<String>) -> Result<Metadata, String>
     let finished: Result<(), String> = Ok(());
     tray::recording_tick(app, None);
     let root = meetings::root(app)?;
-    let (mut metadata, dir) = meetings::find(&root, &session.meeting_id)?;
-    metadata.status = "processing".into();
-    metadata.capture_ended_at = Some(now());
-    metadata.duration = duration;
-    meetings::write_metadata(&dir, &metadata)?;
+    let metadata = {
+        let _files = meetings::files();
+        let (mut metadata, dir) = meetings::find(&root, &session.meeting_id)?;
+        metadata.status = "processing".into();
+        metadata.capture_ended_at = Some(now());
+        metadata.duration = duration;
+        meetings::write_metadata(&dir, &metadata)?;
+        metadata
+    };
     enqueue(app, &metadata.id);
     let problem = [reason, finished.err().map(|e| format!("The end of the recording may be incomplete. {e}"))].into_iter().flatten().reduce(|a, b| format!("{a} {b}"));
     changed(app, &metadata, None, problem);
@@ -617,28 +628,33 @@ fn attempts(audio: &Path) -> u32 { std::fs::read_to_string(audio.join(MARKER)).o
 /// Transcribes a `processing` meeting. `None` when there was nothing to do.
 fn process(app: &AppHandle, id: &str) -> Result<Option<(Metadata, String)>, String> {
     let root = meetings::root(app)?;
-    let (metadata, dir) = meetings::find(&root, id)?;
-    if metadata.status != "processing" { return Ok(None); }
-    set_progress(app, id, Some(&metadata.title), 0);
-    let audio = dir.join(AUDIO);
-    if !audio.is_dir() { return Err("The audio for this meeting is missing.".into()); }
-    for path in TRACKS.iter().filter_map(|t| sealed::path(&audio, t)) { let _ = repair(&path); }
-    std::fs::write(audio.join(MARKER), (attempts(&audio) + 1).to_string()).map_err(|e| e.to_string())?;
-    // Recording resumed: the new part goes after the transcript that's already there, which must be readable.
-    let earlier = dir.join("transcript.json");
-    let before = match (metadata.resume, earlier.exists()) {
-        (Some(_), true) => Some(serde_json::from_slice::<Transcript>(&std::fs::read(&earlier).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("The earlier transcript of this meeting couldn’t be read, so the new part wasn’t added: {e}"))?),
-        _ => None,
+    // The meeting can move to another project meanwhile, so each step looks its folder up again (`track`).
+    let (metadata, before) = {
+        let _files = meetings::files();
+        let (metadata, dir) = meetings::find(&root, id)?;
+        if metadata.status != "processing" { return Ok(None); }
+        let audio = dir.join(AUDIO);
+        if !audio.is_dir() { return Err("The audio for this meeting is missing.".into()); }
+        for path in TRACKS.iter().filter_map(|t| sealed::path(&audio, t)) { let _ = repair(&path); }
+        std::fs::write(audio.join(MARKER), (attempts(&audio) + 1).to_string()).map_err(|e| e.to_string())?;
+        // Recording resumed: the new part goes after the transcript that's already there, which must be readable.
+        let earlier = dir.join("transcript.json");
+        let before = match (metadata.resume, earlier.exists()) {
+            (Some(_), true) => Some(serde_json::from_slice::<Transcript>(&std::fs::read(&earlier).map_err(|e| e.to_string())?)
+                .map_err(|e| format!("The earlier transcript of this meeting couldn’t be read, so the new part wasn’t added: {e}"))?),
+            _ => None,
+        };
+        (metadata, before)
     };
+    set_progress(app, id, Some(&metadata.title), 0);
     let separating = SEPARATES && meetings::preference(&root, "separateSpeakers", true);
     // Telling voices apart comes after transcribing, so transcription shows as 90% of the progress.
-    let [mic, system] = recognize(app, &audio, id, metadata.resume, if separating { 90 } else { 100 })?;
+    let [mic, system] = recognize(app, &root, id, metadata.resume, if separating { 90 } else { 100 })?;
     #[cfg(target_os = "macos")]
     let system = if separating && !system.is_empty() {
         set_progress(app, id, None, 95);
         let earlier = before.as_ref().map_or(0, |t| crate::speakers::numbered(t.turns.iter().map(|t| t.speaker.clone())));
-        separate(app, &audio, metadata.resume, system, earlier + 1)
+        separate(app, &root, id, metadata.resume, system, earlier + 1)
     } else { system };
     let (turns, echo) = transcript::merge(mic, system);
     let mut transcript = Transcript { version: 1, model: model_name().into(), turns, echo };
@@ -648,9 +664,9 @@ fn process(app: &AppHandle, id: &str) -> Result<Option<(Metadata, String)>, Stri
 /// Labels the others' sentences by voice (`speakers`). It only improves the transcript: if the voices
 /// can't be told apart, the others stay "Others" and the transcript is saved as it is.
 #[cfg(target_os = "macos")]
-fn separate(app: &AppHandle, audio: &Path, resume: Option<Resume>, mut system: Vec<transcript::Piece>, first: usize) -> Vec<transcript::Piece> {
+fn separate(app: &AppHandle, root: &Path, id: &str, resume: Option<Resume>, mut system: Vec<transcript::Piece>, first: usize) -> Vec<transcript::Piece> {
     let (from, at) = resume.map_or((0, 0), |r| (r.sample as usize, r.at_ms));
-    let voices = sealed::path(audio, TRACKS[1]).ok_or_else(|| "There’s no call audio.".to_string()).and_then(|path| crate::transcribe::samples(&path)).and_then(|mut call| {
+    let voices = track(root, id, TRACKS[1]).and_then(|call| call.ok_or_else(|| "There’s no call audio.".to_string())).and_then(|mut call| {
         call.drain(..from.min(call.len()));
         crate::speakers::voices(app, &call)
     });
@@ -663,6 +679,7 @@ fn separate(app: &AppHandle, audio: &Path, resume: Option<Resume>, mut system: V
 /// Saves a finished transcription in an order that never loses audio: the transcript, then `ready`,
 /// and only then, if the user chose it, the audio is deleted.
 fn save_transcript(root: &Path, id: &str, transcript: &Transcript) -> Result<(Metadata, String), String> {
+    let _files = meetings::files();
     let (mut metadata, dir) = meetings::find(root, id)?;
     let markdown = transcript::markdown(transcript, meetings::preference(root, "cleanTranscript", true));
     meetings::atomic_write(&dir.join("transcript.json"), &serde_json::to_vec_pretty(transcript).map_err(|e| e.to_string())?)?;
@@ -682,6 +699,7 @@ fn save_transcript(root: &Path, id: &str, transcript: &Transcript) -> Result<(Me
 }
 /// A failed transcription: the meeting needs attention, the reason is kept, and the audio stays.
 fn record_failure(root: &Path, id: &str, error: &str) -> Result<Metadata, String> {
+    let _files = meetings::files();
     let (mut metadata, dir) = meetings::find(root, id)?;
     metadata.status = "error".into();
     metadata.error = Some(error.into());
@@ -691,10 +709,17 @@ fn record_failure(root: &Path, id: &str, error: &str) -> Result<Metadata, String
 }
 /// Transcribes the audio, or only its resumed part. Its progress fills `share` percent of the meeting's.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn recognize(app: &AppHandle, audio: &Path, id: &str, resume: Option<Resume>, share: u8) -> Result<[Vec<transcript::Piece>; 2], String> {
-    let (handle, id) = (app.clone(), id.to_string());
+fn recognize(app: &AppHandle, root: &Path, id: &str, resume: Option<Resume>, share: u8) -> Result<[Vec<transcript::Piece>; 2], String> {
+    let (handle, meeting) = (app.clone(), id.to_string());
     let (from, at) = resume.map_or((0, 0), |r| (r.sample, r.at_ms));
-    crate::transcribe::run(app, audio, from, at, std::sync::Arc::new(move |percent| set_progress(&handle, &id, None, (percent as u16 * share as u16 / 100) as u8)))
+    crate::transcribe::run(app, &|name| track(root, id, name), from, at, std::sync::Arc::new(move |percent| set_progress(&handle, &meeting, None, (percent as u16 * share as u16 / 100) as u8)))
+}
+/// One track of a meeting's audio, read whole from wherever the meeting is now.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn track(root: &Path, id: &str, name: &str) -> Result<Option<Vec<f32>>, String> {
+    let _files = meetings::files();
+    let (_, dir) = meetings::find(root, id)?;
+    crate::transcribe::track(&dir.join(AUDIO), name)
 }
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn recognize(_: &AppHandle, _: &Path, _: &str, _: Option<Resume>, _: u8) -> Result<[Vec<transcript::Piece>; 2], String> { Err(UNSUPPORTED.into()) }
@@ -748,6 +773,7 @@ pub fn recover(app: &AppHandle) {
     let _ = recover_archive(&root, |id| enqueue(app, id));
 }
 fn recover_archive(root: &Path, mut queue: impl FnMut(&str)) -> Result<(), String> {
+    let _files = meetings::files();
     for (mut metadata, dir) in meetings::read_metadata(root)? {
         if metadata.status != "recording" && metadata.status != "processing" { continue; }
         let audio = dir.join(AUDIO);
@@ -851,13 +877,17 @@ pub async fn transcribe_meeting(app: AppHandle, meeting_id: String) -> Result<Me
         if !SUPPORTED { return Err(UNSUPPORTED.to_string()); }
         if app.state::<Capture>().owns(&meeting_id) { return Err("This meeting is already being transcribed.".into()); }
         let root = meetings::root(&app)?;
-        let (mut metadata, dir) = meetings::find(&root, &meeting_id)?;
-        if metadata.audio_path.is_none() || !dir.join(AUDIO).is_dir() { return Err("This meeting has no audio to transcribe.".into()); }
-        // A retry the user asked for starts the crash-loop count again.
-        let _ = std::fs::remove_file(dir.join(AUDIO).join(MARKER));
-        metadata.status = "processing".into();
-        metadata.error = None;
-        meetings::write_metadata(&dir, &metadata)?;
+        let metadata = {
+            let _files = meetings::files();
+            let (mut metadata, dir) = meetings::find(&root, &meeting_id)?;
+            if metadata.audio_path.is_none() || !dir.join(AUDIO).is_dir() { return Err("This meeting has no audio to transcribe.".into()); }
+            // A retry the user asked for starts the crash-loop count again.
+            let _ = std::fs::remove_file(dir.join(AUDIO).join(MARKER));
+            metadata.status = "processing".into();
+            metadata.error = None;
+            meetings::write_metadata(&dir, &metadata)?;
+            metadata
+        };
         enqueue(&app, &meeting_id);
         changed(&app, &metadata, None, None);
         publish(&app);
@@ -870,6 +900,7 @@ pub async fn transcribe_meeting(app: AppHandle, meeting_id: String) -> Result<Me
 pub async fn audio_export(app: AppHandle, meeting_id: String, folder: String) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if app.state::<Capture>().owns(&meeting_id) { return Err("Export the audio once this meeting has finished recording and transcribing.".to_string()); }
+        let _files = meetings::files();
         let (_, dir) = meetings::find(&meetings::root(&app)?, &meeting_id)?;
         let audio = dir.join(AUDIO);
         let key = if TRACKS.iter().any(|t| sealed::path(&audio, t).is_some_and(|p| sealed::encrypted(&p))) { Some(sealed::key(false)?.ok_or(sealed::MISSING_KEY)?) } else { None };
@@ -913,6 +944,7 @@ impl From<&transcript::Turn> for TurnView {
 #[tauri::command]
 pub async fn transcript_data(app: AppHandle, meeting_id: String) -> Result<Option<Vec<TurnView>>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _files = meetings::files();
         let (_, dir) = meetings::find(&meetings::root(&app)?, &meeting_id)?;
         let path = dir.join("transcript.json");
         if !path.exists() { return Ok(None); }
@@ -948,6 +980,7 @@ pub(crate) fn set_draft(app: &AppHandle, id: &str, turns: &[transcript::Turn]) {
 #[tauri::command]
 pub async fn render_transcripts(app: AppHandle, clean: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _files = meetings::files();
         for (metadata, dir) in meetings::read_metadata(&meetings::root(&app)?)? {
             let Ok(bytes) = std::fs::read(dir.join("transcript.json")) else { continue };
             let transcript: Transcript = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
@@ -977,6 +1010,7 @@ pub async fn transcript_rename_speaker(app: AppHandle, meeting_id: String, from:
     tauri::async_runtime::spawn_blocking(move || {
         if app.state::<Capture>().owns(&meeting_id) { return Err("This meeting is still being recorded or transcribed.".to_string()); }
         let root = meetings::root(&app)?;
+        let _files = meetings::files();
         let (metadata, dir) = meetings::find(&root, &meeting_id)?;
         let markdown = rename_speaker(&dir, &from, &to, meetings::preference(&root, "cleanTranscript", true))?;
         changed(&app, &metadata, Some(markdown.clone()), None);

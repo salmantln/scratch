@@ -89,9 +89,9 @@ fn is_annotation(text: &str) -> bool {
 ///
 /// No initial prompt is given: in testing, Whisper repeated prompt text (a meeting's name) as if
 /// someone had said it, which would put words in the transcript that nobody spoke.
-pub fn run(app: &AppHandle, audio: &Path, from: u64, offset_ms: u64, progress: Arc<dyn Fn(u8) + Send + Sync>) -> Result<[Vec<Piece>; 2], String> {
+pub fn run(app: &AppHandle, read: ReadTrack, from: u64, offset_ms: u64, progress: Arc<dyn Fn(u8) + Send + Sync>) -> Result<[Vec<Piece>; 2], String> {
     let (model, vad) = models(app)?;
-    let mut tracks = recognize(&model, &vad, audio, from as usize, progress)?;
+    let mut tracks = recognize(&model, &vad, read, from as usize, progress)?;
     for piece in tracks.iter_mut().flatten() { piece.start_ms += offset_ms; piece.end_ms += offset_ms; }
     Ok(tracks)
 }
@@ -290,14 +290,17 @@ fn transcribe_chunk(state: &mut WhisperState, audio: &[f32], strategy: SamplingS
     }
     Ok(out)
 }
-pub(crate) fn recognize(model: &Path, vad: &Path, audio: &Path, from: usize, progress: Arc<dyn Fn(u8) + Send + Sync>) -> Result<[Vec<Piece>; 2], String> {
+/// Reads a track (`mic`, `system`) whole when it's needed, or `None` when there's no such track.
+pub(crate) type ReadTrack<'a> = &'a dyn Fn(&str) -> Result<Option<Vec<f32>>, String>;
+/// A track in an audio folder.
+pub(crate) fn track(audio: &Path, name: &str) -> Result<Option<Vec<f32>>, String> { crate::sealed::path(audio, name).map(|p| samples(&p)).transpose() }
+pub(crate) fn recognize(model: &Path, vad: &Path, read: ReadTrack, from: usize, progress: Arc<dyn Fn(u8) + Send + Sync>) -> Result<[Vec<Piece>; 2], String> {
     whisper_rs::install_logging_hooks();
     let context = load(model)?;
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8) as i32;
     let mut tracks: [Vec<Piece>; 2] = Default::default();
     for (index, name) in TRACKS.iter().enumerate() {
-        let Some(path) = crate::sealed::path(audio, name) else { continue };
-        let mut audio = samples(&path)?;
+        let Some(mut audio) = read(name)? else { continue };
         audio.drain(..from.min(audio.len()));
         // Nothing to hear: a denied permission or an empty call leaves only digital silence.
         if audio.len() < RATE as usize / 2 || audio.iter().all(|s| *s == 0.0) { progress(((index + 1) * 50) as u8); continue; }
@@ -372,7 +375,7 @@ mod tests {
         let audio = PathBuf::from(std::env::var("QUIETNOTE_TEST_AUDIO").expect("QUIETNOTE_TEST_AUDIO"));
         let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/models");
         let started = std::time::Instant::now();
-        let [mic, system] = recognize(&models.join(MODEL), &models.join(VAD), &audio, 0, Arc::new(|_| {})).unwrap();
+        let [mic, system] = recognize(&models.join(MODEL), &models.join(VAD), &|name| track(&audio, name), 0, Arc::new(|_| {})).unwrap();
         if std::env::var("QUIETNOTE_TEST_PIECES").is_ok() {
             for (name, pieces) in [("mic", &mic), ("system", &system)] { for p in pieces { println!("{name} {:>6}-{:>6} {}", p.start_ms, p.end_ms, p.text); } }
         }

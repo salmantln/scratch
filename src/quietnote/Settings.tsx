@@ -235,6 +235,9 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
     window.addEventListener('focus', check);
     return () => { cancelled = true; window.removeEventListener('focus', check); };
   }, []);
+  // Whether this build sells licenses, for the list of what leaves the device.
+  const [licenses, setLicenses] = useState(false);
+  useEffect(() => { if (desktop) licenseStatus().then(s => setLicenses(s.available)).catch(() => setLicenses(false)); }, []);
   const connected = (Object.keys(connections) as Service[]).map(s => `${serviceName(s)} (as ${connections[s]!.account})`);
   const flag = (key: string, fallback: boolean) => typeof values[key] === 'boolean' ? values[key] as boolean : fallback;
   const theme = appearance(values);
@@ -243,7 +246,13 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
     return <div className="setting-row" key={key}><div><div className="setting-title">{title}</div><p>{description}</p></div><button type="button" className={`toggle ${checked ? 'on' : ''}`} role="switch" aria-checked={checked} aria-label={title} disabled={disabled} onClick={() => onChange(key, !checked)}><span /></button></div>;
   }
   const muted = Array.isArray(values.mutedCallApps) ? values.mutedCallApps : [];
-  const fact = (title: string, description: string) => <div className="setting-row fact" key={title}><Icon name="check" size={16} /><div><div className="setting-title">{title}</div><p>{description}</p></div></div>;
+  const fact = (title: string, description: string, list?: string[]) => <div className="setting-row fact" key={title}><Icon name="check" size={16} /><div><div className="setting-title">{title}</div><p>{description}</p>{list && <ul className="fact-list">{list.map(line => <li key={line}>{line}</li>)}</ul>}</div></div>;
+  // Everything this copy of QuietNote can send, set up or not: Claude needs a transcript, a license a build that sells one.
+  const sends = [
+    'Action items you send go to Linear or GitHub.',
+    ...recording ? ['A meeting’s transcript text goes to Claude when you ask for suggestions, with your notes and the template when you enhance them, and the invited people’s names when you suggest names. Ollama on this computer sends nothing.'] : [],
+    ...licenses ? ['A license key and the name “QuietNote for Mac” go to Lemon Squeezy when you activate a license.'] : [],
+  ];
   async function copyCli() {
     try { await writeText(await cliSetupCommand()); setCli('copied'); window.setTimeout(() => setCli('idle'), 2500); }
     catch { setCli('failed'); }
@@ -259,7 +268,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
         <h1>Privacy</h1>
         <p className="lede">{recording ? 'What QuietNote does with your meetings.' : 'What QuietNote does with your meetings today, and what is still planned.'}</p>
         <section><h2>Active now</h2>
-          {desktop ? fact('Stored on this device', `Meeting files live in a local archive on this computer. QuietNote uploads nothing unless you send action items to a service you connected${recording && values.summaryProvider === 'anthropic' ? ', or ask Claude for summary suggestions' : ''}.`) : fact('Stored in this browser', 'This browser preview keeps meetings in this browser’s local storage. Nothing is uploaded.')}
+          {desktop ? fact('Stored on this device', 'Meeting files live in a local archive on this computer. Something leaves it only when you ask:', [...sends, `Everything else stays on this ${device}.`]) : fact('Stored in this browser', 'This browser preview keeps meetings in this browser’s local storage. Nothing is uploaded.')}
           {recording ? fact('Recording starts only when you choose', 'Nothing records automatically. QuietNote hears your microphone and what this computer plays, only while you record.') : fact('Capture starts only when you choose', 'Nothing begins capturing automatically.')}
           {recording && fact('Transcribed on this device', 'Audio and transcripts are made and kept on this computer with a bundled speech model. Nothing is uploaded.')}
           {disk === 'on' && fact('Encrypted by FileVault', `macOS encrypts this Mac’s disk, ${recording ? 'recordings, transcripts and notes' : 'meetings'} included, so no one can read them from the disk without your password.`)}
@@ -267,7 +276,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
           {(disk === 'off' || disk === 'decrypting') && <div className="setting-row"><div><div className="setting-title">{disk === 'off' ? 'FileVault is off' : 'FileVault is being turned off'}</div><p>{`Anyone with this Mac’s disk could read your ${recording ? 'recordings, transcripts and notes' : 'meetings'}. FileVault encrypts the whole disk with your login password. Turn it on under Privacy & Security → FileVault.`}</p></div><button className="text-button" onClick={() => void openPrivacySettings('fileVault').catch(() => { /* The text says where to go. */ })}>Open System Settings</button></div>}
           <NameRow value={typeof values.userName === 'string' ? values.userName : ''} onChange={name => onChange('userName', name)} />
           {fact('No meeting bot', 'QuietNote never joins a call or adds an attendee.')}
-          {fact('No account required', 'There is no sign-in and no cloud sync.')}
+          {fact('No account required', 'There’s no QuietNote account and no cloud sync.')}
           {desktop && fact(connected.length ? `Connected to ${connected.join(' and ')}` : 'No connections', connected.length ? 'Action items are sent only when you choose Send. Keys are kept in your macOS Keychain.' : 'Connect Linear or GitHub from Connections in the sidebar to send action items as issues.')}
           {detectsCalls && toggle('detectCalls', 'Offer to record calls', 'When Zoom, Teams, FaceTime, Slack or a browser starts using the microphone, a small panel offers to record. QuietNote only checks which app is using the microphone, on this Mac. Nothing records until you press Start recording.', true)}
           {desktop && mac && <div className="setting-row"><div><div className="setting-title">Use your calendar</div><p>Your meetings are named after their calendar events and know who’s invited; Home and the menu bar show what’s next, and People lists who you meet. QuietNote reads the calendars on this Mac (including Google and Outlook accounts added to it). It never changes them, never starts recording, and nothing is sent anywhere.</p>
@@ -294,7 +303,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
           {recording && mac && toggle('backupAudio', 'Back up recordings with Time Machine', 'Recordings are left out of Time Machine, so a backup drive never holds the audio of your meetings. Transcripts and notes are backed up as usual. Turn this on to back up recordings too.', false)}
         </section>
         {recording && desktop && <SummarySettings values={values} onChange={onChange} summaryKey={summaryKey} onSummaryKey={onSummaryKey} />}
-        {!recording && <section className="planned-group"><h2>Planned <span className="badge">Not active yet</span></h2>
+        {!recording && <section className="planned-group"><h2>Planned <span className="h2-note">Not active yet</span></h2>
           <p className="group-note">These choices are saved for when audio capture and processing exist. They have no effect in this version.</p>
           {toggle('audio', 'Keep audio on this device', 'No audio files are created today.', true)}
           {toggle('deleteAudio', 'Delete audio after processing', 'No audio exists to delete, and no deletion runs.', false)}
@@ -326,7 +335,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
       </>}
       {section === 'About' && <>
         <h1>About</h1>
-        <p className="lede">QuietNote{version ? ` ${version}` : ''} <span className="badge">Prototype</span></p>
+        <p className="lede">QuietNote{version ? ` ${version}` : ''} · Prototype</p>
         <p className="body-copy">Made by Sarl Studio · <a href="https://x.com/salmantln" target="_blank" rel="noreferrer">@salmantln</a></p>
         <p className="body-copy">QuietNote is open source under the GNU Affero General Public License, version 3. The code it takes from Scratch stays under the MIT license.</p>
         {desktop && <Support />}

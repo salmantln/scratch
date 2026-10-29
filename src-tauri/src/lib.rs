@@ -3934,6 +3934,7 @@ pub fn run() {
             meetings::create_meeting_bundle,
             meetings::save_meeting_metadata,
             meetings::trash_meeting,
+            meetings::move_meeting,
             meetings::quietnote_preferences,
             tray::tray_sync,
             tray::quietnote_quit,

@@ -29,6 +29,7 @@ Recording and transcription compile for Windows, but **nothing has been run on W
 - **Tray**: left click opens the window and right click opens the menu. While recording, the icon switches to `icons/tray-recording.png` (red dot) and the tooltip shows the elapsed time. Menu `&` characters are escaped.
 - **Paths**: the archive lives under `%APPDATA%\app.quietnote.desktop\meetings`. Relative paths inside metadata use `/`; "Show audio" converts them to `\` for Explorer.
 - **Disk space** is read with `fs4` (`GetDiskFreeSpaceExW`).
+- **Moving a meeting to another project** renames its folder, which Windows refuses while files inside are open, so `move_meeting` refuses while the meeting records (paused included) and says to move it after Stop. A transcription only opens a track while reading it, so a move then waits for that read.
 - **Quit**: tray Quit ("Stop recording and quit" while recording) and `RunEvent::Exit` finalize the recording. Recovery on the next launch works as on macOS.
 
 ## Verify first on Windows

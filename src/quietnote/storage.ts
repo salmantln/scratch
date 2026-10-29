@@ -75,6 +75,19 @@ export async function saveMetadata(metadata: MeetingMetadata): Promise<void> {
   if (desktop) await invoke('save_meeting_metadata', { metadata });
   else writeBrowser(browserMeetings().map(m => m.metadata.id === metadata.id ? { ...m, metadata } : m));
 }
+/** Moves a meeting into another project: on desktop its folder moves, and Rust returns the metadata with its new paths.
+ * The browser preview keeps the project it leaves, as the desktop keeps its folder. */
+export async function moveMeeting(metadata: MeetingMetadata, project: string): Promise<MeetingMetadata> {
+  const at = (file: string) => `${project}/${metadata.id}/${file}`;
+  if (desktop) {
+    noteWrite(metadata.meetingPath, metadata.transcriptPath, at('meeting.md'), at('transcript.md'));
+    return invoke('move_meeting', { id: metadata.id, project });
+  }
+  const moved = { ...metadata, project, meetingPath: at('meeting.md'), transcriptPath: at('transcript.md'), audioPath: metadata.audioPath && at('audio') };
+  localStorage.setItem(projectsKey, JSON.stringify([...new Set([...browserProjects(), metadata.project])]));
+  writeBrowser(browserMeetings().map(m => m.metadata.id === metadata.id ? { ...m, metadata: moved } : m));
+  return moved;
+}
 /** Where a deleted meeting goes on desktop: its folder can be put back from there until it's emptied. */
 export const bin = /Win/.test(navigator.userAgent) ? 'Recycle Bin' : 'Trash';
 /** Deletes a meeting: on desktop its whole folder moves to the Trash (Rust refuses while it records or transcribes);

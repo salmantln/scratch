@@ -104,7 +104,7 @@ fn entries(state: &capture::State, listing: Option<&meetings::Listing>, project:
         let started = chrono::DateTime::parse_from_rfc3339(&live.started_at).map(|t| t.with_timezone(&chrono::Local).format("%H:%M").to_string()).unwrap_or_default();
         let paused = live.resumed_at.is_none();
         out.push(item("recording", format!("{} {}", if paused { "❙❙ Paused:" } else { "● Recording:" }, label(&live.title)), false));
-        out.push(item("started", format!("Started {started} by you · No bot joined"), false));
+        out.push(item("started", format!("Started {started}"), false));
         // The first sentence of a problem ("Microphone disconnected.") fits a menu line.
         if let Some(problem) = &live.problem { out.push(item("problem", format!("⚠ {}", label(problem.split_inclusive(". ").next().unwrap_or(problem))), false)); }
         if let Some(ending) = &live.ending {
@@ -353,7 +353,7 @@ mod tests {
         let recording = entries(&state(true, true, Some("Microphone disconnected. Reconnecting…")), Some(&listing), Some("Acme".into()), None);
         let lines = texts(&recording);
         assert_eq!(lines[0], "● Recording: Acme onboarding");
-        assert!(lines[1].starts_with("Started ") && lines[1].ends_with(" by you · No bot joined"));
+        assert!(lines[1].starts_with("Started ") && !lines[1].contains("bot"));
         assert_eq!(lines[2], "⚠ Microphone disconnected.");
         // Only what matters while recording: no Start, no recent meetings, no projects.
         assert_eq!(&lines[3..], ["Pause recording", "Stop recording", "Open meeting", "Transcribing Standup… 42%", "Open QuietNote", "Settings…", "Stop recording and quit"]);

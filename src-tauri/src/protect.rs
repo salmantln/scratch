@@ -63,6 +63,7 @@ pub fn sync(app: &AppHandle) {
         *applied = Some(excluded);
     }
     std::thread::spawn(move || {
+        let _files = crate::meetings::files();
         let Ok(meetings) = crate::meetings::read_metadata(&root) else { return };
         for (_, dir) in meetings {
             let audio = dir.join(crate::capture::AUDIO);

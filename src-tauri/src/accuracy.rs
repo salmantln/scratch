@@ -323,7 +323,7 @@ mod tests {
             let said: Vec<Said> = serde_json::from_slice(&std::fs::read(dir.join("reference.json")).unwrap()).expect("reference.json");
             let length = samples(&dir.join("mic.wav")).unwrap().len() as f64 / 16_000.0;
             let started = std::time::Instant::now();
-            let [mic, mut system] = recognize(&models.join(MODEL), &models.join(VAD), dir, 0, std::sync::Arc::new(|_| {})).unwrap();
+            let [mic, mut system] = recognize(&models.join(MODEL), &models.join(VAD), &|name| crate::transcribe::track(dir, name), 0, std::sync::Arc::new(|_| {})).unwrap();
             let transcribed = started.elapsed();
             #[cfg(target_os = "macos")]
             {

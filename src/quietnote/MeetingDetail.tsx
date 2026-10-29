@@ -1,13 +1,13 @@
 import { Component, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { Capture, LiveTranscript } from './Capture';
+import { Capture, LiveTranscript, useListening } from './Capture';
 import { Icon } from './Icon';
 import { Hush, HushYield } from './Hush';
 import { SuggestPanel, type Summarizer } from './Suggestions';
 import { serviceName } from './catalog';
 import { label } from './shortcuts';
 import { desktop, device, openLink, transcriptData, type CaptureState, type Connections, type Service, type TranscriptTurn } from './storage';
-import { actionItems, appendAction, clock, dateLabel, durationLabel, enhancedNotes, openingTab, section, statusLabel, summaryBlocks, timeLabel, transcriptTurns, yoursFirst, type ActionItem, type Meeting, type MeetingTab } from './model';
+import { actionItems, appendAction, clock, dateLabel, durationLabel, enhancedNotes, madeUp, section, statusLabel, summaryBlocks, timeLabel, transcriptTurns, yoursFirst, type ActionItem, type Meeting, type MeetingTab } from './model';
 const Editor = lazy(() => import('../components/editor/Editor').then(module => ({ default: module.Editor })));
 const demoSeen = 'quietnote.enhance-demo.v1';
 /** An example, never this meeting's words: what highlighting your notes and enhancing them does. It plays once (about
@@ -35,20 +35,17 @@ class NotesBoundary extends Component<{ children: ReactNode }, { error: Error | 
       <details className="advanced"><summary>Details</summary><p className="path">{error.stack ?? String(error)}</p></details></div>;
   }
 }
-// Participants as initials in overlapping circles, each a different tint; the full names are on hover.
-const initials = (name: string) => { const words = name.trim().split(/\s+/); return (words[0][0] + (words.length > 1 ? words[words.length - 1][0] : '')).toUpperCase(); };
+// Participants by name in the meta line; past four, the rest are counted and all of them are on hover.
 function Participants({ names }: { names: string[] }) {
   const shown = names.length > 5 ? names.slice(0, 4) : names;
-  return <span className="participants" role="img" aria-label={`Participants: ${names.join(', ')}`} title={names.join(', ')}>
-    {shown.map((name, i) => <i key={name} className={`avatar tone-${i % 4}`} title={name}>{initials(name)}</i>)}
-    {shown.length < names.length && <i className="avatar more">+{names.length - shown.length}</i>}
-  </span>;
+  return <span className="participants" title={names.join(', ')}>{shown.join(', ')}{shown.length < names.length && ` +${names.length - shown.length}`}</span>;
 }
 /** The meeting's title; where it can change, pressing it edits it (Enter saves, Escape keeps it). */
 function Title({ title, editable, onRename }: { title: string; editable: boolean; onRename: (title: string) => Promise<void> }) {
   const [value, setValue] = useState<string | null>(null);
   const [error, setError] = useState('');
-  if (value === null) return editable ? <button className="title-edit" title="Rename this meeting" onClick={() => { setValue(title); setError(''); }}>{title}</button> : <>{title}</>;
+  // A made-up name ("Zoom call", "Untitled meeting") rests in grey with its pencil showing, waiting to be named.
+  if (value === null) return editable ? <button className={`title-edit ${madeUp(title) ? 'made-up' : ''}`} title="Rename this meeting" onClick={() => { setValue(title); setError(''); }}>{title}<Icon name="pencil" size={16} /></button> : <>{title}</>;
   const save = () => { const next = value.trim(); if (!next || next === title) { setValue(null); return; } onRename(next).then(() => setValue(null)).catch(e => setError(`Couldn’t rename it. ${String(e).replace(/^Error: /, '')}`)); };
   return <form className="title-form" onSubmit={e => { e.preventDefault(); save(); }}>
     <input aria-label="Meeting title" value={value} maxLength={160} autoFocus onChange={e => setValue(e.target.value)} onBlur={save} onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); setValue(null); } }} />
@@ -149,8 +146,8 @@ function CopyTranscript({ title, turns, voices }: { title: string; turns: { time
     <span aria-hidden={!copied}><Icon name="check" size={15} />Copied</span>
   </button>;
 }
-export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPrevious, onToggle, onEdit, onRemove, onOpenPrevious, example, connections, live, cleanDefault, summarizer, template, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onExportAudio, onMarkEnded, onDismissRecovered, onSend, onDelete }: {
-  meeting: Meeting; me: string; onRename: (title: string) => Promise<void>; onSpeaker: (from: string, to: string) => Promise<void>; previous: Meeting | null; onPrevious: (index: number) => Promise<void>; onToggle: (index: number) => Promise<void>; onEdit: (index: number, text: string) => Promise<void>; onRemove: (index: number) => Promise<void>; onOpenPrevious: () => void; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; summarizer: Summarizer | null; template?: string; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
+export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPrevious, onToggle, onEdit, onRemove, onOpenPrevious, example, connections, live, cleanDefault, deleteAudio, summarizer, template, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onExportAudio, onMarkEnded, onDismissRecovered, onSend, onDelete }: {
+  meeting: Meeting; me: string; onRename: (title: string) => Promise<void>; onSpeaker: (from: string, to: string) => Promise<void>; previous: Meeting | null; onPrevious: (index: number) => Promise<void>; onToggle: (index: number) => Promise<void>; onEdit: (index: number, text: string) => Promise<void>; onRemove: (index: number) => Promise<void>; onOpenPrevious: () => void; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; deleteAudio: boolean; summarizer: Summarizer | null; template?: string; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
   armed: boolean | 'call'; onUpdated: (meeting: Meeting) => void; onStartCapture: () => void; onCloseCapture: () => void; onRetry: () => void; onExportAudio: () => void; onMarkEnded: () => void; onDismissRecovered: () => void; onDelete: () => void;
 }) {
   const { metadata: meta, markdown, transcript } = meeting;
@@ -211,13 +208,14 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
   const shownTurns = turns.filter(t => `${t.speaker} ${t.text}`.toLowerCase().includes(transcriptQuery.toLowerCase()));
   // Who's speaking is only worth saying when it changes, and not at all when only one side spoke.
   const voices = new Set(turns.map(t => t.speaker)).size;
-  const paused = live.recording?.meetingId === meta.id && live.recording.resumedAt === null;
+  const here = live.recording?.meetingId === meta.id ? live.recording : null;
+  const paused = here?.resumedAt === null;
+  // Who's talking before their words arrive, for the live draft's dots.
+  const listening = useListening(Boolean(here) && !paused);
   const status = paused ? 'Paused' : statusLabel(meta.status);
   const duration = durationLabel(meta.duration);
-  // Two tabs: Notes shows the enhanced notes or your own, and comes back to whichever was shown last.
-  const [notesView, setNotesView] = useState<MeetingTab>(tab === 'Transcript' ? openingTab(meeting) : tab);
-  if (tab !== 'Transcript' && tab !== notesView) setNotesView(tab);
-  const shownTab = tab === 'Transcript' ? 'Transcript' : 'Notes';
+  // One row of tabs: the enhanced notes, your own and the transcript.
+  const tabs: [MeetingTab, string][] = [['Enhanced', 'Enhanced notes'], ['Notes', 'My notes'], ['Transcript', 'Transcript']];
   const tabIds = (t: string) => ({ tab: `tab-${t}`, panel: `panel-${t}` });
   const renderAction = (a: ActionItem) => <ActionRow key={a.key} item={a} fresh={a.index === fresh} onToggle={() => void onToggle(a.index)} onEdit={text => void onEdit(a.index, text)} onRemove={() => void onRemove(a.index)} />;
   // Rust owns a meeting while it records, waits to be transcribed or is transcribed, so it can't be deleted then.
@@ -227,8 +225,8 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
     <header className="meeting-header">
       <div className="meeting-title-row">
         <div className="meeting-title">
-          <h1><Title title={meta.title} editable={meta.status !== 'recording' && meta.status !== 'processing'} onRename={onRename} />{example && <span className="badge example">Example</span>}</h1>
-          <p className="meeting-meta"><span>{meta.project}</span><span>{dateLabel(meta.date)}, {timeLabel(meta.date)}</span>{duration && <span>{duration}</span>}{status && <span className={`status ${paused ? 'paused' : meta.status}`}><i aria-hidden="true" />{status}</span>}{meta.participants.length > 0 && <Participants names={meta.participants} />}</p>
+          <h1><Title title={meta.title} editable={meta.status !== 'recording' && meta.status !== 'processing'} onRename={onRename} /></h1>
+          <p className="meeting-meta"><span>{meta.project}</span>{example && <span>Example</span>}<span>{dateLabel(meta.date)}, {timeLabel(meta.date)}</span>{duration && <span>{duration}</span>}{status && <span className={`status ${paused ? 'paused' : meta.status}`}><i aria-hidden="true" />{status}</span>}{meta.participants.length > 0 && <Participants names={meta.participants} />}</p>
         </div>
         <div className="meeting-actions">
           {meta.status === 'idle' && !armed && <button className={live.available ? 'primary' : 'secondary'} disabled={Boolean(other)} title={other ? `“${other.title}” is recording. Stop it first.` : undefined} onClick={onStartCapture}>{live.available ? <><i className="record-dot" aria-hidden="true" />Start recording</> : 'Start capture'}</button>}
@@ -239,9 +237,9 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
       <div className="meeting-tabs" role="tablist" aria-label="Meeting sections" onKeyDown={e => {
         if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
         e.preventDefault();
-        const next = shownTab === 'Notes' ? 'Transcript' : 'Notes';
-        onTab(next === 'Notes' ? notesView : next); document.getElementById(tabIds(next).tab)?.focus();
-      }}>{(['Notes', 'Transcript'] as const).map(t => <button key={t} id={tabIds(t).tab} role="tab" aria-selected={t === shownTab} aria-controls={tabIds(t).panel} tabIndex={t === shownTab ? 0 : -1} onClick={() => onTab(t === 'Notes' ? notesView : t)}>{t}</button>)}</div>
+        const at = tabs.findIndex(([t]) => t === tab), next = tabs[(at + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length][0];
+        onTab(next); document.getElementById(tabIds(next).tab)?.focus();
+      }}>{tabs.map(([t, label]) => <button key={t} id={tabIds(t).tab} role="tab" aria-selected={t === tab} aria-controls={tabIds(t).panel} tabIndex={t === tab ? 0 : -1} onClick={() => onTab(t)}>{label}</button>)}</div>
     </header>
     {meta.status === 'idle' && other && !armed && <p className="subtle start-hint">“{other.title}” is recording. Stop it before recording this meeting.</p>}
     {meta.interrupted ? <div className={`notice ${meta.status === 'error' ? 'attention' : ''}`} role="status">{meta.status === 'ready' ? <Icon name="info" size={16} /> : <Hush mood={meta.status === 'processing' ? 'transcribing' : 'attention'} size={44} fallback={<Icon name="info" size={16} />} />}<div>
@@ -249,12 +247,11 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
         <p>QuietNote closed before this recording was stopped. The audio{endedAt && ` up to ${endedAt}`} was saved. {meta.status === 'processing' ? transcribing : meta.status === 'ready' ? 'Its transcript is ready.' : 'Transcription couldn’t finish. Your recording is still saved.'}</p>
         {meta.status === 'error' && details}
       </div><div className="notice-actions">{meta.status === 'error' && audioKept && <button className="text-button" onClick={onRetry}>Retry transcription</button>}{meta.status !== 'processing' && <button className="text-button" onClick={onDismissRecovered}>Dismiss</button>}</div></div>
-    : meta.status === 'processing' ? <div className="notice" role="status"><Hush mood="transcribing" size={44} progress={live.transcribing?.meetingId === meta.id ? live.transcribing.percent / 100 : undefined} fallback={<Icon name="recent" size={16} />} /><div><strong>{transcribing}</strong><p>This runs on this {device}. You can keep working or close the window. The audio is kept until the transcript is saved.</p></div></div>
+    : meta.status === 'processing' ? <div className="notice" role="status"><Hush mood="transcribing" size={44} progress={live.transcribing?.meetingId === meta.id ? live.transcribing.percent / 100 : undefined} fallback={<Icon name="recent" size={16} />} /><div><strong>{transcribing}</strong><p>This runs on this {device}. You can keep working or close the window. {deleteAudio ? 'The audio is deleted once the transcript is saved.' : `The audio stays saved on this ${device}.`}</p></div></div>
     : meta.status === 'error' && audioKept ? <div className="notice attention" role="status"><Hush mood="attention" size={44} fallback={<Icon name="info" size={16} />} /><div><strong>Transcription couldn’t finish.</strong><p>Your recording is still saved{meta.duration > 0 ? ` (${durationLabel(meta.duration)})` : ''}, so you can retry.</p>{details}</div><div className="notice-actions"><button className="text-button" onClick={onExportAudio}>Export audio…</button><button className="text-button" onClick={onRetry}>Retry transcription</button></div></div>
     : meta.status === 'error' && <div className="notice attention" role="status"><Hush mood="attention" size={44} fallback={<Icon name="info" size={16} />} /><div><strong>This meeting was interrupted before it finished.</strong><p>{meta.error ?? (live.available ? 'QuietNote closed while it was recording, and no audio was saved.' : 'QuietNote closed while capture was running. No audio was recorded.')} Anything you wrote in Notes is kept.</p></div><div className="notice-actions"><button className="text-button" onClick={() => onTab('Notes')}>Add notes</button><button className="text-button" onClick={onMarkEnded}>Mark as ended</button></div></div>}
     {unnamed.length > 0 && <WhoSpoke key={unnamed.map(v => v.voice).join()} voices={unnamed} invited={invitedOthers} onName={onSpeaker} onCite={cite} onSkip={() => { skipNaming(meta.id); setSkipped(true); }} />}
-    <HushYield.Provider value={yielded || meta.status === 'processing' || meta.status === 'error'}><div className="meeting-content" role="tabpanel" id={tabIds(shownTab).panel} aria-labelledby={tabIds(shownTab).tab}>
-      {shownTab === 'Notes' && <div className="segmented notes-view" role="group" aria-label="Notes view"><button aria-pressed={tab === 'Enhanced'} onClick={() => onTab('Enhanced')}>Enhanced notes</button><button aria-pressed={tab === 'Notes'} onClick={() => onTab('Notes')}>My notes</button></div>}
+    <HushYield.Provider value={yielded || meta.status === 'processing' || meta.status === 'error'}><div className="meeting-content" role="tabpanel" id={tabIds(tab).panel} aria-labelledby={tabIds(tab).tab}>
       {tab === 'Enhanced' && (() => {
         // As in Granola, the action items lead the enhanced notes once there are some; until then, adding one is at the end.
         const todo = <section className="note-actions" aria-labelledby="note-actions">
@@ -269,7 +266,8 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
           {notes ? <div className="summary-text">{actions.length > 0 && summaryBlocks(notes)[0].kind !== 'heading' && <h3>Summary</h3>}{summaryBlocks(notes).map((b, i) => b.kind === 'heading' ? <h3 key={i}>{b.text}</h3> : b.kind === 'paragraph' ? <p key={i}>{b.text}</p>
             // A point with a transcript time was added from the transcript; the rest came from the notes.
             : <ul key={i}>{b.items.map((item, j) => <li key={j} className={item.at ? 'added' : undefined}>{item.text}{item.at && <> <button className="citation" title="Show this line in the transcript" onClick={() => cite(item.at!)}><span className="timestamp">{item.at}</span></button></>}</li>)}</ul>)}</div>
-          : <div className="empty-inline">{calm && <Hush mood="resting" size={72} />}<h2>No enhanced notes yet.</h2><p>{!live.available || example ? 'Enhancing notes isn’t available in this version. Your own notes are the record of this meeting.'
+          : <div className="empty-inline">{calm && <Hush mood="resting" size={72} />}<h2>No enhanced notes yet.</h2><p>{example ? 'Example meetings can’t be enhanced. Record a meeting to enhance its notes.'
+            : !live.available ? 'Enhancing needs a transcript, and recording isn’t available on this computer.'
             : recorded ? `Highlight what matters in your notes (${label('CmdOrCtrl+Shift+H')}). ${summarizer ? 'Enhancing them' : 'With summary suggestions on in Settings → Privacy, enhancing them'} fills them in from the transcript, each added line in grey with the moment it came from.`
             : summarizer ? 'Once it’s recorded, you can enhance your notes from its transcript.' : 'Turn on summary suggestions in Settings → Privacy to enhance your notes from the transcript.'}</p>{recorded && <EnhanceDemo />}<button className="secondary" onClick={() => onTab('Notes')}>Open my notes</button></div>}
           {!actions.length && todo}
@@ -302,14 +300,13 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
           const waiting = turns.length ? null : <div className="empty-inline">{calm && <Hush mood="resting" size={72} />}<h2>{meta.status === 'processing' ? 'Transcribing…' : raw ? 'No speech was recognized.' : 'No transcript yet.'}</h2><p>{meta.status === 'idle' ? `Start recording and QuietNote transcribes the meeting on this ${device} when you stop.` : meta.status === 'processing' || meta.status === 'recording' ? 'The transcript appears here when it’s ready.' : 'Your notes are the record of this meeting.'}</p></div>;
           // While recording, and until the full transcript is ready, the live draft stands in for it (after
           // the earlier transcript, when recording was resumed).
-          const here = live.recording?.meetingId === meta.id ? live.recording : null;
           if (!live.liveTranscript || !(here ? here.liveText !== 'off' : meta.status === 'processing')) return waiting;
-          return <LiveTranscript meetingId={meta.id} clean={!verbatim} state={here?.liveText ?? 'on'} empty={here ? undefined : waiting}
+          return <LiveTranscript meetingId={meta.id} clean={!verbatim} state={here?.liveText ?? 'on'} listening={here && !paused ? listening : undefined} empty={here ? undefined : waiting}
             caption={here ? `Live draft, transcribed on this ${device}. The full transcript is made when you stop.` : 'Live draft. The full transcript replaces it when it’s ready.'} />;
         })()
         : !turns.length && <div className="empty-inline"><Hush mood="resting" size={72} /><h2>Transcript unavailable.</h2><p>This version doesn’t transcribe audio.</p></div>}
       </section>}
     </div></HushYield.Provider>
-    {docked && <Capture meeting={meeting} autoStart={armed} live={live} clean={cleanDefault} transcript={tab !== 'Transcript'} onUpdated={onUpdated} onClose={onCloseCapture} />}
+    {docked && <Capture meeting={meeting} autoStart={armed} live={live} onUpdated={onUpdated} onClose={onCloseCapture} />}
   </article>;
 }
