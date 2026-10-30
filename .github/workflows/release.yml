@@ -78,12 +78,11 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Lemon Squeezy store, products and checkout links: public, set as repository variables. Left unset, the build has no licenses.
+          # Lemon Squeezy store, product, checkout and customer portal links: public, set as repository variables. Left unset, the build sells no subscription and never holds recording.
           QUIETNOTE_LS_STORE_ID: ${{ vars.QUIETNOTE_LS_STORE_ID }}
-          QUIETNOTE_LS_SUPPORTER: ${{ vars.QUIETNOTE_LS_SUPPORTER }}
-          QUIETNOTE_LS_COMMERCIAL: ${{ vars.QUIETNOTE_LS_COMMERCIAL }}
-          VITE_QUIETNOTE_CHECKOUT_SUPPORTER: ${{ vars.VITE_QUIETNOTE_CHECKOUT_SUPPORTER }}
-          VITE_QUIETNOTE_CHECKOUT_COMMERCIAL: ${{ vars.VITE_QUIETNOTE_CHECKOUT_COMMERCIAL }}
+          QUIETNOTE_LS_PRODUCT: ${{ vars.QUIETNOTE_LS_PRODUCT }}
+          VITE_QUIETNOTE_CHECKOUT: ${{ vars.VITE_QUIETNOTE_CHECKOUT }}
+          VITE_QUIETNOTE_PORTAL: ${{ vars.VITE_QUIETNOTE_PORTAL }}
         with:
           tagName: v__VERSION__
           releaseName: "QuietNote v__VERSION__"

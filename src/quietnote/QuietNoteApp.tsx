@@ -14,6 +14,7 @@ import { MeetingDetail } from './MeetingDetail';
 import { People } from './People';
 import { ActionItems, Home, MeetingList } from './Library';
 import { Onboarding } from './Onboarding';
+import { LicenseDialog } from './License';
 import { accelerator, bound, label, type Action } from './shortcuts';
 import { actionItems, actionLine, clock, editAction, removeAction, restoreAction, linkAction, recorded, makeMeeting, openingTab, previousMeeting, projectFor, reproject, retitle, replaceSection, searchMeeting, searchTerms, section, shortDate, stopsIn, toggleAction, type ActionItem, type CalendarEvent, type Meeting, type MeetingTab } from './model';
 import { demoMeetings, isExample } from './seeds';
@@ -80,7 +81,13 @@ function Shell() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(initial.section ?? 'General');
   const [query, setQuery] = useState('');
   const [indexedIds, setIndexedIds] = useState<string[]>([]);
-  const [dialog, setDialog] = useState<'' | 'project' | 'meeting' | 'connections' | 'send' | 'delete'>('');
+  const [dialog, setDialog] = useState<'' | 'project' | 'meeting' | 'connections' | 'send' | 'delete' | 'license'>('');
+  // The subscription (builds that sell one): a recording asked for without one that allows it waits in
+  // `afterLicense` while the license dialog explains, and starts once a key is activated or checked.
+  const [license, setLicense] = useState<storage.LicenseStatus>(storage.unlicensed);
+  const licenseNow = useRef(license);
+  licenseNow.current = license;
+  const afterLicense = useRef<(() => void) | null>(null);
   // The meeting whose recording was asked for: its recorder strip starts it (or explains first, unless the
   // call panel's Record asked: that press is the start, as in Granola, and macOS asks for the microphone itself).
   const [capture, setCapture] = useState<{ id: string; call: boolean } | null>(null);
@@ -331,6 +338,7 @@ function Shell() {
   // With the calendar on, the meeting is named after the event the user is in, and knows who's invited.
   async function recordCall(app: string) {
     if (live.recording) { openMeeting(live.recording.meetingId, 'Notes'); setWindowCompact(true); return; }
+    if (held(() => void trayActions.current.recordCall(app))) return;
     if (!allProjects.length) { newMeeting(); return; }
     const event = calendarOn ? await storage.calendarNow().catch(() => null) : null;
     createMeeting(event?.title ?? `${app} call`, event ? projectOf(event) : fallbackProject, 'call', event).then(() => setWindowCompact(true)).catch(e => setProblem(`Couldn’t start recording. ${String(e)}`));
@@ -340,10 +348,23 @@ function Shell() {
   async function quickRecord() {
     if (live.recording) { openMeeting(live.recording.meetingId, 'Notes'); return; }
     if (!live.available || !allProjects.length) { newMeeting(); return; }
+    if (held(() => void trayActions.current.quickRecord())) return;
     const event = calendarOn ? await storage.calendarNow().catch(() => null) : null;
     const prepared = event && records.current.find(m => m.metadata.calendarEvent === event.id && m.metadata.status === 'idle');
     if (prepared) { openMeeting(prepared.metadata.id, 'Notes'); setCapture({ id: prepared.metadata.id, call: false }); return; }
     createMeeting(event?.title ?? 'Untitled meeting', event ? projectOf(event) : fallbackProject, true, event).catch(e => setProblem(`Couldn’t start recording. ${String(e)}`));
+  }
+  // Recording needs a subscription that allows it: without one the license dialog explains, and `retry` runs once it does.
+  function held(retry: () => void) {
+    if (licenseNow.current.mayRecord) return false;
+    afterLicense.current = retry; setDialog('license');
+    return true;
+  }
+  function licensed(status: storage.LicenseStatus) {
+    setLicense(status); licenseNow.current = status; setDialog('');
+    const retry = afterLicense.current;
+    afterLicense.current = null;
+    if (status.mayRecord) retry?.();
   }
   // The tray's next meeting opens New meeting for that event.
   function newMeetingFor(eventId?: string) {
@@ -364,6 +385,8 @@ function Shell() {
     on('quietnote://open-settings', () => trayActions.current.go('settings'));
     on<string>('quietnote://record-call', app => trayActions.current.recordCall(app));
     on('quietnote://record-now', () => void trayActions.current.quickRecord());
+    storage.licenseStatus().then(s => { if (!cancelled) setLicense(s); }).catch(() => { /* Rust refuses to record without one; the next start says why. */ });
+    listen<storage.LicenseStatus>('quietnote://license-changed', e => setLicense(e.payload)).then(fn => { if (cancelled) fn(); else unlisten.push(fn); });
     // The call panel's "Don't notify" writes the preferences in Rust.
     listen('quietnote://preferences-changed', () => { storage.preferences().then(setPreferences).catch(() => { /* The next load reads them. */ }); }).then(fn => { if (cancelled) fn(); else unlisten.push(fn); });
     return () => { cancelled = true; unlisten.forEach(fn => fn()); };
@@ -413,7 +436,8 @@ function Shell() {
     const meeting = makeMeeting(title, meetingProject, event);
     await storage.createMeeting(meeting);
     upsert(meeting); remember(lastProjectKey, meetingProject); setDialog(''); openMeeting(meeting.metadata.id, 'Notes');
-    if (record) setCapture({ id: meeting.metadata.id, call: record === 'call' });
+    const arm = () => setCapture({ id: meeting.metadata.id, call: record === 'call' });
+    if (record && !held(arm)) arm();
   }
   async function addExamples() {
     setAddingExamples(true);
@@ -485,6 +509,7 @@ function Shell() {
   const dialogs = <>
     {dialog === 'project' && <NewProjectDialog existing={allProjects} onCreate={createProject} onClose={() => { setDialog(''); setMeetingNext(false); }} />}
     {dialog === 'meeting' && <NewMeetingDialog projects={allProjects} project={contextProject} canRecord={live.available} event={meetingEvent} projectFor={projectOf} onCreate={createMeeting} onClose={() => setDialog('')} />}
+    {dialog === 'license' && <LicenseDialog status={license} onActivated={licensed} onClose={() => { afterLicense.current = null; setDialog(''); }} />}
     {dialog === 'connections' && <ConnectionsDialog detectsCalls={live.detectsCalls} calendarOn={preferences.calendar === true} connections={connections} onChange={setConnections} onClose={() => setDialog('')} />}
     {dialog === 'delete' && current && <DeleteMeetingDialog title={current.metadata.title} audio={Boolean(current.metadata.audioPath)} onDelete={() => deleteMeeting(current)} onClose={() => setDialog('')} />}
     {dialog === 'send' && current && <SendDialog meeting={current} connections={connections} lastTargets={{ linear: String(preferences['send.linear'] ?? ''), github: String(preferences['send.github'] ?? '') }} onSent={(service, target, links) => sent(current.metadata.id, service, target, links)} onClose={() => setDialog('')} />}
@@ -594,7 +619,7 @@ function Shell() {
       {problem && <div className="banner warning" role="alert"><div><strong>{problem}</strong></div><div className="banner-actions"><button className="text-button" onClick={() => setProblem('')}>Dismiss</button></div></div>}
       <main className="qn-main" ref={main}><HushYield.Provider value={bannerHush}>
         {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} disk={disk} summaryKey={summaryKey} onSummaryKey={setSummaryKey} section={shownSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
-        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={index => toggleItem(previous!.metadata.id, index)} onToggle={index => toggleItem(current.metadata.id, index)} onEdit={(index, text) => editItem(current.metadata.id, index, text)} onRemove={index => removeItem(current.metadata.id, index)} me={me} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} deleteAudio={preferences.deleteAudio === true} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onExportAudio={() => void exportAudio(current)} onMarkEnded={() => void markEnded(current)} onDelete={() => setDialog('delete')} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
+        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={index => toggleItem(previous!.metadata.id, index)} onToggle={index => toggleItem(current.metadata.id, index)} onEdit={(index, text) => editItem(current.metadata.id, index, text)} onRemove={index => removeItem(current.metadata.id, index)} me={me} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} deleteAudio={preferences.deleteAudio === true} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { const arm = () => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }; if (!held(arm)) arm(); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onExportAudio={() => void exportAudio(current)} onMarkEnded={() => void markEnded(current)} onDelete={() => setDialog('delete')} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
           const latest = records.current.find(m => m.metadata.id === current.metadata.id);
           // The editor can save once more as it closes, after its meeting was deleted.
           if (!latest) return Promise.resolve();

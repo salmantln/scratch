@@ -536,9 +536,9 @@ test('I: connections are a directory; only Linear and GitHub connect, and only i
 
 // A stand-in for the desktop app's Rust side, so the real recorder UI can be driven in the browser.
 // Only the commands and events the recording flow uses are modelled; everything else resolves to null.
-type Fixture = { meetings: ReturnType<typeof makeMeeting>[]; microphone?: string; model?: string; recording?: string; startedAgo?: number; startFailure?: { code: string; message: string } };
+type Fixture = { meetings: ReturnType<typeof makeMeeting>[]; microphone?: string; model?: string; recording?: string; startedAgo?: number; startFailure?: { code: string; message: string }; license?: unknown };
 async function mockDesktop(page: Page, fixture: Fixture) {
-  await page.addInitScript(({ meetings, microphone = 'granted', model = 'ready', recording, startedAgo = 0, startFailure }) => {
+  await page.addInitScript(({ meetings, microphone = 'granted', model = 'ready', recording, startedAgo = 0, startFailure, license }) => {
     type Meta = (typeof meetings)[number]['metadata'];
     const w = window as unknown as Record<string, unknown>;
     const callbacks = new Map<number, (event: unknown) => void>();
@@ -580,9 +580,11 @@ async function mockDesktop(page: Page, fixture: Fixture) {
       accessibility: false,
       // The AI apps on this computer, as `mcp_agents` lists them; `mcp_agent_set` turns one on or off.
       agents: [] as { id: string; name: string; state: string; path: string; problem: string | null }[],
-      // The license `license_status` reads; `license_activate` answers `licenseAnswer`, a license or an error to throw.
-      license: { available: true, license: null as unknown },
+      // The subscription `license_status` reads (the fixture's, else an active one); `license_activate` answers
+      // `licenseAnswer` and `license_check` `licenseCheck`: a status, or an error to throw. Both tell the windows.
+      license: (license ?? { available: true, state: 'active', mayRecord: true, license: { name: 'Ada', plan: 'Monthly', activatedAt: '2026-10-25T10:00:00Z', checkedAt: Date.now() } }) as unknown,
       licenseAnswer: null as unknown,
+      licenseCheck: null as unknown,
       // Start recording from any app, as Rust registered it (`hotkey_set`; '' is off), and keys another app holds.
       hotkey: 'Control+Alt+R',
       hotkeyTaken: [] as string[],
@@ -659,8 +661,12 @@ async function mockDesktop(page: Page, fixture: Fixture) {
           case 'transcript_data': return state.transcriptData;
           case 'save_file_direct': state.saved = args.content; state.savedPath = args.path; return { path: args.path, content: args.content, title: '', modified: 0 };
           case 'license_status': return state.license;
-          case 'license_activate': if (typeof state.licenseAnswer === 'string') throw state.licenseAnswer; state.license = { available: true, license: state.licenseAnswer }; return state.licenseAnswer;
-          case 'license_remove': state.license = { available: true, license: null }; return null;
+          case 'license_activate': case 'license_check': {
+            const answer = cmd === 'license_activate' ? state.licenseAnswer : state.licenseCheck;
+            if (typeof answer === 'string') throw answer;
+            state.license = answer; emit('quietnote://license-changed', answer); return answer;
+          }
+          case 'license_remove': state.license = { available: true, state: 'none', mayRecord: false, license: null }; emit('quietnote://license-changed', state.license); return null;
           case 'summary_key_status': return state.summaryKey;
           case 'summary_set_key': state.summaryKey = true; return null;
           case 'summary_suggest': return state.suggestions;
@@ -694,7 +700,8 @@ async function mockDesktop(page: Page, fixture: Fixture) {
 }
 type Mock = { state: { calls: string[]; preferences: Record<string, unknown>; capture: Record<string, unknown>; transcriptData: unknown; devices: { devices: string[]; selected: string | null }; draft: unknown; compact: boolean; summaryKey: boolean; suggestions: unknown; saved: string; savedPath: string; menu: null | { items: { text: string; items?: { text: string }[] }[] }; menus: number }; emit: (event: string, payload: unknown) => void; meetings: ReturnType<typeof makeMeeting>[]; choose: (text: string) => boolean };
 /** Runs `fn` in the page with the mock. It's serialized, so it can't use variables from the test. */
-const qn = <T,>(page: Page, fn: (qn: Mock) => T) => page.evaluate(`(${fn.toString()})(window.__qn)`) as Promise<T>;
+// `arg` passes a value in, as JSON (the function runs in the page, so it can't close over the test's variables).
+const qn = <T, A = null>(page: Page, fn: (qn: Mock, arg: A) => T, arg?: A) => page.evaluate(`(${fn.toString()})(window.__qn, ${JSON.stringify(arg ?? null)})`) as Promise<T>;
 const writes = ['save_meeting_metadata', 'render_transcripts', 'create_meeting_bundle', 'capture_start', 'capture_stop', 'transcribe_meeting'];
 function meetingWith(title: string, change: Partial<ReturnType<typeof makeMeeting>['metadata']>) {
   const meeting = makeMeeting(title, 'Acme');
@@ -2097,30 +2104,101 @@ test('AH: AI apps on this computer are added to QuietNote in one click, and file
   await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
 });
 
-test('AI: a license is optional, unlocks nothing, and is entered and removed in About', async ({ page }) => {
-  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')] });
+const subscribed = (plan = 'Yearly') => ({ available: true, state: 'active', mayRecord: true, license: { name: 'Ada Lovelace', plan, activatedAt: '2026-10-25T10:00:00Z', renewsAt: '2027-10-25T10:00:00Z', checkedAt: Date.now() } });
+const day = 86_400_000;
+test('AI: the subscription is entered, checked and removed in About', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')], license: { available: true, state: 'none', mayRecord: false, license: null } });
   await page.goto('/');
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('button', { name: 'About' }).click();
-  await expect(page.getByRole('heading', { name: 'Support QuietNote' })).toBeVisible();
-  await expect(page.getByText('it doesn’t unlock anything', { exact: false })).toBeVisible();
-  // This build has no checkout links, so there's nothing to buy.
-  await expect(page.getByRole('button', { name: 'Become a supporter' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Buy for your team' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Subscription' })).toBeVisible();
+  await expect(page.getByText('Subscribe to record')).toBeVisible();
+  await expect(page.getByText('stay readable and exportable without one', { exact: false })).toBeVisible();
+  await expect(page.getByText('free', { exact: false })).toHaveCount(0);
+  // This build has no checkout link, so there's nothing to buy.
+  await expect(page.getByRole('button', { name: 'Subscribe' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Enter license key' }).click();
-  await qn(page, q => { (q.state as unknown as Record<string, unknown>).licenseAnswer = 'This key isn’t for QuietNote.'; });
+  await qn(page, q => { (q.state as unknown as Record<string, unknown>).licenseAnswer = 'This license key wasn’t found, or isn’t for QuietNote. Check it and try again.'; });
   await page.getByLabel('License key').fill('not-ours');
   await page.getByRole('button', { name: 'Activate' }).click();
-  await expect(page.getByRole('alert')).toHaveText('This key isn’t for QuietNote.');
-  await qn(page, q => { (q.state as unknown as Record<string, unknown>).licenseAnswer = { kind: 'commercial', name: 'Acme BV', seats: 12, activatedAt: '2026-10-25T10:00:00Z', expiresAt: '2027-10-25T10:00:00Z' }; });
-  await page.getByLabel('License key').fill('QN-ACME');
+  await expect(page.getByRole('alert')).toHaveText(/wasn’t found/);
+  await qn(page, (q, status) => { (q.state as unknown as Record<string, unknown>).licenseAnswer = status; }, subscribed());
+  await page.getByLabel('License key').fill('QN-ADA');
   await page.getByRole('button', { name: 'Activate' }).click();
-  await expect(page.getByText('Licensed to Acme BV')).toBeVisible();
-  await expect(page.getByText('12 seats · Renews 25 Oct 2027')).toBeVisible();
+  await expect(page.getByText('Subscribed · Ada Lovelace')).toBeVisible();
+  await expect(page.getByText('Yearly, paid until 25 Oct 2027.', { exact: false })).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
   await page.getByRole('button', { name: 'Remove license' }).click();
-  await expect(page.getByRole('button', { name: 'Enter license key' })).toBeVisible();
-  expect(await qn(page, q => q.state.calls.filter(c => c === 'license_activate' || c === 'license_remove'))).toEqual(['license_activate', 'license_activate', 'license_remove']);
+  await expect(page.getByText('Subscribe to record')).toBeVisible();
+  expect(await qn(page, q => q.state.calls.filter(c => c.startsWith('license_') && c !== 'license_status'))).toEqual(['license_activate', 'license_activate', 'license_remove']);
+});
+
+test('AI2: offline, recording keeps working until the grace runs out, and Check now asks again', async ({ page }) => {
+  const checkedAt = Date.now() - 5 * day, locksAt = checkedAt + 14 * day;
+  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')], license: { available: true, state: 'offline', mayRecord: true, locksAt, license: { ...subscribed().license, checkedAt } } });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'About' }).click();
+  await expect(page.getByText('Couldn’t check your subscription')).toBeVisible();
+  await expect(page.getByText(/Recording keeps working until \d+ \w+ \d{4}/)).toBeVisible();
+  await qn(page, q => { (q.state as unknown as Record<string, unknown>).licenseCheck = 'Couldn’t reach Lemon Squeezy.'; });
+  await page.getByRole('button', { name: 'Check now' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Couldn’t reach Lemon Squeezy.');
+  await qn(page, (q, status) => { (q.state as unknown as Record<string, unknown>).licenseCheck = status; }, subscribed());
+  await page.getByRole('button', { name: 'Check now' }).click();
+  await expect(page.getByText('Subscribed · Ada Lovelace')).toBeVisible();
+  // Privacy says what the daily check sends.
+  await page.getByRole('button', { name: 'Privacy' }).click();
+  await expect(page.locator('.verdict')).toContainText('Once a day');
+  await expect(page.locator('.verdict')).toContainText('license key and this Mac’s activation ID, to Lemon Squeezy');
+});
+
+test('AO: without a subscription, meetings stay readable and recording waits for a key, then starts', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')], license: { available: true, state: 'none', mayRecord: false, license: null } });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Weekly sync/ }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Weekly sync' })).toBeVisible();
+  await page.locator('.meeting-header').getByRole('button', { name: 'Start recording' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Subscribe to record' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  // ⌘⇧R and the tray ask the same way, without making an empty meeting.
+  await qn(page, q => q.emit('quietnote://record-now', null));
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'create_meeting_bundle' || c === 'capture_start'))).toEqual([]);
+  // Activating a key starts the recording that was asked for.
+  await page.locator('.meeting-header').getByRole('button', { name: 'Start recording' }).click();
+  await qn(page, (q, status) => { (q.state as unknown as Record<string, unknown>).licenseAnswer = status; }, subscribed('Monthly'));
+  await dialog.getByLabel('License key').fill('QN-ADA');
+  await dialog.getByRole('button', { name: 'Activate' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Recorder' }).getByRole('status')).toContainText('Recording');
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'capture_start').length)).toBe(1);
+});
+
+test('AO2: an ended subscription or one offline too long holds recording, and says why', async ({ page }) => {
+  await mockDesktop(page, { meetings: [makeMeeting('Weekly sync', 'Acme')], license: { available: true, state: 'ended', mayRecord: false, license: { ...subscribed().license, ended: 'expired' } } });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Weekly sync/ }).click();
+  await page.locator('.meeting-header').getByRole('button', { name: 'Start recording' }).click();
+  await expect(page.getByRole('dialog', { name: 'Your subscription has ended' })).toContainText('stay readable and exportable');
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  // The daily check finds the Mac offline too long: the key is fine, it only needs checking.
+  const checkedAt = Date.now() - 15 * day;
+  await qn(page, (q, status) => q.emit('quietnote://license-changed', status), { available: true, state: 'offline', mayRecord: false, locksAt: checkedAt + 14 * day, license: { ...subscribed().license, checkedAt } });
+  await page.locator('.meeting-header').getByRole('button', { name: 'Start recording' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Couldn’t check your subscription' });
+  await expect(dialog).toContainText('recording is off until it does');
+  await expect(dialog.getByLabel('License key')).toHaveCount(0);
+  await qn(page, q => { (q.state as unknown as Record<string, unknown>).licenseCheck = 'Couldn’t reach Lemon Squeezy.'; });
+  await dialog.getByRole('button', { name: 'Check now' }).click();
+  await expect(dialog.getByRole('alert')).toHaveText('Couldn’t reach Lemon Squeezy.');
+  expect(await qn(page, q => q.state.calls.includes('capture_start'))).toBe(false);
+  await qn(page, (q, status) => { (q.state as unknown as Record<string, unknown>).licenseCheck = status; }, subscribed());
+  await dialog.getByRole('button', { name: 'Check now' }).click();
+  await expect(page.getByRole('region', { name: 'Recorder' }).getByRole('status')).toContainText('Recording');
 });
 
 test('AJ: Give feedback opens a new email with only the version filled in', async ({ page }) => {
@@ -2190,9 +2268,9 @@ test('AM: copy says what’s true in each situation', async ({ page }) => {
   // Settings lists everything that can leave the Mac, whether or not it's set up.
   await page.getByRole('button', { name: 'Settings' }).click();
   await settingsPage(page, 'Privacy');
-  await expect(page.locator('.verdict dt')).toHaveText([/^Stays on this (Mac|PC)$/, 'Leaves when you ask', 'Never']);
-  await expect(page.locator('.verdict dd').nth(1).locator('span')).toHaveText([/to Claude when you ask for suggestions/, /Linear or GitHub/, /Lemon Squeezy/]);
-  await expect(page.locator('.verdict dd').nth(2)).toHaveText('A meeting bot, an account, cloud sync, or recording before you press Start.');
+  await expect(page.locator('.verdict dt')).toHaveText([/^Stays on this (Mac|PC)$/, 'Leaves when you ask', 'Once a day', 'Never']);
+  await expect(page.locator('.verdict dd').nth(1).locator('span')).toHaveText([/to Claude when you ask for suggestions/, /Linear or GitHub/, /Lemon Squeezy when you activate it/]);
+  await expect(page.locator('.verdict dd').nth(3)).toHaveText('A meeting bot, an account, cloud sync, or recording before you press Start.');
   // The Mac's calendars are built in, and say how to turn them on while they're off.
   await leaveSettings(page);
   await page.getByRole('button', { name: 'Connections' }).click();

@@ -3893,6 +3893,8 @@ pub fn run() {
             calendar::spawn(app.handle());
             // Start recording from any app (macOS, Windows).
             hotkey::init(app.handle());
+            // Checks the subscription at launch and once a day (builds that sell one).
+            license::spawn(app.handle());
 
             Ok(())
         })
@@ -3984,6 +3986,7 @@ pub fn run() {
             hotkey::hotkey_set,
             license::license_status,
             license::license_activate,
+            license::license_check,
             license::license_remove,
             summarize::summary_key_status,
             summarize::summary_set_key,

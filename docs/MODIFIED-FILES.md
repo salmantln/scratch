@@ -50,7 +50,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/main.tsx`
 - `vite.config.ts`
 
-## Added files (92)
+## Added files (93)
 
 - `docs/MODIFIED-FILES.md`
 - `docs/PERFORMANCE.md`
@@ -137,6 +137,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/quietnote/Connectors.tsx`
 - `src/quietnote/Dialogs.tsx`
 - `src/quietnote/Icon.tsx`
+- `src/quietnote/License.tsx`
 - `src/quietnote/MeetingDetail.tsx`
 - `src/quietnote/model.ts`
 - `src/quietnote/Onboarding.tsx`
