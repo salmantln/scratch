@@ -210,7 +210,7 @@ function Recorder({ meeting, autoStart, live, onUpdated, onClose }: Props) {
       {recording && !paused && !recording.problem && recording.mic === 'silent' && <Alert title="Your microphone is silent." action={settings('microphone')}>{`No sound has come from ${recording.micDevice ?? 'the microphone'}. Check that it isn’t muted, and that QuietNote is allowed to use it.`}</Alert>}
       {recording && !paused && recording.system === 'silent' && <Alert title="No call audio yet." action={mac ? settings('systemAudio') : undefined}>{mac ? 'If others are talking, allow QuietNote under Screen & System Audio Recording. If you just allowed it, stop and start recording again.' : 'If others are talking, check that the call plays through your default speakers or headset.'}</Alert>}
       {recording?.note && <p className="recorder-note">{recording.note}</p>}
-      {failure && <Alert title={failure.code === 'disk' ? 'Not enough disk space.' : failure.code === 'mic-denied' ? 'Microphone access is off.' : failure.title} action={failure.code === 'mic-denied' ? settings('microphone') : undefined}>{failure.message}</Alert>}
+      {failure && <Alert title={failure.code === 'disk' ? 'Not enough disk space.' : failure.code === 'mic-denied' ? 'Microphone access is off.' : failure.code === 'license' ? 'Recording needs a subscription.' : failure.title} action={failure.code === 'mic-denied' ? settings('microphone') : undefined}>{failure.message}</Alert>}
     </Dock>;
   }
   if ((!firstRun || call) && (busy || (auto && !failure))) return <Dock label="Starting…" />;

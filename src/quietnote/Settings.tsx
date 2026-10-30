@@ -3,9 +3,9 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Icon } from './Icon';
 import { Hush } from './Hush';
 import { getVersion } from '@tauri-apps/api/app';
-import { dateLabel } from './model';
+import { Subscription } from './License';
 import { accelerator, actions, bound, globalDefault, globalRecord, label, problem } from './shortcuts';
-import { activateLicense, appearance, calendarAccess, callAccessibility, checkout, cliSetupCommand, desktop, device, diskEncryption, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openLink, openPrivacySettings, removeLicense, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type LicenseStatus, type PrivacyPreferences } from './storage';
+import { appearance, calendarAccess, callAccessibility, cliSetupCommand, desktop, device, diskEncryption, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openPrivacySettings, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type PrivacyPreferences } from './storage';
 export type SettingsSection = 'General' | 'Privacy' | 'Recording' | 'Suggestions' | 'Appearance' | 'Shortcuts' | 'Local archive' | 'About';
 const mac = /Mac/.test(navigator.userAgent);
 /** What this copy can do, which decides the pages Settings has: a page with nothing on it isn't listed. */
@@ -138,53 +138,6 @@ function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { value
     {error && provider === 'anthropic' && <p className="field-error setting-error" role="alert">{error}</p>}
   </section>;
 }
-/** An optional license, in About. It unlocks nothing: it shows a supporter's thank-you, or who a team license is for. */
-function Support() {
-  const [status, setStatus] = useState<LicenseStatus | null>(null);
-  const [entering, setEntering] = useState(false);
-  const [key, setKey] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [note, setNote] = useState('');
-  const message = (e: unknown) => String(e).replace(/^Error: /, '');
-  useEffect(() => {
-    let cancelled = false;
-    licenseStatus().then(s => { if (!cancelled) setStatus(s); }).catch(e => { if (!cancelled) setError(message(e)); });
-    return () => { cancelled = true; };
-  }, []);
-  async function activate() {
-    setBusy(true); setError(''); setNote('');
-    try { const license = await activateLicense(key); setStatus({ available: true, license }); setKey(''); setEntering(false); } catch (e) { setError(message(e)); }
-    setBusy(false);
-  }
-  async function remove() {
-    setBusy(true); setError('');
-    try { setNote(await removeLicense() ?? ''); setStatus({ available: true, license: null }); } catch (e) { setError(message(e)); }
-    setBusy(false);
-  }
-  if (!status?.available) return error ? <p className="field-error" role="alert">{error}</p> : null;
-  const license = status.license;
-  const expired = Boolean(license?.expiresAt && Date.parse(license.expiresAt) < Date.now());
-  const terms = license && [license.seats && `${license.seats} ${license.seats === 1 ? 'seat' : 'seats'}`, license.expiresAt && `${expired ? 'Expired' : 'Renews'} ${dateLabel(license.expiresAt)}`].filter(Boolean).join(' · ');
-  return <section><h2>Support QuietNote</h2>
-    {license ? <div className="setting-row"><div>
-        <div className="setting-title">{license.kind === 'supporter' ? `Supporter${license.name ? ` · thank you, ${license.name}` : ''}` : `Licensed to ${license.name || 'your team'}`}</div>
-        <p>{license.kind === 'supporter' ? `Since ${dateLabel(license.activatedAt)}. Thank you for paying for QuietNote’s development.` : terms || 'Commercial license.'}</p></div>
-      <button className="text-button" disabled={busy} onClick={() => void remove()}>{busy ? 'Removing…' : 'Remove license'}</button></div>
-    : <>
-      <p className="group-note">QuietNote is free, with nothing held back. A license pays for its development; it doesn’t unlock anything.</p>
-      {checkout.supporter && <div className="setting-row"><div><div className="setting-title">Supporter</div><p>Pay once. You get a thank-you here, and early builds once they’re available.</p></div><button className="secondary" onClick={() => void openLink(checkout.supporter!)}>Become a supporter</button></div>}
-      {checkout.commercial && <div className="setting-row"><div><div className="setting-title">Commercial</div><p>For teams using QuietNote at work, per person, per year. It’s optional: QuietNote is free for work too.</p></div><button className="secondary" onClick={() => void openLink(checkout.commercial!)}>Buy for your team</button></div>}
-      {entering
-        ? <form className="setting-row key-row" onSubmit={e => { e.preventDefault(); if (key.trim()) void activate(); }}><div className="setting-title">License key</div><p>It’s checked once with Lemon Squeezy, then kept in your macOS Keychain. Only the key and the name “QuietNote for Mac” are sent.</p>
-          <div className="token-field"><input aria-label="License key" placeholder="Paste your key" value={key} autoComplete="off" spellCheck={false} aria-invalid={Boolean(error)} onChange={e => { setKey(e.target.value); setError(''); }} />
-          <button className="primary" type="submit" disabled={busy || !key.trim()}>{busy ? 'Checking…' : 'Activate'}</button></div></form>
-        : <div className="setting-row"><div><div className="setting-title">Already have a license?</div><p>Enter the key from your receipt email.</p></div><button className="text-button" onClick={() => { setEntering(true); setNote(''); }}>Enter license key</button></div>}
-    </>}
-    {error && <p className="field-error setting-error" role="alert">{error}</p>}
-    {note && <p className="subtle">{note}</p>}
-  </section>;
-}
 /** The AI apps on this computer that can read the archive through `quietnote mcp`, each added or removed in its own settings file. */
 function AiApps() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
@@ -255,7 +208,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
     window.addEventListener('focus', check);
     return () => { cancelled = true; window.removeEventListener('focus', check); };
   }, [confirming]);
-  // Whether this build sells licenses, for the list of what leaves the device.
+  // Whether this build sells subscriptions, whose key is checked once a day: Privacy says so.
   const [licenses, setLicenses] = useState(false);
   useEffect(() => { if (desktop) licenseStatus().then(s => setLicenses(s.available)).catch(() => setLicenses(false)); }, []);
   const flag = (key: string, fallback: boolean) => typeof values[key] === 'boolean' ? values[key] as boolean : fallback;
@@ -272,7 +225,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
   const sends = [
     ...recording ? ['A transcript’s text to Claude when you ask for suggestions, with your notes when you enhance them'] : [],
     'Action items you send to Linear or GitHub',
-    ...licenses ? ['A license key to Lemon Squeezy, once'] : [],
+    ...licenses ? ['Your license key to Lemon Squeezy when you activate it'] : [],
   ];
   const kept = recording ? 'Recordings, transcripts and notes. Audio is transcribed here, by a model bundled with the app.' : 'Your meetings, as files in a local archive.';
   const encrypted = disk === 'on' ? ' FileVault encrypts the disk they’re on.' : disk === 'encrypting' ? ' FileVault is encrypting the disk.' : '';
@@ -293,10 +246,11 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
       </>}
       {section === 'Privacy' && <>
         <h1>Privacy</h1>
-        <p className="lede">{desktop ? `What stays on this ${device}, and what leaves it only when you ask.` : 'What QuietNote does with your meetings today, and what is still planned.'}</p>
+        <p className="lede">{desktop ? `What stays on this ${device}, and what leaves it${licenses ? '' : ' only when you ask'}.` : 'What QuietNote does with your meetings today, and what is still planned.'}</p>
         <dl className="verdict">
           <div><dt>{desktop ? `Stays on this ${device}` : 'Stays in this browser'}</dt><dd>{desktop ? kept + encrypted : 'Your meetings, in this browser’s local storage. Nothing is uploaded.'}</dd></div>
           {desktop && <div><dt>Leaves when you ask</dt><dd>{sends.map(line => <span key={line}>{line}</span>)}</dd></div>}
+          {licenses && <div><dt>Once a day</dt><dd>Your license key and this {device}’s activation ID, to Lemon Squeezy, to check your subscription. Nothing about your meetings.</dd></div>}
           <div><dt>Never</dt><dd>A meeting bot, an account, cloud sync, or recording before you press Start.</dd></div>
         </dl>
         {diskAtRisk(disk) && <div className="attention"><Icon name="warning" size={20} /><div><div className="setting-title">{disk === 'off' ? 'FileVault is off' : 'FileVault is being turned off'}</div><p>{`Anyone with this Mac’s disk could read your ${recording ? 'recordings, transcripts and notes' : 'meetings'}.`}</p></div>
@@ -378,7 +332,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
         <p className="lede">QuietNote{version ? ` ${version}` : ''} · Prototype</p>
         <p className="body-copy">Made by Sarl Studio · <a href="https://x.com/salmantln" target="_blank" rel="noreferrer">@salmantln</a></p>
         <p className="body-copy">QuietNote is open source under the GNU Affero General Public License, version 3. The code it takes from Scratch stays under the MIT license.</p>
-        {desktop && <Support />}
+        {desktop && <Subscription />}
         {recording && <p className="body-copy">Transcription uses <a href="https://github.com/ggml-org/whisper.cpp" target="_blank" rel="noreferrer">whisper.cpp</a> (MIT) with OpenAI’s Whisper large-v3-turbo model (MIT) and the Silero voice activity detector (MIT), all running on this device. Echo cancellation is WebRTC’s AEC3, through <a href="https://github.com/dignifiedquire/sonora" target="_blank" rel="noreferrer">Sonora</a> (BSD-3-Clause).</p>}
         {recording && mac && <p className="body-copy">Voices are told apart, and English live transcripts are made, with <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noreferrer">sherpa-onnx</a> (Apache-2.0) and ONNX Runtime (MIT), using pyannote segmentation 3.0 (MIT), 3D-Speaker ERes2Net (Apache-2.0) and NVIDIA’s Parakeet TDT 110M (CC BY 4.0).</p>}
         <p className="body-copy">Service logos in Connections come from Iconify “logos” (CC0), vscode-icons (MIT) and Simple Icons (CC0). Trademarks belong to their owners. Apple and Things icons are read from apps installed on this Mac.</p>

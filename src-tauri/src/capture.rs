@@ -256,6 +256,7 @@ fn megabytes(bytes: u64) -> u64 { bytes >> 20 }
 /// part is transcribed and added to its transcript.
 pub fn start(app: &AppHandle, id: &str) -> Result<Metadata, Failure> {
     if !SUPPORTED { return Err(UNSUPPORTED.to_string().into()); }
+    if !crate::license::may_record(app)? { return Err(Failure { code: "license", message: "Subscribe or enter your license key in Settings → About. Your meetings and notes stay readable without one.".into() }); }
     let capture = app.state::<Capture>();
     // The first start can wait on the microphone permission prompt, so no lock is held meanwhile.
     let claim = capture.claim()?;

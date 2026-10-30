@@ -146,8 +146,8 @@ export async function liveTranscript(): Promise<Draft | null> { return desktop ?
 export async function windowCompact(compact: boolean): Promise<void> { if (desktop) await invoke('window_compact', { compact }); }
 export type MeetingChanged = { metadata: MeetingMetadata; transcript: string | null; problem: string | null };
 export type TranscriptTurn = { startMs: number; speaker: string; text: string; clean: string };
-/** Why Start recording failed: `mic-denied` offers System Settings, `disk` means free space first. */
-export type CaptureFailure = { code: 'mic-denied' | 'disk' | 'failed'; message: string };
+/** Why Start recording failed: `mic-denied` offers System Settings, `disk` means free space first, `license` a subscription. */
+export type CaptureFailure = { code: 'mic-denied' | 'disk' | 'license' | 'failed'; message: string };
 export const noCapture: CaptureState = { available: false, microphone: 'unknown', model: 'missing', recording: null, transcribing: null, queued: [] };
 export async function captureStatus(): Promise<CaptureState> { return desktop ? invoke('capture_status') : noCapture; }
 /** Asks for the microphone before any recording, so the first-run screens can explain it first. Records nothing. */
@@ -230,14 +230,22 @@ export async function giveFeedback(): Promise<void> {
   const body = `\n\n—\nQuietNote ${version || 'browser preview'} on ${device}`;
   await openLink(`mailto:${feedbackTo}?subject=${encodeURIComponent('QuietNote feedback')}&body=${encodeURIComponent(body)}`);
 }
-// Licenses (macOS): an optional supporter or commercial license that unlocks nothing. Its key is checked once with
-// Lemon Squeezy, then kept in the Keychain. Checkout links are set at build time; without them the buy buttons are hidden.
-export type License = { kind: 'supporter' | 'commercial'; name: string; seats?: number; activatedAt: string; expiresAt?: string };
-export type LicenseStatus = { available: boolean; license: License | null };
+// The subscription (macOS): recording needs one; meetings, notes, transcripts and exports never do. Its key is
+// activated with Lemon Squeezy, checked at launch and once a day (the key and this Mac's activation ID only), and
+// kept in the Keychain. Builds without a store (dev, the browser preview) record without one. The checkout and the
+// customer portal are links set at build time; without them those buttons are hidden.
+export type License = { name: string; plan: string; activatedAt: string; renewsAt?: string; checkedAt: number; ended?: 'expired' | 'disabled' | 'invalid' };
+/** `offline`: not checked for two days; recording keeps working until `locksAt`. */
+export type LicenseState = 'none' | 'active' | 'offline' | 'ended' | 'invalid';
+export type LicenseStatus = { available: boolean; state: LicenseState; mayRecord: boolean; locksAt?: number; license: License | null };
+export const unlicensed: LicenseStatus = { available: false, state: 'none', mayRecord: true, license: null };
 const link = (url: string | undefined) => url?.startsWith('https://') ? url : undefined;
-export const checkout = { supporter: link(import.meta.env.VITE_QUIETNOTE_CHECKOUT_SUPPORTER), commercial: link(import.meta.env.VITE_QUIETNOTE_CHECKOUT_COMMERCIAL) };
-export async function licenseStatus(): Promise<LicenseStatus> { return desktop ? invoke('license_status') : { available: false, license: null }; }
-export async function activateLicense(key: string): Promise<License> { return desktop ? invoke('license_activate', { key }) : desktopOnly(); }
+export const checkout = link(import.meta.env.VITE_QUIETNOTE_CHECKOUT);
+export const portal = link(import.meta.env.VITE_QUIETNOTE_PORTAL);
+export async function licenseStatus(): Promise<LicenseStatus> { return desktop ? invoke('license_status') : unlicensed; }
+export async function activateLicense(key: string): Promise<LicenseStatus> { return desktop ? invoke('license_activate', { key }) : desktopOnly(); }
+/** Asks Lemon Squeezy now; rejects when it can't be reached (the last check still counts). */
+export async function checkLicense(): Promise<LicenseStatus> { return desktop ? invoke('license_check') : desktopOnly(); }
 /** Resolves with a note when Lemon Squeezy couldn't be told; the license is removed from this computer either way. */
 export async function removeLicense(): Promise<string | null> { return desktop ? invoke('license_remove') : desktopOnly(); }
 // Summary suggestions (desktop): drafted from the transcript by Claude with the user's own key, or by a model in
