@@ -1,24 +1,31 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { Hush } from './Hush';
-import { device, desktop, enhanceNotes, meetingNames, noteTemplates, openTemplates, suggestSummary, type Cited, type Enhanced, type Names, type NoteTemplate, type Suggestions } from './storage';
+import { device, desktop, enhanceNotes, meetingNames, noteTemplates, openTemplates, readDraft, saveDraft, suggestSummary, type Cited, type Enhanced, type Names, type NoteTemplate, type Suggestions } from './storage';
 import { actionItems, appendAction, clock, madeUp, notesMarkdown, replaceSection, section, templateFor, transcriptTurns, type Meeting } from './model';
 /** Who drafts suggestions: Claude with the user's own key, or a model in Ollama on this computer. */
 export type Summarizer = { local: boolean; label: string };
 // Words, not Markdown marks ("-", "##").
 const count = (text: string) => text.split(/\s+/).filter(w => /[\p{L}\p{N}]/u.test(w)).length;
+// Whether the line offering automatic drafting was dismissed. A convenience only: losing it just shows it again.
+const nudgeKey = 'quietnote.autodraft-nudge.v1';
 /** Suggestions drafted from a recorded transcript, and enhanced notes drafted from the user's notes and the
  * transcript under a template. Nothing is written until the user accepts, each line shows what it came
- * from, and asking first says exactly what leaves the device. */
-export function SuggestPanel({ meeting, summarizer, template: preferred = '', onMarkdown, onRename, onSpeaker, onCite, onWorking, onAdded }: {
-  meeting: Meeting; summarizer: Summarizer; template?: string; onMarkdown: (markdown: string) => Promise<void>; onRename: (title: string) => Promise<void>;
+ * from, and asking first says exactly what leaves the device. What's drafted waits in the meeting's
+ * `draft.json` until it's used or dismissed, so it's still there after leaving the meeting; the Shell drafts
+ * there by itself after a recording when that's turned on (`drafting` while it runs, `version` once it's saved). */
+export function SuggestPanel({ meeting, summarizer, template: preferred = '', drafting = false, version = 0, onAutoDraft, onMarkdown, onRename, onSpeaker, onCite, onWorking, onAdded }: {
+  meeting: Meeting; summarizer: Summarizer; template?: string; drafting?: boolean; version?: number;
+  /** Opens Settings → Suggestions, where drafting after each recording is turned on; given while it's off. */
+  onAutoDraft?: () => void;
+  onMarkdown: (markdown: string) => Promise<void>; onRename: (title: string) => Promise<void>;
   onSpeaker: (from: string, to: string) => Promise<void>; onCite: (atMs: number) => void; onWorking?: (working: boolean) => void;
   /** The index of an action item just added from a suggestion, so the list can show where it went. */
   onAdded?: (index: number) => void;
 }) {
   const [phase, setPhase] = useState<'idle' | 'confirm' | 'confirm-notes' | 'confirm-names' | 'working' | 'working-notes' | 'working-names'>('idle');
   // While a request is out, its notice has the meeting's Hush.
-  useEffect(() => onWorking?.(phase.startsWith('working')), [phase, onWorking]);
+  useEffect(() => onWorking?.(drafting || phase.startsWith('working')), [drafting, phase, onWorking]);
   const [names, setNames] = useState<Names | null>(null);
   const [error, setError] = useState('');
   const [found, setFound] = useState<Suggestions | null>(null);
@@ -27,7 +34,30 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
   const [template, setTemplate] = useState('');
   // Set when a draft came back with nothing that traces to the transcript.
   const [untraced, setUntraced] = useState<number | null>(null);
+  const [nudged, setNudged] = useState(() => localStorage.getItem(nudgeKey) === '1');
   const { markdown, metadata } = meeting;
+  // The waiting draft is read on opening and again when the Shell has drafted; after that each change is kept.
+  const loaded = useRef(false);
+  const kept = useRef('');
+  useEffect(() => {
+    let cancelled = false;
+    loaded.current = false;
+    readDraft(metadata.id).then(draft => {
+      if (cancelled) return;
+      kept.current = JSON.stringify(draft);
+      if (draft) { setTemplate(draft.template); setEnhanced(draft.enhanced); setFound(draft.found); }
+      loaded.current = true;
+    }).catch(e => { if (!cancelled) setError(String(e)); });
+    return () => { cancelled = true; };
+  }, [metadata.id, version]);
+  useEffect(() => {
+    if (!loaded.current) return;
+    const waiting = enhanced || (found && (found.summary || found.actions.length)) ? { template, enhanced, found } : null;
+    const json = JSON.stringify(waiting);
+    if (json === kept.current) return;
+    kept.current = json;
+    saveDraft(metadata.id, waiting).catch(e => setError(String(e)));
+  }, [enhanced, found, template, metadata.id]);
   const who = summarizer.local ? `${summarizer.label} in Ollama` : 'Claude';
   const words = transcriptTurns(meeting.transcript).reduce((n, t) => n + count(t.text), 0);
   const notes = count(section(markdown, 'Notes'));
@@ -96,6 +126,7 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
     <strong>{summarizer.local ? `Suggest a title and names with ${who}?` : 'Send this transcript to Anthropic for a title and names?'}</strong>
     <p>A voice is named only from a line that shows who it is (someone introducing themselves, or being addressed by name). {summarizer.local ? `It runs on this ${device}, so nothing leaves it.` : `About ${words.toLocaleString('en-GB')} words of transcript text${invited ? ` and the ${invited === 1 ? 'name of the person' : `names of the ${invited} people`} invited` : ''} go to Claude with your key. The audio, your notes and the meeting’s title stay on this ${device}.`}</p>
   </div><div className="notice-actions"><button className="text-button" onClick={() => setPhase('idle')}>Cancel</button><button className="primary" onClick={() => void name()}>{summarizer.local ? 'Suggest names' : 'Send transcript'}</button></div></div>;
+  if (drafting) return <div className="notice" role="status"><Hush mood="suggesting" size={44} /><div><strong>Drafting notes with {who}…</strong><p>Hush drafts after each recording, as set in Settings. Nothing is saved until you use it.</p></div></div>;
   if (phase === 'working' || phase === 'working-notes' || phase === 'working-names') return <div className="notice" role="status"><Hush mood="suggesting" size={44} /><div><strong>{phase === 'working' ? `Drafting suggestions with ${who}…` : phase === 'working-names' ? `Looking for a title and names with ${who}…` : `Enhancing your notes with ${who}…`}</strong><p>You can keep working. Nothing is saved until you add it.</p></div></div>;
   const open = found && (found.summary || found.actions.length);
   const asks = <div className="suggest-row">
@@ -103,6 +134,9 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
     <button className="text-button" onClick={() => setPhase('confirm')}><Icon name="task" size={15} />Suggest from transcript…</button>
     {(madeUp(metadata.title) || unnamed.size > 0) && <button className="text-button" onClick={() => setPhase('confirm-names')}><Icon name="people" size={15} />Name the meeting and speakers…</button>}
   </div>;
+  const nudge = onAutoDraft && !nudged && <p className="subtle suggest-nudge">Hush can draft these after every recording.
+    <button className="text-button" onClick={onAutoDraft}>Turn on in Settings</button>
+    <button className="text-button" onClick={() => { localStorage.setItem(nudgeKey, '1'); setNudged(true); }}>Dismiss</button></p>;
   const left = (dropped: number) => dropped > 0 && <p className="subtle">{dropped === 1 ? 'One more was' : `${dropped} more were`} left out because {dropped === 1 ? 'it' : 'they'} couldn’t be traced to your notes or the transcript.</p>;
   return <>
     {error && <div className="notice attention" role="alert"><Icon name="info" size={16} /><div><strong>That couldn’t be drafted.</strong><p>{error.replace(/^Error: /, '')}</p></div><div className="notice-actions"><button className="text-button" onClick={() => setError('')}>Dismiss</button></div></div>}
@@ -131,6 +165,6 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
     </section>
     : untraced !== null ? <p className="subtle suggest-row">{untraced ? `Nothing could be traced to your notes or the transcript, so ${untraced === 1 ? 'the one line was' : `all ${untraced} lines were`} left out.` : `${who} found nothing to add.`}</p>
     : null}
-    {!enhanced && !open && !names && asks}
+    {!enhanced && !open && !names && <>{asks}{nudge}</>}
   </>;
 }

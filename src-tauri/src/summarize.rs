@@ -116,13 +116,18 @@ fn anthropic_text(body: &Value) -> Result<String, String> {
     body["content"].as_array().into_iter().flatten().find(|b| b["type"] == "text").and_then(|b| b["text"].as_str()).map(String::from)
         .ok_or_else(|| "Claude didn’t return a summary.".into())
 }
-async fn anthropic(key: &str, system: &str, content: &str, schema: Value) -> Result<String, String> {
-    let request = json!({
-        "model": MODEL, "max_tokens": 16000, "system": system,
+/// The Messages API request. Thinking is always on for this model; low effort keeps it short, and `max_tokens`
+/// leaves room for the thinking and the whole answer, so a long meeting isn't cut off.
+fn anthropic_request(system: &str, content: &str, schema: Value) -> Value {
+    json!({
+        "model": MODEL, "max_tokens": 32000, "system": system,
         "messages": [{ "role": "user", "content": content }],
-        "output_config": { "format": { "type": "json_schema", "schema": schema } },
+        "output_config": { "effort": "low", "format": { "type": "json_schema", "schema": schema } },
         "fallbacks": "default",
-    });
+    })
+}
+async fn anthropic(key: &str, system: &str, content: &str, schema: Value) -> Result<String, String> {
+    let request = anthropic_request(system, content, schema);
     let response = client(300)?.post(format!("{ANTHROPIC}/v1/messages")).header("x-api-key", key).header("anthropic-version", "2023-06-01")
         .header("anthropic-beta", "server-side-fallback-2026-07-01").json(&request).send().await.map_err(|e| format!("Couldn’t reach Anthropic. {e}"))?;
     let status = response.status().as_u16();
@@ -189,6 +194,39 @@ fn recorded(app: &AppHandle, meeting_id: &str) -> Result<(PathBuf, Vec<Turn>, Pa
         Err(_) => Vec::new(),
     };
     Ok((root, turns, dir))
+}
+/// A draft waiting for review, in the meeting's `draft.json`: what was drafted (by hand or automatically after a
+/// recording) and not yet used or dismissed. The webview owns its shape; kept in the meeting's folder, it moves and
+/// goes to the Trash with the meeting.
+const DRAFT: &str = "draft.json";
+fn read_draft(dir: &Path) -> Result<Option<Value>, String> {
+    match std::fs::read(dir.join(DRAFT)) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| format!("The draft is unreadable. {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+/// Keeps the draft, or removes it once nothing in it is waiting (`None`).
+fn write_draft(dir: &Path, draft: Option<&Value>) -> Result<(), String> {
+    let path = dir.join(DRAFT);
+    match draft {
+        Some(draft) if draft.is_object() => meetings::atomic_write(&path, &serde_json::to_vec_pretty(draft).map_err(|e| e.to_string())?),
+        Some(_) => Err("A draft is an object.".into()),
+        None if path.exists() => std::fs::remove_file(path).map_err(|e| format!("Couldn’t remove the draft. {e}")),
+        None => Ok(()),
+    }
+}
+#[tauri::command]
+pub fn draft_read(app: AppHandle, meeting_id: String) -> Result<Option<Value>, String> {
+    let root = meetings::root(&app)?;
+    let _files = meetings::files();
+    read_draft(&meetings::find(&root, &meeting_id)?.1)
+}
+#[tauri::command]
+pub fn draft_save(app: AppHandle, meeting_id: String, draft: Option<Value>) -> Result<(), String> {
+    let root = meetings::root(&app)?;
+    let _files = meetings::files();
+    write_draft(&meetings::find(&root, &meeting_id)?.1, draft.as_ref())
 }
 /// Drafts suggestions for a recorded meeting with the chosen model. Writes nothing.
 #[tauri::command]
@@ -367,6 +405,22 @@ pub async fn meeting_names(app: AppHandle, meeting_id: String) -> Result<Names, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_draft_waits_in_its_meeting_until_nothing_is_left() {
+        let dir = std::env::temp_dir().join(format!("quietnote-draft-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(read_draft(&dir).unwrap(), None);
+        let draft = json!({ "template": "General", "enhanced": null, "found": { "summary": "", "actions": [], "dropped": 0 } });
+        write_draft(&dir, Some(&draft)).unwrap();
+        assert_eq!(read_draft(&dir).unwrap(), Some(draft));
+        assert!(write_draft(&dir, Some(&json!([1]))).is_err());
+        write_draft(&dir, None).unwrap();
+        write_draft(&dir, None).unwrap();
+        assert_eq!(read_draft(&dir).unwrap(), None);
+        std::fs::write(dir.join(DRAFT), b"{").unwrap();
+        assert!(read_draft(&dir).unwrap_err().contains("unreadable"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     fn turn(start_ms: u64, speaker: &str, text: &str) -> Turn {
         Turn { start_ms, end_ms: start_ms + 5000, speaker: speaker.into(), text: text.into(), removed: vec![], breaks: vec![] }
     }
@@ -426,6 +480,9 @@ mod tests {
         assert_eq!(anthropic_text(&ok).unwrap(), "{}");
         assert!(anthropic_text(&json!({ "stop_reason": "refusal", "content": [] })).unwrap_err().contains("declined"));
         assert!(anthropic_text(&json!({ "stop_reason": "max_tokens", "content": [{ "type": "text", "text": "{" }] })).unwrap_err().contains("cut off"));
+        let request = anthropic_request("system", "lines", json!({ "type": "object" }));
+        assert_eq!((request["output_config"]["effort"].as_str(), request["max_tokens"].as_u64()), (Some("low"), Some(32000)));
+        assert_eq!(request["output_config"]["format"]["type"], "json_schema");
         assert!(anthropic_error(401, &Value::Null).contains("rejected this key"));
         assert_eq!(anthropic_error(429, &json!({ "error": { "message": "Rate limited" } })), "Anthropic: Rate limited");
     }

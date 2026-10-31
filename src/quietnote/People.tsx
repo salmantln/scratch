@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { Hush } from './Hush';
 import { MeetingList, type Move } from './Library';
-import { actionItems, owns, people, shortDate, type Meeting, type MeetingTab, type Person } from './model';
+import { actionItems, itemMeta, owns, people, shortDate, type Meeting, type MeetingTab, type Person } from './model';
 /** Who the user meets, from calendar invites: everyone, grouped by company (their email's domain), and a page for
  * each person or company with the meetings they were in and the action items they own. `selected` is a person's
  * key or `@domain`. Built from the meetings on this device only. */
@@ -59,7 +59,7 @@ function Detail({ everyone, meetings, selected, move, onSelect, onOpen, onToggle
       <div className="action-list">{items.map(({ item, meeting, key }) => <label className={`action-row home-action ${item.done ? 'complete' : ''}`} key={key}>
         <input type="checkbox" checked={item.done} onChange={() => { setTicked(t => [...t, key]); void onToggle(meeting.id, item.index); }} />
         <span className="action-text">{item.text}</span>
-        <span className="action-from">{item.owner && <span className="action-owner">{item.owner}</span>}<button className="text-button action-source" title={`Open ${meeting.title}`} onClick={e => { e.preventDefault(); onOpen(meeting.id, 'Enhanced'); }}>{meeting.title}</button></span>
+        <span className="action-from">{itemMeta(item) && <span className="action-owner">{itemMeta(item)}</span>}<button className="text-button action-source" title={`Open ${meeting.title}`} onClick={e => { e.preventDefault(); onOpen(meeting.id, 'Enhanced'); }}>{meeting.title}</button></span>
       </label>)}</div>
     </section>}
     <section className="home-section" aria-labelledby="person-meetings">

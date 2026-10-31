@@ -33,9 +33,9 @@ export interface Meeting { metadata: MeetingMetadata; markdown: string; transcri
 /** A meeting has two tabs, Notes and Transcript; Notes shows either the enhanced notes (action items, then the
  * Summary section) or your own notes. */
 export type MeetingTab = 'Enhanced' | 'Notes' | 'Transcript';
-/** `key` finds the item again after others are added or removed: its line's text (owner included, link and tick
- * left out), and which copy it is when lines read the same. */
-export interface ActionItem { index: number; key: string; done: boolean; text: string; owner: string; link?: { label: string; url: string } }
+/** `key` finds the item again after others are added or removed: its line's text (owner included; link, due date
+ * and tick left out), and which copy it is when lines read the same. `due` is `YYYY-MM-DD`. */
+export interface ActionItem { index: number; key: string; done: boolean; text: string; owner: string; link?: { label: string; url: string }; due?: string }
 export interface TranscriptTurn { time: string; speaker: string; text: string }
 export function section(markdown: string, name: string): string {
   const lines = markdown.split('\n');
@@ -58,11 +58,20 @@ function changeAction(markdown: string, index: number, change: (line: string) =>
   return replaceSection(markdown, 'Action items', section(markdown, 'Action items').split('\n').flatMap(line => itemLine.test(line) && ++current === index ? change(line) ?? [] : [line]).join('\n'));
 }
 export const toggleAction = (markdown: string, index: number) => changeAction(markdown, index, line => `- [${line[3] === ' ' ? 'x' : ' '}] ${line.slice(6)}`);
-/** The item's task text replaced; its owner and any issue link stay. Empty text changes nothing. */
-export function editAction(markdown: string, index: number, text: string): string {
+// An item's line from its parts: `- [ ] Maya — task [ENG-12](https://…) 📅 2026-11-07`. The due date comes last, as the
+// Obsidian Tasks plugin writes it, so Obsidian shows it as a due date too.
+const itemText = ({ done, owner, text, link, due }: Omit<ActionItem, 'index' | 'key'>) =>
+  `- [${done ? 'x' : ' '}] ${owner ? `${owner} — ` : ''}${text}${link ? ` [${link.label}](${link.url})` : ''}${due ? ` 📅 ${due}` : ''}`;
+function changeItem(markdown: string, index: number, change: (item: ActionItem) => Partial<ActionItem>): string {
   const item = actionItems(markdown)[index];
-  return !item || !text.trim() ? markdown : changeAction(markdown, index, line => `${line.slice(0, 6)}${item.owner ? `${item.owner} — ` : ''}${text.trim()}${item.link ? ` [${item.link.label}](${item.link.url})` : ''}`);
+  return item ? changeAction(markdown, index, () => itemText({ ...item, ...change(item) })) : markdown;
 }
+/** The item's task text replaced; its owner, issue link and due date stay. Empty text changes nothing. */
+export const editAction = (markdown: string, index: number, text: string) => text.trim() ? changeItem(markdown, index, () => ({ text: text.trim() })) : markdown;
+/** Who does it: a name, "You", or '' for nobody yet. */
+export const ownAction = (markdown: string, index: number, owner: string) => changeItem(markdown, index, () => ({ owner: owner.replace(/ — /g, ' ').trim() }));
+/** When it's due (`YYYY-MM-DD`), or '' for no date. */
+export const dueAction = (markdown: string, index: number, due: string) => changeItem(markdown, index, () => ({ due: /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : undefined }));
 export const removeAction = (markdown: string, index: number) => changeAction(markdown, index, () => null);
 export const actionLine = (markdown: string, index: number) => section(markdown, 'Action items').split('\n').filter(l => itemLine.test(l))[index] ?? '';
 /** A removed item's line put back where it was (`at`), or after the last item if the list is shorter now. */
@@ -72,12 +81,11 @@ export function restoreAction(markdown: string, line: string, at: number): strin
   const where = items[at] ?? (items.length ? items[items.length - 1] + 1 : lines.length);
   return replaceSection(markdown, 'Action items', [...lines.slice(0, where), line, ...lines.slice(where)].join('\n'));
 }
-// A sent action item keeps its issue link at the end of its own line: `- [ ] Maya — task [ENG-12](https://…)`.
+// A sent action item keeps its issue link on its own line, before any due date.
 const trailingLink = / \[([^\]]+)\]\((https:\/\/[^\s)]+)\)$/;
-export function linkAction(markdown: string, index: number, label: string, url: string): string {
-  let current = -1;
-  return replaceSection(markdown, 'Action items', section(markdown, 'Action items').replace(/^- \[([ xX])\] (.*)$/gm, line => ++current === index && !trailingLink.test(line) ? `${line} [${label.replace(/[[\]]/g, '')}](${url})` : line));
-}
+const trailingDue = / 📅 (\d{4}-\d{2}-\d{2})$/;
+export const linkAction = (markdown: string, index: number, label: string, url: string) =>
+  changeItem(markdown, index, item => ({ link: item.link ?? { label: label.replace(/[[\]]/g, ''), url } }));
 export function appendAction(markdown: string, text: string): string {
   return replaceSection(markdown, 'Action items', [section(markdown, 'Action items'), `- [ ] ${text.trim()}`].filter(Boolean).join('\n'));
 }
@@ -91,13 +99,15 @@ export function enhancedNotes(markdown: string): string {
 export const openingTab = ({ markdown, transcript }: Meeting): MeetingTab => enhancedNotes(markdown) || actionItems(markdown).length || transcriptTurns(transcript).length ? 'Enhanced' : 'Notes';
 export function actionItems(markdown: string): ActionItem[] {
   const seen = new Map<string, number>();
-  return section(markdown, 'Action items').split('\n').filter(l => itemLine.test(l)).map((line, index) => {
+  return section(markdown, 'Action items').split('\n').filter(l => itemLine.test(l)).map((full, index) => {
+    const due = full.match(trailingDue);
+    const line = full.slice(0, due?.index).trimEnd();
     const match = line.match(trailingLink);
     const text = line.slice(6, match?.index).trim();
     const copy = seen.get(text) ?? 0;
     seen.set(text, copy + 1);
     const [owner, ...rest] = text.split(' — ');
-    return { index, key: `${copy} ${text}`, done: /^- \[[xX]\]/.test(line), text: rest.length ? rest.join(' — ') : text, owner: rest.length ? owner : '', ...(match && { link: { label: match[1], url: match[2] } }) };
+    return { index, key: `${copy} ${text}`, done: /^- \[[xX]\]/.test(line), text: rest.length ? rest.join(' — ') : text, owner: rest.length ? owner : '', ...(match && { link: { label: match[1], url: match[2] } }), ...(due && { due: due[1] }) };
   });
 }
 /** Whether an action item is the user's: its owner is "You", or their name (full or first). One without an owner isn't. */
@@ -298,7 +308,19 @@ export function makeMeeting(title: string, project: string, event?: CalendarEven
     transcript: '# Transcript\n',
   };
 }
-/** The issue that an action item becomes. Only the item, its owner and the meeting's title, date and project leave the device. */
-export function issueFor(item: { text: string; owner: string }, meeting: { title: string; date: string; project: string }) {
-  return { title: item.text, body: `From “${meeting.title}” (${meeting.date.slice(0, 10)}, ${meeting.project}).${item.owner ? ` Owner: ${item.owner}.` : ''}` };
+/** A due date (`YYYY-MM-DD`) as the day it names here: "7 Nov", with the year when it isn't this one (or `year`). */
+export function dueLabel(due: string, now = new Date(), year = false): string {
+  const [y, m, d] = due.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(year || y !== now.getFullYear() ? { year: 'numeric' } : {}) });
+}
+const today = (now: Date) => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+/** Whether an open item's due date has passed (today isn't overdue). */
+export const overdue = (item: { done: boolean; due?: string }, now = new Date()) => !item.done && Boolean(item.due) && item.due! < today(now);
+/** "Due 7 Nov", or "Overdue · 7 Nov" once it has passed and the item is still open. */
+export const dueText = (item: { done: boolean; due?: string }, now = new Date()) => item.due ? `${overdue(item, now) ? 'Overdue ·' : 'Due'} ${dueLabel(item.due, now)}` : '';
+/** The line under an item where it's listed: its owner and due date. */
+export const itemMeta = (item: { done: boolean; owner: string; due?: string }, now = new Date()) => [item.owner, dueText(item, now)].filter(Boolean).join(' · ');
+/** The issue that an action item becomes. Only the item, its owner and due date, and the meeting's title, date and project leave the device. */
+export function issueFor(item: { text: string; owner: string; due?: string }, meeting: { title: string; date: string; project: string }) {
+  return { title: item.text, body: `From “${meeting.title}” (${meeting.date.slice(0, 10)}, ${meeting.project}).${item.owner ? ` Owner: ${item.owner}.` : ''}${item.due ? ` Due: ${dueLabel(item.due, new Date(), true)}.` : ''}` };
 }

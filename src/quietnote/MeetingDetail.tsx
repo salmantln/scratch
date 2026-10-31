@@ -1,4 +1,4 @@
-import { Component, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useContext, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Capture, LiveTranscript, useListening } from './Capture';
 import { Icon } from './Icon';
@@ -7,7 +7,7 @@ import { SuggestPanel, type Summarizer } from './Suggestions';
 import { serviceName } from './catalog';
 import { label } from './shortcuts';
 import { desktop, device, openLink, transcriptData, type CaptureState, type Connections, type Service, type TranscriptTurn } from './storage';
-import { actionItems, appendAction, clock, dateLabel, durationLabel, enhancedNotes, madeUp, section, statusLabel, summaryBlocks, timeLabel, transcriptTurns, yoursFirst, type ActionItem, type Meeting, type MeetingTab } from './model';
+import { actionItems, appendAction, clock, dateLabel, dueText, durationLabel, enhancedNotes, itemMeta, madeUp, section, statusLabel, summaryBlocks, timeLabel, transcriptTurns, yoursFirst, type ActionItem, type Meeting, type MeetingTab } from './model';
 const Editor = lazy(() => import('../components/editor/Editor').then(module => ({ default: module.Editor })));
 const demoSeen = 'quietnote.enhance-demo.v1';
 /** An example, never this meeting's words: what highlighting your notes and enhancing them does. It plays once (about
@@ -63,22 +63,39 @@ function LastTime({ meeting, me, onToggle, onOpen }: { meeting: Meeting; me: str
     <summary><Icon name="recent" size={15} />Last time<span className="subtle">{meta.title} · {dateLabel(meta.date)}</span></summary>
     {open.length > 0 && <div className="action-list">{open.map(a => <label className={`action-row ${a.done ? 'complete' : ''}`} key={a.key}>
       <input type="checkbox" checked={a.done} onChange={() => { setTicked(t => t.includes(a.key) ? t : [...t, a.key]); void onToggle(a.index); }} />
-      <span><span className="action-text">{a.text}</span>{a.owner && <span className="action-owner">{a.owner}</span>}</span></label>)}</div>}
+      <span><span className="action-text">{a.text}</span>{itemMeta(a) && <span className="action-owner">{itemMeta(a)}</span>}</span></label>)}</div>}
     <button className="text-button" onClick={onOpen}>Open {meta.title}<Icon name="arrow" size={14} /></button>
   </details>;
 }
-/** An action item in its meeting: tick it, press its text to edit it (Enter saves, Escape keeps it), or remove it. */
-function ActionRow({ item, fresh, onToggle, onEdit, onRemove }: { item: ActionItem; fresh: boolean; onToggle: () => void; onEdit: (text: string) => void; onRemove: () => void }) {
+/** Edits one of an item's fields in place: Enter or leaving it saves, Escape keeps what was there. */
+function useField(current: string, save: (value: string) => void) {
   const [value, setValue] = useState<string | null>(null);
   const editing = useRef(false);
-  const begin = () => { editing.current = true; setValue(item.text); };
-  const end = (keep: boolean) => { if (!editing.current) return; editing.current = false; const next = value?.trim(); setValue(null); if (keep && next && next !== item.text) onEdit(next); };
+  const begin = () => { editing.current = true; setValue(current); };
+  const end = (keep: boolean) => { if (!editing.current) return; editing.current = false; const next = value?.trim() ?? ''; setValue(null); if (keep && next !== current) save(next); };
+  const keys = (e: ReactKeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); end(true); } else if (e.key === 'Escape') { e.preventDefault(); end(false); } };
+  return { value, setValue, begin, end, keys };
+}
+/** An action item in its meeting: tick it, press its text, owner or due date to change it, or remove it.
+ * The owner is typed, with the meeting's people suggested; an empty one is nobody yet. */
+function ActionRow({ item, fresh, people, onToggle, onEdit, onOwner, onDue, onRemove }: { item: ActionItem; fresh: boolean; people: string[]; onToggle: () => void; onEdit: (text: string) => void; onOwner: (owner: string) => void; onDue: (due: string) => void; onRemove: () => void }) {
+  const text = useField(item.text, next => { if (next) onEdit(next); });
+  const owner = useField(item.owner, onOwner);
+  const due = useField(item.due ?? '', onDue);
+  const list = useId();
   return <div className={`action-row ${item.done ? 'complete' : ''} ${fresh ? 'fresh' : ''}`}>
     <input type="checkbox" aria-label={item.text} checked={item.done} onChange={onToggle} />
-    <span className="action-body">{value === null ? <button className="action-edit" title="Edit" onClick={begin}><span className="action-text">{item.text}</span></button>
-      : <input className="action-input" aria-label="Edit action item" value={value} maxLength={300} autoFocus onChange={e => setValue(e.target.value)} onBlur={() => end(true)}
-        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); end(true); } else if (e.key === 'Escape') { e.preventDefault(); end(false); } }} />}
-      {item.owner && <span className="action-owner">{item.owner}</span>}</span>
+    <span className="action-body">{text.value === null ? <button className="action-edit" title="Edit" onClick={text.begin}><span className="action-text">{item.text}</span></button>
+      : <input className="action-input" aria-label="Edit action item" value={text.value} maxLength={300} autoFocus onChange={e => text.setValue(e.target.value)} onBlur={() => text.end(true)} onKeyDown={text.keys} />}
+      <span className="action-meta">
+        {owner.value === null ? <button className={`action-field ${item.owner ? '' : 'unset'}`} aria-label={item.owner ? `Owner: ${item.owner}` : 'Assign an owner'} onClick={owner.begin}>{item.owner || 'Assign'}</button>
+          : <><input className="action-input field" aria-label="Owner" placeholder="Nobody yet" list={list} value={owner.value} maxLength={80} autoFocus onChange={e => owner.setValue(e.target.value)} onBlur={() => owner.end(true)} onKeyDown={owner.keys} />
+            <datalist id={list}>{people.map(p => <option key={p} value={p} />)}</datalist></>}
+        {due.value === null ? <span className="action-due">
+            <button className={`action-field ${item.due ? '' : 'unset'}`} onClick={due.begin}>{dueText(item) || 'Due date'}</button>
+            {item.due && <button className="icon-button small action-clear" aria-label="Remove due date" title="Remove due date" onClick={() => onDue('')}><Icon name="close" size={12} /></button>}</span>
+          : <input className="action-input field" type="date" aria-label="Due date" value={due.value} autoFocus onChange={e => due.setValue(e.target.value)} onBlur={() => due.end(true)} onKeyDown={due.keys} />}
+      </span></span>
     {item.link && <button className="action-link" title={item.link.url} onClick={() => void openLink(item.link!.url)}>{item.link.label}</button>}
     <button className="icon-button small action-remove" aria-label={`Remove “${item.text}”`} title="Remove" onClick={onRemove}><Icon name="close" size={14} /></button>
   </div>;
@@ -146,8 +163,10 @@ function CopyTranscript({ title, turns, voices }: { title: string; turns: { time
     <span aria-hidden={!copied}><Icon name="check" size={15} />Copied</span>
   </button>;
 }
-export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPrevious, onToggle, onEdit, onRemove, onOpenPrevious, example, connections, live, cleanDefault, deleteAudio, summarizer, template, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onExportAudio, onMarkEnded, onDismissRecovered, onSend, onDelete }: {
-  meeting: Meeting; me: string; onRename: (title: string) => Promise<void>; onSpeaker: (from: string, to: string) => Promise<void>; previous: Meeting | null; onPrevious: (index: number) => Promise<void>; onToggle: (index: number) => Promise<void>; onEdit: (index: number, text: string) => Promise<void>; onRemove: (index: number) => Promise<void>; onOpenPrevious: () => void; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; deleteAudio: boolean; summarizer: Summarizer | null; template?: string; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
+export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPrevious, onToggle, onEdit, onOwner, onDue, onRemove, onOpenPrevious, example, connections, live, cleanDefault, deleteAudio, summarizer, template, autoDraft, onAutoDraft, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onExportAudio, onMarkEnded, onDismissRecovered, onSend, onDelete }: {
+  meeting: Meeting; me: string; onRename: (title: string) => Promise<void>; onSpeaker: (from: string, to: string) => Promise<void>; previous: Meeting | null; onPrevious: (index: number) => Promise<void>; onToggle: (index: number) => Promise<void>; onEdit: (index: number, text: string) => Promise<void>; onOwner: (index: number, owner: string) => Promise<void>; onDue: (index: number, due: string) => Promise<void>; onRemove: (index: number) => Promise<void>; onOpenPrevious: () => void; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; deleteAudio: boolean; summarizer: Summarizer | null; template?: string;
+  /** Hush drafting this meeting after its recording (`drafting`), and how many times it has (`version`). */
+  autoDraft?: { drafting: boolean; version: number }; onAutoDraft?: () => void; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
   armed: boolean | 'call'; onUpdated: (meeting: Meeting) => void; onStartCapture: () => void; onCloseCapture: () => void; onRetry: () => void; onExportAudio: () => void; onMarkEnded: () => void; onDismissRecovered: () => void; onDelete: () => void;
 }) {
   const { metadata: meta, markdown, transcript } = meeting;
@@ -217,7 +236,9 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
   // One row of tabs: the enhanced notes, your own and the transcript.
   const tabs: [MeetingTab, string][] = [['Enhanced', 'Enhanced notes'], ['Notes', 'My notes'], ['Transcript', 'Transcript']];
   const tabIds = (t: string) => ({ tab: `tab-${t}`, panel: `panel-${t}` });
-  const renderAction = (a: ActionItem) => <ActionRow key={a.key} item={a} fresh={a.index === fresh} onToggle={() => void onToggle(a.index)} onEdit={text => void onEdit(a.index, text)} onRemove={() => void onRemove(a.index)} />;
+  // Who an item could be for: you, who was invited or typed in, and voices named in the transcript.
+  const people = [...new Set([me.trim() || 'You', ...(meta.attendees ?? []).filter(a => !a.me).map(a => a.name || a.email), ...meta.participants, ...turns.map(t => t.speaker).filter(s => !/^(You|Others|Speaker \d+)$/.test(s))].filter(Boolean))];
+  const renderAction = (a: ActionItem) => <ActionRow key={a.key} item={a} fresh={a.index === fresh} people={people} onToggle={() => void onToggle(a.index)} onEdit={text => void onEdit(a.index, text)} onOwner={owner => void onOwner(a.index, owner)} onDue={due => void onDue(a.index, due)} onRemove={() => void onRemove(a.index)} />;
   // Rust owns a meeting while it records, waits to be transcribed or is transcribed, so it can't be deleted then.
   const owned = meta.status === 'recording' || meta.status === 'processing' || live.queued.includes(meta.id);
   const docked = armed || live.recording?.meetingId === meta.id || (!live.available && meta.status === 'recording');
@@ -261,7 +282,7 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
           <AddItem label="Add an action item" onAdd={text => onMarkdown(appendAction(markdown, text))} />
         </section>;
         return <>
-          {recorded && summarizer && <SuggestPanel meeting={meeting} summarizer={summarizer} template={template} onWorking={setDrafting} onAdded={setFresh} onMarkdown={onMarkdown} onRename={onRename} onSpeaker={onSpeaker} onCite={atMs => cite(clock(atMs / 1000))} />}
+          {recorded && summarizer && <SuggestPanel meeting={meeting} summarizer={summarizer} template={template} drafting={autoDraft?.drafting} version={autoDraft?.version} onAutoDraft={onAutoDraft} onWorking={setDrafting} onAdded={setFresh} onMarkdown={onMarkdown} onRename={onRename} onSpeaker={onSpeaker} onCite={atMs => cite(clock(atMs / 1000))} />}
           {actions.length > 0 && todo}
           {notes ? <div className="summary-text">{actions.length > 0 && summaryBlocks(notes)[0].kind !== 'heading' && <h3>Summary</h3>}{summaryBlocks(notes).map((b, i) => b.kind === 'heading' ? <h3 key={i}>{b.text}</h3> : b.kind === 'paragraph' ? <p key={i}>{b.text}</p>
             // A point with a transcript time was added from the transcript; the rest came from the notes.
