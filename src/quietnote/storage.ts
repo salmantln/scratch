@@ -264,3 +264,8 @@ export async function meetingNames(meetingId: string): Promise<Names> { return d
 /** Names a voice in a recorded transcript (or merges it into another); returns the transcript as written. */
 export async function renameSpeaker(meetingId: string, from: string, to: string): Promise<string> { return desktop ? invoke('transcript_rename_speaker', { meetingId, from, to }) : desktopOnly(); }
 export async function enhanceNotes(meetingId: string, template: string): Promise<Enhanced> { return desktop ? invoke('notes_enhance', { meetingId, template }) : desktopOnly(); }
+/** A draft waiting for review in the meeting's `draft.json` (desktop): enhanced notes and suggestions not yet used or dismissed. */
+export type NotesDraft = { template: string; enhanced: Enhanced | null; found: Suggestions | null };
+export async function readDraft(meetingId: string): Promise<NotesDraft | null> { return desktop ? invoke('draft_read', { meetingId }) : null; }
+/** Keeps the draft with the meeting, or removes it (`null`) once nothing in it is waiting. */
+export async function saveDraft(meetingId: string, draft: NotesDraft | null): Promise<void> { if (desktop) await invoke('draft_save', { meetingId, draft }); }

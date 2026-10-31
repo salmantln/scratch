@@ -123,6 +123,9 @@ function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { value
     try { await removeSummaryKey(); onSummaryKey(false); } catch (e) { setError(String(e).replace(/^Error: /, '')); }
   }
   const model = typeof values.ollamaModel === 'string' ? values.ollamaModel : '';
+  // Drafting after each recording is offered once a model is ready to draft.
+  const ready = provider === 'anthropic' ? summaryKey : provider === 'ollama' && Boolean(model);
+  const auto = values.autoDraft === true;
   return <section>
     <div className="setting-row"><div><div className="setting-title">Drafted by</div><p>{provider === 'anthropic' ? 'Claude, with your own Anthropic key. When you ask, the meeting’s transcript text is sent to Anthropic, with your notes when you enhance them and the invited people’s names when you ask for names. Audio and titles are never sent.' : provider === 'ollama' ? 'A model in Ollama on this computer. Nothing leaves this computer.' : 'Off. Nothing is drafted and nothing is sent.'}</p></div>
       <select aria-label="Drafted by" value={provider} onChange={e => { setError(''); onChange('summaryProvider', e.target.value); }}><option value="">Off</option><option value="anthropic">Claude (your Anthropic key)</option><option value="ollama">Ollama on this computer</option></select></div>
@@ -135,6 +138,10 @@ function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { value
       : models.length ? <div className="setting-row"><div><div className="setting-title">Model</div><p>Small models miss or invent details more often, so check each suggestion against its quote. Larger models do better but need more memory.</p></div>
         <select aria-label="Ollama model" value={model} onChange={e => onChange('ollamaModel', e.target.value)}><option value="" disabled>Choose a model</option>{models.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
       : <div className="setting-row"><div><div className="setting-title">{error ? 'Ollama isn’t running' : 'No models in Ollama'}</div><p>{error ? 'Install Ollama from ollama.com and open it' : 'Pull a model in Ollama'}, then check again.</p></div><button className="text-button" onClick={() => setCheck(c => c + 1)}>Check again</button></div>)}
+    {ready && <div className="setting-row"><div><div className="setting-title">Draft automatically</div><p>{auto
+        ? provider === 'anthropic' ? 'On: once a transcript is ready, its text and your notes are sent to Anthropic without asking. Hush’s draft waits in the meeting until you use it.' : `On: once a transcript is ready, ${model} drafts on this ${device}. Hush’s draft waits in the meeting until you use it.`
+        : 'Off: Hush drafts when you ask, in each meeting.'}</p></div>
+      <button type="button" className={`toggle ${auto ? 'on' : ''}`} role="switch" aria-checked={auto} aria-label="Draft automatically" onClick={() => onChange('autoDraft', !auto)}><span /></button></div>}
     {error && provider === 'anthropic' && <p className="field-error setting-error" role="alert">{error}</p>}
   </section>;
 }
@@ -297,6 +304,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
         <dl className="verdict">
           <div><dt>{desktop ? `Stays on this ${device}` : 'Stays in this browser'}</dt><dd>{desktop ? kept + encrypted : 'Your meetings, in this browser’s local storage. Nothing is uploaded.'}</dd></div>
           {desktop && <div><dt>Leaves when you ask</dt><dd>{sends.map(line => <span key={line}>{line}</span>)}</dd></div>}
+          {recording && values.autoDraft === true && values.summaryProvider === 'anthropic' && <div><dt>After each recording</dt><dd>The transcript’s text and your notes, to Claude, because Draft automatically is on.</dd></div>}
           <div><dt>Never</dt><dd>A meeting bot, an account, cloud sync, or recording before you press Start.</dd></div>
         </dl>
         {diskAtRisk(disk) && <div className="attention"><Icon name="warning" size={20} /><div><div className="setting-title">{disk === 'off' ? 'FileVault is off' : 'FileVault is being turned off'}</div><p>{`Anyone with this Mac’s disk could read your ${recording ? 'recordings, transcripts and notes' : 'meetings'}.`}</p></div>
@@ -349,7 +357,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
       </>}
       {section === 'Suggestions' && <>
         <h1>Suggestions</h1>
-        <p className="lede">When you ask, a model drafts a summary and action items from a recorded transcript, or writes up your notes under a template. Each line quotes the transcript or your notes, and nothing is saved until you add it. Your own templates are Markdown files in the archive’s .templates folder.</p>
+        <p className="lede">When you ask, or after each recording if you turn that on, a model drafts a summary and action items from a recorded transcript, or writes up your notes under a template. Each line quotes the transcript or your notes, and nothing is saved until you add it. Your own templates are Markdown files in the archive’s .templates folder.</p>
         <SummarySettings values={values} onChange={onChange} summaryKey={summaryKey} onSummaryKey={onSummaryKey} />
       </>}
       {section === 'Appearance' && <>

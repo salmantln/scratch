@@ -3964,6 +3964,8 @@ pub fn run() {
             calendar::calendar_events,
             calendar::calendar_now,
             summarize::notes_enhance,
+            summarize::draft_read,
+            summarize::draft_save,
             summarize::meeting_names,
             templates::note_templates,
             templates::open_templates,

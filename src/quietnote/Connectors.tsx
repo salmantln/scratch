@@ -4,7 +4,7 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Modal } from './Dialogs';
 import { Icon } from './Icon';
 import { calendarBlurb, categories, connectors, matchesConnector, serviceName, type Connector } from './catalog';
-import { actionItems, issueFor, type Meeting } from './model';
+import { actionItems, issueFor, itemMeta, type Meeting } from './model';
 import * as storage from './storage';
 const message = (e: unknown) => String(e).replace(/^Error: /, '');
 export function BrandMark({ connector: c, appIcon }: { connector: Connector; appIcon?: string }) {
@@ -167,7 +167,7 @@ export function SendDialog({ meeting, connections, lastTargets, onSent, onClose 
       {targets?.length === 0 && !error && <p className="connector-note">This key can’t see any {service === 'linear' ? 'teams' : 'repositories with issues'}.</p>}
       <fieldset className="send-items"><legend>Action items</legend>{items.map(a => <label key={a.index} className="send-item">
         <input type="checkbox" checked={chosen.has(a.index)} disabled={busy} onChange={() => setChosen(set => { const next = new Set(set); if (!next.delete(a.index)) next.add(a.index); return next; })} />
-        <span><span className="action-text">{a.text}</span>{a.owner && <span className="action-owner">{a.owner}</span>}</span>
+        <span><span className="action-text">{a.text}</span>{itemMeta(a) && <span className="action-owner">{itemMeta(a)}</span>}</span>
       </label>)}</fieldset>
       <p className="connector-note">Sends each item’s text and owner, plus this meeting’s title, date and project. Nothing else leaves this device.</p>
       {error && <p className="field-error" role="alert">{error}</p>}

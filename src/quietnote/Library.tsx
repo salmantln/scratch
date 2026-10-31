@@ -3,7 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { othersWaiting, track, useLevels } from './Capture';
 import { Hush, useLook, type Mood } from './Hush';
-import { actionItems, dayGroup, durationLabel, shortDate, statusLabel, timeLabel, yoursFirst, type CalendarEvent, type Meeting, type MeetingTab } from './model';
+import { actionItems, dayGroup, durationLabel, itemMeta, shortDate, statusLabel, timeLabel, yoursFirst, type CalendarEvent, type Meeting, type MeetingTab } from './model';
 import { isExample } from './seeds';
 import * as storage from './storage';
 
@@ -159,7 +159,7 @@ export function Home({ meetings, me, live, events, move, onPrepare, onOpen, onNe
         <input type="checkbox" checked={item.done} onChange={() => { setTicked(t => t.includes(key) ? t : [...t, key]); void onToggle(meeting.id, item.index); }} />
         <span className="action-text">{item.text}</span>
         {item.link && <button className="action-link" title={item.link.url} onClick={e => { e.preventDefault(); void storage.openLink(item.link!.url); }}>{item.link.label}</button>}
-        <span className="action-from">{item.owner && <span className="action-owner">{item.owner}</span>}<button className="text-button action-source" title={`Open ${meeting.title}`} onClick={e => { e.preventDefault(); onOpen(meeting.id, 'Enhanced'); }}>{meeting.title}</button></span>
+        <span className="action-from">{itemMeta(item) && <span className="action-owner">{itemMeta(item)}</span>}<button className="text-button action-source" title={`Open ${meeting.title}`} onClick={e => { e.preventDefault(); onOpen(meeting.id, 'Enhanced'); }}>{meeting.title}</button></span>
       </label>)}</div>
       {items.length > itemCount && <button className="text-button see-all" onClick={onAllActions}>All action items<Icon name="arrow" size={14} /></button>}
     </section>}
@@ -186,7 +186,7 @@ export function ActionItems({ meetings, me, onOpen, onToggle }: { meetings: Meet
       <h2 className="group-label action-group-head"><button className="text-button" title={`Open ${meeting.title}`} onClick={() => onOpen(meeting.id, 'Enhanced')}>{meeting.title}</button><span>{shortDate(meeting.date)} · {meeting.project}</span></h2>
       <div className="action-list">{items.map(item => { const key = `${meeting.id}:${item.key}`; return <label className={`action-row ${item.done ? 'complete' : ''}`} key={key}>
         <input type="checkbox" checked={item.done} onChange={() => { setTicked(t => t.includes(key) ? t : [...t, key]); void onToggle(meeting.id, item.index); }} />
-        <span><span className="action-text">{item.text}</span>{item.owner && <span className="action-owner">{item.owner}</span>}</span>
+        <span><span className="action-text">{item.text}</span>{itemMeta(item) && <span className="action-owner">{itemMeta(item)}</span>}</span>
         {item.link && <button className="action-link" title={item.link.url} onClick={e => { e.preventDefault(); void storage.openLink(item.link!.url); }}>{item.link.label}</button>}
       </label>; })}</div>
     </section>)

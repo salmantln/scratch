@@ -15,7 +15,7 @@ import { People } from './People';
 import { ActionItems, Home, MeetingList } from './Library';
 import { Onboarding } from './Onboarding';
 import { accelerator, bound, label, type Action } from './shortcuts';
-import { actionItems, actionLine, clock, editAction, removeAction, restoreAction, linkAction, recorded, makeMeeting, openingTab, previousMeeting, projectFor, reproject, retitle, replaceSection, searchMeeting, searchTerms, section, shortDate, stopsIn, toggleAction, type ActionItem, type CalendarEvent, type Meeting, type MeetingTab } from './model';
+import { actionItems, actionLine, clock, dueAction, editAction, enhancedNotes, ownAction, templateFor, removeAction, restoreAction, linkAction, recorded, makeMeeting, openingTab, previousMeeting, projectFor, reproject, retitle, replaceSection, searchMeeting, searchTerms, section, shortDate, stopsIn, toggleAction, type ActionItem, type CalendarEvent, type Meeting, type MeetingTab } from './model';
 import { demoMeetings, isExample } from './seeds';
 import * as storage from './storage';
 import './quietnote.css';
@@ -88,6 +88,10 @@ function Shell() {
   // New meeting asked for before any project existed: it opens once the project is created.
   const [meetingNext, setMeetingNext] = useState(false);
   const [stopped, setStopped] = useState<{ id: string; title: string } | null>(null);
+  // Meetings Hush drafts by itself once their transcript is ready (Draft automatically): while it runs, and how
+  // many drafts it has saved, so an open meeting reads the new one.
+  const [autoDrafts, setAutoDrafts] = useState<Record<string, { drafting: boolean; version: number }>>({});
+  const drafter = useRef<(id: string) => void>(() => {});
   const [recoverySeen, setRecoverySeen] = useState<string[]>([]);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   // The sidebar as icons only, or icons with labels: double-clicking its divider switches.
@@ -171,6 +175,8 @@ function Shell() {
       if (payload.transcript !== null) storage.noteWrite(payload.metadata.transcriptPath);
       const existing = records.current.find(m => m.metadata.id === payload.metadata.id);
       if (existing) upsert({ ...existing, metadata: payload.metadata, transcript: payload.transcript ?? existing.transcript });
+      // A first transcript just finished (not more recorded into a meeting that had one).
+      if (existing?.metadata.status === 'processing' && !existing.metadata.resume && payload.metadata.status === 'ready' && payload.transcript) drafter.current(payload.metadata.id);
       if (payload.problem) setProblem(payload.problem);
     }).then(keep);
     return () => { cancelled = true; unlisten.forEach(fn => fn()); };
@@ -262,6 +268,28 @@ function Shell() {
     const model = preferences.summaryProvider === 'ollama' ? preferences.ollamaModel : '';
     return typeof model === 'string' && model ? { local: true, label: model } : null;
   }, [live.available, preferences.summaryProvider, preferences.ollamaModel, summaryKey]);
+  // Draft automatically: enhanced notes, then suggestions, with the chosen model, saved as the meeting's waiting draft.
+  // Only for a meeting without enhanced notes yet; nothing is written to its notes until the user uses it.
+  drafter.current = id => {
+    const meeting = records.current.find(m => m.metadata.id === id);
+    if (preferences.autoDraft !== true || !summarizer || !meeting || isExample(id) || enhancedNotes(meeting.markdown)) return;
+    const step = (drafting: boolean) => setAutoDrafts(d => ({ ...d, [id]: { drafting, version: (d[id]?.version ?? 0) + (drafting ? 0 : 1) } }));
+    step(true);
+    void (async () => {
+      try {
+        const templates = await storage.noteTemplates();
+        const template = templateFor(meeting.metadata.title, templates.map(t => t.name), typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : '');
+        const enhanced = await storage.enhanceNotes(id, template);
+        const found = await storage.suggestSummary(id);
+        const waiting = { template, enhanced: enhanced.sections.length ? enhanced : null, found: found.summary || found.actions.length ? found : null };
+        if (waiting.enhanced || waiting.found) await storage.saveDraft(id, waiting);
+        step(false);
+      } catch (e) {
+        setAutoDrafts(d => ({ ...d, [id]: { drafting: false, version: d[id]?.version ?? 0 } }));
+        setProblem(`Hush couldn’t draft notes for “${meeting.metadata.title}”. ${String(e).replace(/^Error: /, '')}`);
+      }
+    })();
+  };
   const go = useCallback((next: View, nextProject = '') => { setView(next); setProject(nextProject); }, []);
   // Where Back to meetings returns to: the last place outside Settings.
   const beforeSettings = useRef<{ view: View; project: string }>({ view: 'home', project: '' });
@@ -518,7 +546,9 @@ function Shell() {
     toast(was ? 'Reopened' : 'Marked done', { id: `action:${id}:${key}`, duration: 5000, action: { label: 'Undo', onClick: () => void setItem(id, key, was) } });
     return persist(id, toggleAction(found.latest.markdown, index));
   };
-  const editItem = (id: string, index: number, text: string) => { const latest = records.current.find(m => m.metadata.id === id); return latest ? persist(id, editAction(latest.markdown, index, text)) : Promise.resolve(); };
+  // An item's text, owner or due date changed, on the meeting's latest Markdown.
+  const changeItem = (id: string, change: (markdown: string) => string) => { const latest = records.current.find(m => m.metadata.id === id); return latest ? persist(id, change(latest.markdown)) : Promise.resolve(); };
+  const editItem = (id: string, index: number, text: string) => changeItem(id, markdown => editAction(markdown, index, text));
   // Undo puts back only the removed line, where it was, leaving anything changed since.
   const removeItem = (id: string, index: number) => {
     const found = itemOf(id, a => a.index === index);
@@ -587,14 +617,16 @@ function Shell() {
         const meeting = saved;
         if (!meeting || meeting.metadata.status === 'error') return null;
         const done = meeting.metadata.status === 'ready';
-        return <div className="banner" role="status">{bannerHush && <Hush mood={done ? 'done' : 'transcribing'} size={44} />}<div><strong>{done ? 'Transcript ready' : 'Recording saved'}</strong><span>{done ? `“${meeting.metadata.title}” is ready to review.` : `Transcribing “${meeting.metadata.title}” on this ${storage.device}. You can keep working.`}</span></div>
-          <div className="banner-actions"><button className="secondary" onClick={() => openMeeting(meeting.metadata.id, done ? 'Transcript' : undefined)}>Open meeting</button><button className="text-button" onClick={() => setStopped(null)}>Dismiss</button></div></div>;
+        const auto = autoDrafts[meeting.metadata.id];
+        const drafted = done && auto && !auto.drafting && auto.version > 0;
+        return <div className="banner" role="status">{bannerHush && <Hush mood={auto?.drafting ? 'suggesting' : done ? 'done' : 'transcribing'} size={44} />}<div><strong>{drafted ? 'Notes drafted' : done ? 'Transcript ready' : 'Recording saved'}</strong><span>{drafted ? `Hush drafted notes for “${meeting.metadata.title}”. Nothing is saved until you use them.` : done && auto?.drafting ? `“${meeting.metadata.title}” is ready. Hush is drafting notes…` : done ? `“${meeting.metadata.title}” is ready to review.` : `Transcribing “${meeting.metadata.title}” on this ${storage.device}. You can keep working.`}</span></div>
+          <div className="banner-actions"><button className="secondary" onClick={() => openMeeting(meeting.metadata.id, drafted || auto?.drafting ? 'Enhanced' : done ? 'Transcript' : undefined)}>Open meeting</button><button className="text-button" onClick={() => setStopped(null)}>Dismiss</button></div></div>;
       })()}
       {external && !unsaved && <div className="banner" role="status"><div><strong>Files changed outside QuietNote.</strong><span>Refresh to load the latest version from disk.</span></div><div className="banner-actions"><button className="secondary" onClick={() => void reload()}>Refresh</button></div></div>}
       {problem && <div className="banner warning" role="alert"><div><strong>{problem}</strong></div><div className="banner-actions"><button className="text-button" onClick={() => setProblem('')}>Dismiss</button></div></div>}
       <main className="qn-main" ref={main}><HushYield.Provider value={bannerHush}>
         {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} disk={disk} summaryKey={summaryKey} onSummaryKey={setSummaryKey} section={shownSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
-        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={index => toggleItem(previous!.metadata.id, index)} onToggle={index => toggleItem(current.metadata.id, index)} onEdit={(index, text) => editItem(current.metadata.id, index, text)} onRemove={index => removeItem(current.metadata.id, index)} me={me} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} deleteAudio={preferences.deleteAudio === true} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onExportAudio={() => void exportAudio(current)} onMarkEnded={() => void markEnded(current)} onDelete={() => setDialog('delete')} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
+        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={index => toggleItem(previous!.metadata.id, index)} onToggle={index => toggleItem(current.metadata.id, index)} onEdit={(index, text) => editItem(current.metadata.id, index, text)} onOwner={(index, owner) => changeItem(current.metadata.id, markdown => ownAction(markdown, index, owner))} onDue={(index, due) => changeItem(current.metadata.id, markdown => dueAction(markdown, index, due))} onRemove={index => removeItem(current.metadata.id, index)} me={me} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} deleteAudio={preferences.deleteAudio === true} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} autoDraft={autoDrafts[current.metadata.id]} onAutoDraft={preferences.autoDraft === true ? undefined : () => { setSettingsSection('Suggestions'); setView('settings'); }} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onExportAudio={() => void exportAudio(current)} onMarkEnded={() => void markEnded(current)} onDelete={() => setDialog('delete')} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
           const latest = records.current.find(m => m.metadata.id === current.metadata.id);
           // The editor can save once more as it closes, after its meeting was deleted.
           if (!latest) return Promise.resolve();

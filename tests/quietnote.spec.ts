@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { demoMeetings } from '../src/quietnote/seeds';
-import { section, replaceSection, toggleAction, matchesMeeting, searchMeeting, makeMeeting, transcriptTurns, validProjectName, appendAction, actionItems, enhancedNotes, openingTab, linkAction, issueFor, editAction, removeAction, restoreAction, actionLine, mine, yoursFirst, previousMeeting, notesMarkdown, summaryBlocks, templateFor, people, owns, projectFor, type Meeting } from '../src/quietnote/model';
+import { section, replaceSection, toggleAction, ownAction, dueAction, dueText, itemMeta, matchesMeeting, searchMeeting, makeMeeting, transcriptTurns, validProjectName, appendAction, actionItems, enhancedNotes, openingTab, linkAction, issueFor, editAction, removeAction, restoreAction, actionLine, mine, yoursFirst, previousMeeting, notesMarkdown, summaryBlocks, templateFor, people, owns, projectFor, type Meeting } from '../src/quietnote/model';
 
 async function examples(page: Page) {
   await page.goto('/');
@@ -185,6 +185,36 @@ test('action items are found again by their text, edited and removed by line, an
   expect(section(restoreAction(blank.markdown, '- [ ] Book the room', 0), 'Action items')).toBe('- [ ] Book the room');
 });
 
+test('owners and due dates are part of the item’s line, with the date where Obsidian Tasks reads it', () => {
+  const blank = makeMeeting('Kickoff', 'Acme');
+  const url = 'https://linear.app/acme/issue/ENG-12';
+  const markdown = linkAction(appendAction(appendAction(blank.markdown, 'Maya — send the plan'), 'Book the room'), 0, 'ENG-12', url);
+  const dated = dueAction(markdown, 0, '2026-11-07');
+  expect(actionLine(dated, 0)).toBe(`- [ ] Maya — send the plan [ENG-12](${url}) 📅 2026-11-07`);
+  expect(actionItems(dated)[0]).toMatchObject({ key: '0 Maya — send the plan', text: 'send the plan', owner: 'Maya', due: '2026-11-07', link: { label: 'ENG-12', url } });
+  // Ticking, editing, linking and owning keep the date, and the date stays last.
+  expect(actionLine(toggleAction(dated, 0), 0)).toBe(`- [x] Maya — send the plan [ENG-12](${url}) 📅 2026-11-07`);
+  expect(actionLine(editAction(dated, 0, 'send the final plan'), 0)).toBe(`- [ ] Maya — send the final plan [ENG-12](${url}) 📅 2026-11-07`);
+  expect(actionLine(linkAction(dueAction(markdown, 1, '2026-11-08'), 1, 'ENG-13', url), 1)).toBe(`- [ ] Book the room [ENG-13](${url}) 📅 2026-11-08`);
+  expect(actionLine(ownAction(dated, 0, ' Sam Lee '), 0)).toBe(`- [ ] Sam Lee — send the plan [ENG-12](${url}) 📅 2026-11-07`);
+  expect(actionLine(ownAction(dated, 0, ''), 0)).toBe(`- [ ] send the plan [ENG-12](${url}) 📅 2026-11-07`);
+  expect(actionLine(ownAction(markdown, 1, 'You'), 1)).toBe('- [ ] You — Book the room');
+  // A dash inside a name would read as the owner's end, so it isn't kept as one.
+  expect(actionItems(ownAction(markdown, 1, 'A — B'))[1]).toMatchObject({ owner: 'A B', text: 'Book the room' });
+  // No date, or one that isn't a day, removes it.
+  expect(dueAction(dated, 0, '')).toBe(markdown);
+  expect(dueAction(dated, 0, 'Friday')).toBe(markdown);
+  // Shown as the day, overdue once it's passed and the item is open.
+  const now = new Date(2026, 10, 10);
+  expect(dueText({ done: false, due: '2026-11-07' }, now)).toBe('Overdue · 7 Nov');
+  expect(dueText({ done: false, due: '2026-11-10' }, now)).toBe('Due 10 Nov');
+  expect(dueText({ done: false, due: '2027-01-04' }, now)).toBe('Due 4 Jan 2027');
+  expect(itemMeta({ done: true, owner: 'Maya', due: '2026-11-07' }, now)).toBe('Maya · Due 7 Nov');
+  expect(itemMeta({ done: false, owner: '', due: '' }, now)).toBe('');
+  // It goes with the issue when the item is sent.
+  expect(issueFor(actionItems(dated)[0], { ...blank.metadata, title: 'Kickoff', date: '2026-09-28T09:00:00' }).body).toBe('From “Kickoff” (2026-09-28, Acme). Owner: Maya. Due: 7 Nov 2026.');
+});
+
 test('A: first launch creates a project, then a meeting', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Meeting notes, without a bot.' })).toBeVisible();
@@ -241,7 +271,7 @@ test('A: first launch creates a project, then a meeting', async ({ page }) => {
   await page.getByRole('textbox', { name: 'Add an action item' }).fill('Maya — send the plan');
   await page.keyboard.press('Enter');
   await expect(page.locator('.action-text')).toHaveText('send the plan');
-  await expect(page.locator('.action-owner')).toHaveText('Maya');
+  await expect(page.getByRole('button', { name: 'Owner: Maya' })).toHaveText('Maya');
   await page.reload();
   await expect(page.getByRole('heading', { level: 1, name: 'Untitled meeting' })).toBeVisible();
   await expect(tab(page, 'Enhanced notes')).toHaveAttribute('aria-selected', 'true');
@@ -564,6 +594,8 @@ async function mockDesktop(page: Page, fixture: Fixture) {
       clipboard: '',
       templates: [{ name: 'General', sections: [{ heading: 'Overview', description: '' }, { heading: 'Next steps', description: '' }], builtIn: true }, { name: '1:1', sections: [{ heading: 'Updates', description: '' }], builtIn: true }],
       enhanced: null as unknown,
+      // The meeting's waiting draft (`draft.json`), as `draft_read` returns it and `draft_save` keeps it.
+      notesDraft: null as unknown,
       enhancedWith: '',
       calendarAccess: 'undetermined',
       // What the macOS microphone prompt answers when the first-run screens ask.
@@ -685,6 +717,8 @@ async function mockDesktop(page: Page, fixture: Fixture) {
           case 'calendar_events': return state.preferences.calendar ? state.events : [];
           case 'calendar_now': return state.preferences.calendar ? state.now : null;
           case 'notes_enhance': state.enhancedWith = args.template; return state.enhanced;
+          case 'draft_read': return state.notesDraft;
+          case 'draft_save': state.notesDraft = args.draft ?? null; return null;
           case 'capture_keep': { const r = state.capture.recording as Record<string, unknown>; state.capture = { ...state.capture, recording: { ...r, ending: null } }; emit('quietnote://capture-state', state.capture); return null; }
           default: return null;
         }
@@ -1110,7 +1144,7 @@ test('Q3: your own action items come first, and in a meeting an item can be edit
   await page.getByRole('textbox', { name: 'Edit action item' }).fill('schedule a technical review for Thursday');
   await page.keyboard.press('Enter');
   const edited = rows.filter({ hasText: 'for Thursday' });
-  await expect(edited.locator('.action-owner')).toHaveText('Alex');
+  await expect(edited.getByRole('button', { name: 'Owner: Alex' })).toHaveText('Alex');
   // Tick one, then remove an item above it in the file: the tick's Undo still reopens the item it ticked.
   const launch = rows.filter({ hasText: 'confirm the new launch date' });
   await launch.locator('input[type=checkbox]').check();
@@ -1672,6 +1706,125 @@ test('X: summary suggestions ask before sending, cite the transcript, and write 
   await panel.getByRole('button', { name: /01:05.*we go with the annual plan/ }).click();
   await expect(tab(page, 'Transcript')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.transcript-turn[data-time="01:05"]')).toHaveClass(/cited/);
+});
+
+test('AP: in a meeting an item’s owner is typed with its people suggested, and its due date is picked', async ({ page }) => {
+  const meeting = meetingWith('Pricing sync', { participants: ['Maya Chen'] });
+  meeting.markdown = ['Maya — Send the pricing draft', 'Book the room'].reduce(appendAction, meeting.markdown);
+  await mockDesktop(page, { meetings: [meeting] });
+  await page.goto('/');
+  await row(page, 'Pricing sync').click();
+  const rows = page.locator('.note-actions .action-row');
+  await rows.first().getByRole('button', { name: 'Owner: Maya' }).click();
+  // You and the people in the meeting are suggested; any name can be typed.
+  await expect(page.locator('.note-actions datalist option')).toHaveCount(2);
+  expect(await page.locator('.note-actions datalist option').evaluateAll(o => o.map(e => (e as HTMLOptionElement).value))).toEqual(['You', 'Maya Chen']);
+  await page.getByLabel('Owner', { exact: true }).fill('Maya Chen');
+  await page.getByLabel('Owner', { exact: true }).press('Enter');
+  await expect.poll(() => qn(page, q => q.state.saved)).toContain('- [ ] Maya Chen — Send the pricing draft');
+  // An item without an owner offers Assign; Escape keeps it unassigned.
+  await rows.nth(1).hover();
+  await rows.nth(1).getByRole('button', { name: 'Assign an owner' }).click();
+  await page.getByLabel('Owner', { exact: true }).fill('Sam');
+  await page.getByLabel('Owner', { exact: true }).press('Escape');
+  await expect(rows.nth(1).getByRole('button', { name: 'Assign an owner' })).toHaveCount(1);
+  expect(await qn(page, q => q.state.saved)).not.toContain('Sam —');
+  // A due date is picked, shown as the day, kept where Obsidian reads it, and removed.
+  await rows.first().hover();
+  await rows.first().getByRole('button', { name: 'Due date' }).click();
+  await page.getByLabel('Due date').fill('2026-11-07');
+  await page.getByLabel('Due date').press('Enter');
+  await expect.poll(() => qn(page, q => q.state.saved)).toContain('- [ ] Maya Chen — Send the pricing draft 📅 2026-11-07');
+  await expect(rows.first()).toContainText(/(Due|Overdue ·) 7 Nov/);
+  // Home lists it with its owner and date.
+  await home(page).click();
+  await expect(page.locator('.home-action').first()).toContainText(/Maya Chen · (Due|Overdue ·) 7 Nov/);
+  await row(page, 'Pricing sync').click();
+  await rows.first().hover();
+  await rows.first().getByRole('button', { name: 'Remove due date' }).click();
+  await expect.poll(() => qn(page, q => q.state.saved)).not.toContain('📅');
+});
+
+test('AQ: with Draft automatically on, Hush drafts once the transcript is ready, and the draft waits until it’s used', async ({ page }) => {
+  const meeting = meetingWith('Pricing sync', { status: 'recording' });
+  meeting.metadata.audioPath = `Acme/${meeting.metadata.id}/audio`;
+  await mockDesktop(page, { meetings: [meeting], recording: meeting.metadata.id, startedAgo: 60 });
+  await page.addInitScript(() => {
+    const { state } = (window as unknown as { __qn: { state: Record<string, unknown> } }).__qn;
+    Object.assign(state, {
+      preferences: { summaryProvider: 'ollama', ollamaModel: 'llama3', autoDraft: true },
+      transcriptData: [{ startMs: 0, speaker: 'Others', text: 'Maya will send the pricing draft by Friday.', clean: 'Maya will send the pricing draft by Friday.' }],
+      enhanced: { sections: [{ heading: 'Overview', lines: [{ text: 'Pricing goes annual.', atMs: 0, quote: 'pricing draft' }] }], dropped: 0 },
+      suggestions: { summary: '', actions: [{ text: 'Send the pricing draft', owner: 'Maya', atMs: 0, quote: 'Maya will send the pricing draft' }], dropped: 0 },
+    });
+  });
+  await page.goto('/');
+  await home(page).click();
+  // Stopped from the tray, then transcribed.
+  await qn(page, q => {
+    const [m] = q.meetings;
+    q.state.capture = { ...q.state.capture, recording: null };
+    q.emit('quietnote://capture-state', q.state.capture);
+    q.emit('quietnote://meeting-changed', { metadata: { ...m.metadata, status: 'processing' }, transcript: null, problem: null });
+  });
+  await expect(page.getByRole('status').filter({ hasText: 'Recording saved' })).toBeVisible();
+  expect(await qn(page, q => q.state.calls.includes('notes_enhance'))).toBe(false);
+  await qn(page, q => { const [m] = q.meetings; q.emit('quietnote://meeting-changed', { metadata: { ...m.metadata, status: 'ready' }, transcript: '# Transcript\n\n### 00:00 Others\nMaya will send the pricing draft by Friday.\n', problem: null }); });
+  const banner = page.getByRole('status').filter({ hasText: 'Notes drafted' });
+  await expect(banner).toContainText('Nothing is saved until you use them.');
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'notes_enhance' || c === 'summary_suggest'))).toEqual(['notes_enhance', 'summary_suggest']);
+  // Nothing is written to the notes; the draft waits in the meeting.
+  expect(await qn(page, q => q.state.saved)).toBe('');
+  expect(await qn(page, q => (q.state as unknown as Record<string, unknown>).notesDraft)).toMatchObject({ template: 'General' });
+  await banner.getByRole('button', { name: 'Open meeting' }).click();
+  await expect(page.getByRole('region', { name: 'Enhanced notes' })).toContainText('Pricing goes annual.');
+  await expect(page.getByRole('region', { name: 'Suggestions' })).toContainText('Send the pricing draft');
+  // Still there after leaving the meeting: it's read back from the meeting's draft.
+  await home(page).click();
+  await row(page, 'Pricing sync').click();
+  await expect(page.getByRole('region', { name: 'Enhanced notes' })).toContainText('Pricing goes annual.');
+  expect(await qn(page, q => q.state.calls.filter(c => c === 'draft_read').length)).toBeGreaterThan(1);
+  await page.getByRole('region', { name: 'Enhanced notes' }).getByRole('button', { name: 'Use these notes' }).click();
+  await expect.poll(() => qn(page, q => q.state.saved)).toContain('Pricing goes annual.');
+  await page.getByRole('region', { name: 'Suggestions' }).getByRole('button', { name: 'Add' }).click();
+  await expect.poll(() => qn(page, q => q.state.saved)).toContain('- [ ] Maya — Send the pricing draft');
+  // Used up, the draft is gone.
+  await expect.poll(() => qn(page, q => (q.state as unknown as Record<string, unknown>).notesDraft)).toBeNull();
+});
+
+test('AQ2: while Draft automatically is off, one dismissible line says where to turn it on', async ({ page }) => {
+  const done = meetingWith('Pricing sync', { status: 'ready', duration: 600, captureStartedAt: new Date().toISOString(), captureEndedAt: new Date().toISOString() });
+  done.metadata.audioPath = `Acme/${done.metadata.id}/audio`;
+  done.transcript = '# Transcript\n\n### 00:00 Others\nMaya will send the pricing draft by Friday.\n';
+  await mockDesktop(page, { meetings: [done] });
+  await page.addInitScript(() => {
+    const { state } = (window as unknown as { __qn: { state: Record<string, unknown> } }).__qn;
+    Object.assign(state, { preferences: { summaryProvider: 'anthropic' }, summaryKey: true });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Pricing sync/ }).click();
+  await expect(page.getByText('Hush can draft these after every recording.')).toBeVisible();
+  await page.getByRole('button', { name: 'Turn on in Settings' }).click();
+  const auto = page.getByRole('switch', { name: 'Draft automatically' });
+  await expect(auto).toHaveAttribute('aria-checked', 'false');
+  await auto.click();
+  await expect(auto).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByText('sent to Anthropic without asking', { exact: false })).toBeVisible();
+  expect(await qn(page, q => q.state.preferences.autoDraft)).toBe(true);
+  // Privacy says so while it's on with Claude.
+  await settingsPage(page, 'Privacy');
+  await expect(page.locator('.verdict')).toContainText('After each recording');
+  await leaveSettings(page);
+  await expect(page.getByText('Hush can draft these after every recording.')).toHaveCount(0);
+  // Off again, the line comes back until it's dismissed, and stays dismissed.
+  await page.keyboard.press('ControlOrMeta+,');
+  await settingsPage(page, 'Suggestions');
+  await page.getByRole('switch', { name: 'Draft automatically' }).click();
+  await leaveSettings(page);
+  await page.getByText('Hush can draft these after every recording.').getByRole('button', { name: 'Dismiss' }).click();
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1, name: 'Pricing sync' })).toBeVisible();
+  await expect(page.getByText('Hush can draft these after every recording.')).toHaveCount(0);
 });
 
 test('Y: a recording about to stop by itself counts down where you are, and Keep recording cancels it', async ({ page }) => {
