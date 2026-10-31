@@ -5,12 +5,14 @@
 use crate::meetings::{self, Attendee};
 use serde::Serialize;
 use std::sync::Mutex;
+#[cfg(target_os = "macos")]
 use std::time::Duration;
 use tauri::AppHandle;
 
 /// An event happening now, or starting within this long, is the "current" one (joining a few minutes early).
 const EARLY_MS: i64 = 10 * 60 * 1000;
 /// The tray's next meeting looks this far ahead.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const AHEAD_MS: i64 = 12 * 60 * 60 * 1000;
 
 /// One occurrence of a calendar event.
@@ -30,12 +32,14 @@ pub struct Event {
 }
 
 /// The first video call link in any of `texts`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn meeting_link(texts: &[&str]) -> Option<String> {
     static LINK: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let link = LINK.get_or_init(|| regex::Regex::new(r#"(?i)https://[^\s<>"')]*(zoom\.us/(j|my|w)/|meet\.google\.com/[a-z]+-|teams\.microsoft\.com/l/meetup-join|teams\.live\.com/meet|webex\.com/(meet|join|[a-z0-9.-]+/j\.php)|whereby\.com/)[^\s<>"')]*"#).expect("link pattern"));
     texts.iter().find_map(|t| link.find(t)).map(|m| m.as_str().trim_end_matches(['.', ',']).to_string())
 }
 /// An attendee from what EventKit gives: a display name (maybe missing) and a `mailto:` URL.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn attendee(name: Option<&str>, url: &str, me: bool) -> Attendee {
     let email = url.get(..7).filter(|s| s.eq_ignore_ascii_case("mailto:")).map(|_| urlencoding::decode(&url[7..]).map(|e| e.into_owned()).unwrap_or_else(|_| url[7..].to_string())).unwrap_or_default().to_lowercase();
     let name = name.map(str::trim).filter(|n| !n.is_empty() && !n.contains('@')).map(String::from)
@@ -48,6 +52,7 @@ pub fn current(events: &[Event], now_ms: i64) -> Option<&Event> {
     events.iter().filter(|e| e.start_ms - EARLY_MS <= now_ms && now_ms < e.end_ms).max_by_key(|e| (e.link.is_some(), e.start_ms))
 }
 /// The tray's line: the current event, or the next one within 12 hours.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn next_line(events: &[Event], now_ms: i64) -> Option<(String, String)> {
     if let Some(e) = current(events, now_ms) { return Some((e.id.clone(), format!("Now: {}", e.title))); }
     let e = events.iter().filter(|e| e.start_ms > now_ms && e.start_ms - now_ms <= AHEAD_MS).min_by_key(|e| e.start_ms)?;

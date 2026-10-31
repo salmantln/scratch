@@ -34,12 +34,16 @@ const LOW_DISK: u64 = 1 << 30;
 /// Below this, recording stops cleanly so the audio so far stays valid.
 const FULL_DISK: u64 = 150 << 20;
 /// After the call app lets go of the microphone, the recording stops this much later (unless kept)…
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 const CALL_ENDED_STOP: Duration = Duration::from_secs(60);
 /// …and only once nobody has been heard for this long, so talking on after the call keeps recording.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 const QUIET_BEFORE_STOP_MS: u64 = 10_000;
 /// Nothing heard on either track for this long (a recording left running) starts a countdown…
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 const SILENT_MS: u64 = 15 * 60 * 1000;
 /// …of this long, which any sound cancels.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 const SILENT_STOP: Duration = Duration::from_secs(120);
 
 struct Session {
@@ -75,18 +79,23 @@ struct Jobs { queue: VecDeque<String>, current: Option<Progress>, worker: bool }
 /// Why a recording is about to stop by itself. Either way the user can keep recording, and it stops
 /// only after a countdown, so it never ends unseen.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 enum Reason { CallEnded(&'static str), Silent }
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 struct Ending { reason: Reason, at: SystemTime }
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 impl Reason {
     fn text(self) -> String {
         match self { Reason::CallEnded(app) => format!("The {app} call ended."), Reason::Silent => "Nothing has been heard for 15 minutes.".into() }
     }
 }
 #[derive(Debug, PartialEq)]
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 enum Step { Wait, Start(Reason), Cancel, Stop }
 /// What a running recording's countdown does next: a long silence starts one, sound cancels a silence
 /// countdown, and a countdown that has run out stops the recording once it's quiet.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 fn step(ending: Option<Ending>, quiet_ms: u64, now: SystemTime) -> Step {
     match ending {
         None if quiet_ms >= SILENT_MS => Step::Start(Reason::Silent),
@@ -473,6 +482,7 @@ pub fn stop(app: &AppHandle, reason: Option<String>) -> Result<Metadata, String>
 }
 
 /// The call app let go of the microphone (`calls`): the recording stops after a countdown unless kept.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn call_ended(app: &AppHandle, call: &'static str) {
     let started = app.state::<Capture>().session.lock().ok().and_then(|mut s| {
         let s = s.as_mut().filter(|s| !s.paused && s.ending.is_none())?;

@@ -180,6 +180,7 @@ pub(crate) fn preference(root: &Path, key: &str, fallback: bool) -> bool {
     privacy(root, key).and_then(|v| v.as_bool()).unwrap_or(fallback)
 }
 /// A list of strings from `.privacy.json`, such as the apps muted for call detection.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn preference_list(root: &Path, key: &str) -> Vec<String> {
     privacy(root, key).and_then(|v| v.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())).unwrap_or_default()
 }

@@ -36,6 +36,7 @@ const APPS: &[(&str, &str)] = &[
 ];
 
 /// Browsers, by name, and the bundle id whose windows show their tabs.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const BROWSERS: &[(&str, &str)] = &[
     ("Chrome", "com.google.Chrome"),
     ("Safari", "com.apple.Safari"),
@@ -122,7 +123,11 @@ impl Ender {
 }
 
 #[derive(Default)]
-pub struct Calls { detector: Mutex<Detector>, ender: Mutex<Ender> }
+pub struct Calls {
+    detector: Mutex<Detector>,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    ender: Mutex<Ender>,
+}
 
 /// Watches microphone use every two seconds (macOS only; elsewhere nothing is detected).
 pub fn spawn(app: &AppHandle) {

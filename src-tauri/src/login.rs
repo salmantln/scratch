@@ -35,8 +35,10 @@ fn at_login() -> bool { false }
 /// What to do about the login item, from the preference, the system's status and whether
 /// QuietNote registered it before.
 #[derive(Debug, PartialEq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 enum Step { Register, Unregister, TurnedOff, Keep }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn step(wanted: bool, on: bool, registered: bool) -> Step {
     match (wanted, on, registered) {
         (true, true, _) | (false, false, _) => Step::Keep,
