@@ -659,7 +659,15 @@ fn process(app: &AppHandle, id: &str) -> Result<Option<(Metadata, String)>, Stri
     let (turns, echo) = transcript::merge(mic, system);
     let mut transcript = Transcript { version: 1, model: model_name().into(), turns, echo };
     if let (Some(resume), Some(before)) = (metadata.resume, before) { transcript = transcript::append(before, transcript, resume.at_ms); }
+    // The earlier part too, in case the preferences changed since.
+    transcript::hide(&mut transcript.turns, &hidden(&root));
     save_transcript(&root, id, &transcript).map(Some)
+}
+/// The lines the clean view hides (`hideMadeUp`, default on): the ones Whisper makes up, and the user's
+/// own, read once (`cleanup::phrases`).
+pub(crate) fn hidden(root: &Path) -> Vec<Vec<String>> {
+    if !meetings::preference(root, "hideMadeUp", true) { return vec![]; }
+    crate::cleanup::phrases(crate::cleanup::MADE_UP.iter().map(|p| p.to_string()).chain(meetings::preference_list(root, "ignoredPhrases")))
 }
 /// Labels the others' sentences by voice (`speakers`). It only improves the transcript: if the voices
 /// can't be told apart, the others stay "Others" and the transcript is saved as it is.
@@ -976,14 +984,23 @@ pub(crate) fn set_draft(app: &AppHandle, id: &str, turns: &[transcript::Turn]) {
     if let Ok(mut d) = app.state::<Capture>().draft.lock() { *d = Some(draft.clone()); }
     let _ = app.emit_to("main", "quietnote://live-transcript", draft);
 }
-/// Rewrites every recorded `transcript.md` after the filler-word preference changes.
+/// Rewrites every recorded transcript after a transcript preference changes (`cleanTranscript`,
+/// `hideMadeUp`, `ignoredPhrases`): what it hides is set again from the preferences as they are now, so
+/// turning hiding off or showing a phrase again brings lines back, and turning it on hides them in older
+/// transcripts too. A meeting being transcribed is hidden again by the worker when it saves (`process`).
 #[tauri::command]
-pub async fn render_transcripts(app: AppHandle, clean: bool) -> Result<(), String> {
+pub async fn render_transcripts(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let root = meetings::root(&app)?;
+        let (clean, phrases) = (meetings::preference(&root, "cleanTranscript", true), hidden(&root));
         let _files = meetings::files();
-        for (metadata, dir) in meetings::read_metadata(&meetings::root(&app)?)? {
-            let Ok(bytes) = std::fs::read(dir.join("transcript.json")) else { continue };
-            let transcript: Transcript = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        for (metadata, dir) in meetings::read_metadata(&root)? {
+            let path = dir.join("transcript.json");
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let mut transcript: Transcript = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            if transcript::hide(&mut transcript.turns, &phrases) {
+                meetings::atomic_write(&path, &serde_json::to_vec_pretty(&transcript).map_err(|e| e.to_string())?)?;
+            }
             let markdown = transcript::markdown(&transcript, clean);
             meetings::atomic_write(&dir.join("transcript.md"), markdown.as_bytes())?;
             changed(&app, &metadata, Some(markdown), None);
@@ -1252,7 +1269,7 @@ mod tests {
     fn naming_a_speaker_changes_only_the_labels() {
         let root = archive("rename");
         let dir = meeting(&root, "named", "ready", false);
-        let turn = |start_ms: u64, speaker: &str, text: &str| transcript::Turn { start_ms, end_ms: start_ms + 1000, speaker: speaker.into(), text: text.into(), removed: vec![], breaks: vec![] };
+        let turn = |start_ms: u64, speaker: &str, text: &str| transcript::Turn { start_ms, end_ms: start_ms + 1000, speaker: speaker.into(), text: text.into(), removed: vec![], breaks: vec![], hidden: vec![] };
         let recorded = Transcript { version: 1, model: "test".into(), turns: vec![turn(0, "You", "Hi Maria."), turn(2000, "Speaker 1", "Um, hi."), turn(4000, "Speaker 2", "Hello.")], echo: vec![] };
         std::fs::write(dir.join("transcript.json"), serde_json::to_vec(&recorded).unwrap()).unwrap();
         let markdown = rename_speaker(&dir, "Speaker 1", " Maria Lopez ", false).unwrap();

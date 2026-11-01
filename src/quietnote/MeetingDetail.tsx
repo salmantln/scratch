@@ -100,9 +100,10 @@ const cut = (text: string) => text.length > 120 ? `${text.slice(0, 117).trimEnd(
  * was invited (whose name is suggested), since one "Others" can be several people. */
 function unnamedVoices(turns: TranscriptTurn[], invited: string[]): Voice[] {
   const first = new Map<string, TranscriptTurn>();
-  for (const t of turns) if (!first.has(t.speaker)) first.set(t.speaker, t);
+  // A voice is asked about only for what the clean view shows: one heard only in hidden lines ("[Music]") isn't.
+  for (const t of turns) if (t.clean.trim() && !first.has(t.speaker)) first.set(t.speaker, t);
   return [...first].filter(([voice]) => /^Speaker \d+$/.test(voice) || (voice === 'Others' && invited.length === 1))
-    .map(([voice, t]) => ({ voice, time: clock(t.startMs / 1000), line: cut(t.clean || t.text), guess: voice === 'Others' ? invited[0] : '' }));
+    .map(([voice, t]) => ({ voice, time: clock(t.startMs / 1000), line: cut(t.clean), guess: voice === 'Others' ? invited[0] : '' }));
 }
 /** Once a transcript is ready, its unnamed voices, each with its first line, to name before anything else is offered. */
 function WhoSpoke({ voices, invited, onName, onCite, onSkip }: { voices: Voice[]; invited: string[]; onName: (from: string, to: string) => Promise<void>; onCite: (at: string) => void; onSkip: () => void }) {

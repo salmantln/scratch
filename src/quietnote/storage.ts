@@ -169,7 +169,8 @@ export async function setCaptureDevice(name: string | null): Promise<void> { if 
 export async function transcribe(meetingId: string): Promise<MeetingMetadata> { return invoke('transcribe_meeting', { meetingId }); }
 /** Both views of a recorded transcript; reading them changes nothing. */
 export async function transcriptData(meetingId: string): Promise<TranscriptTurn[] | null> { return desktop ? invoke('transcript_data', { meetingId }) : null; }
-export async function renderTranscripts(clean: boolean): Promise<void> { if (desktop) await invoke('render_transcripts', { clean }); }
+/** Rewrites every recorded transcript from the transcript preferences as saved (filler words, lines nobody said). */
+export async function renderTranscripts(): Promise<void> { if (desktop) await invoke('render_transcripts'); }
 /** The Terminal command that installs the read-only `quietnote` command (desktop, macOS). */
 export async function cliSetupCommand(): Promise<string> { return desktop ? invoke('cli_setup_command') : desktopOnly(); }
 /** The Calendar permission ("granted", "denied", "restricted", "undetermined", "unavailable"); `ask` shows macOS's prompt first. */

@@ -113,15 +113,99 @@ pub fn clean_with_breaks(text: &str) -> (Vec<[usize; 2]>, Vec<usize>) {
         }
         if !dropped { i += 1; }
     }
+    (merged(removed), breaks)
+}
+/// `removed` sorted, with overlapping ranges joined.
+pub fn merged(mut removed: Vec<[usize; 2]>) -> Vec<[usize; 2]> {
     removed.sort_unstable();
-    let mut merged: Vec<[usize; 2]> = Vec::with_capacity(removed.len());
+    let mut out: Vec<[usize; 2]> = Vec::with_capacity(removed.len());
     for r in removed {
-        match merged.last_mut() {
+        match out.last_mut() {
             Some(last) if r[0] <= last[1] => last[1] = last[1].max(r[1]),
-            _ => merged.push(r),
+            _ => out.push(r),
         }
     }
-    (merged, breaks)
+    out
+}
+
+/// Lines Whisper makes up over silence, music or noise: it learned from the subtitles of online videos,
+/// which end like this. Nobody says them in a meeting. "Thank you." isn't here: people say it.
+pub const MADE_UP: &[&str] = &[
+    "Thank you for watching", "Thanks for watching", "Thank you so much for watching", "Thank you very much for watching",
+    "Please subscribe to my channel", "Please like and subscribe", "Don't forget to like and subscribe", "Like and subscribe",
+    "Subtitles by the Amara.org community", "Transcription by CastingWords",
+    "Untertitel der Amara.org-Community", "Sous-titres réalisés par la communauté d'Amara.org",
+    "Subtítulos realizados por la comunidad de Amara.org", "Ondertiteld door de Amara.org gemeenschap", "Sottotitoli creati dalla comunità Amara.org",
+    "(C) TV GELDERLAND 2020", "(C) TV GELDERLAND 2021",
+];
+/// Notes, the way subtitles write music: "♪".
+fn notes(raw: &str) -> bool { !raw.is_empty() && raw.chars().all(|c| matches!(c, '♪' | '♫' | '♬')) }
+/// Sounds the way subtitles write them, as `(first token, last token)`: notes, a few words in square
+/// brackets ("[Music]") anywhere, and a few words in round brackets or asterisks ("( silence )",
+/// "*crickets*") only on their own between sentences, since people say things in brackets too: "We ship
+/// (hopefully) on Friday", "5 * 3 * 2".
+fn sounds(text: &str, tokens: &[Token]) -> Vec<(usize, usize)> {
+    let raw = |t: &Token| text[t.start..t.end].trim_end_matches(['.', ',']);
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let first = raw(&tokens[i]);
+        if notes(first) { out.push((i, i)); i += 1; continue; }
+        let close = match first.chars().next() { Some('[') => ']', Some('(') => ')', Some('*') => '*', _ => { i += 1; continue } };
+        let Some(j) = (i..tokens.len().min(i + 5)).find(|&j| { let r = raw(&tokens[j]); r.ends_with(close) && (j > i || r.len() > 2) }) else { i += 1; continue };
+        let before = i == 0 || tokens[i - 1].terminal(text) || out.last().is_some_and(|&(_, e)| e + 1 == i);
+        let after = tokens.get(j + 1).is_none_or(|t| { let r = raw(t); t.capitalized || notes(r) || r.starts_with(['[', '(', '*']) });
+        if close == ']' || before && after { out.push((i, j)); i = j + 1; } else { i += 1; }
+    }
+    out
+}
+/// The words of `text` as transcripts are compared everywhere (echo, citations, hidden lines):
+/// lowercase, without punctuation.
+pub fn words(text: &str) -> Vec<String> {
+    text.split_whitespace().map(|w| w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>()).filter(|w| !w.is_empty()).collect()
+}
+/// What the clean view keeps of `text`'s tokens: not sounds, and not taken out by cleanup (`removed`).
+fn kept(tokens: &[Token], sounds: &[(usize, usize)], removed: &[[usize; 2]]) -> Vec<(usize, bool)> {
+    (0..tokens.len()).filter(|&k| !sounds.iter().any(|&(i, j)| (i..=j).contains(&k)))
+        .map(|k| (k, !removed.iter().any(|r| r[0] <= tokens[k].core_start && tokens[k].core_end <= r[1]))).collect()
+}
+/// Lines to hide, read once the way `ignored` reads a sentence: the words the clean view would show.
+pub fn phrases<S: AsRef<str>>(lines: impl IntoIterator<Item = S>) -> Vec<Vec<String>> {
+    lines.into_iter().map(|line| {
+        let line = line.as_ref();
+        let tokens = tokens(line);
+        kept(&tokens, &sounds(line, &tokens), &clean_with_breaks(line).0).into_iter().filter(|&(_, said)| said)
+            .flat_map(|(k, _)| words(&line[tokens[k].start..tokens[k].end])).collect::<Vec<_>>()
+    }).filter(|p| !p.is_empty()).collect()
+}
+/// Byte ranges of what nobody said in `text`, each with the space after it: sounds in brackets
+/// (`sounds`), and sentences that are exactly one of `phrases` (from `phrases`) as the clean view shows
+/// them, without the fillers and stutters in `removed`. Only whole sentences ("Thanks for watching the
+/// demo" stays), never quoted speech. A sentence ends at a full stop, a question or exclamation mark, a
+/// trailing "..." before a capital, one of `breaks` (a pause Whisper left unpunctuated) or a sound.
+/// Nothing is hidden without `phrases`.
+pub fn ignored(text: &str, removed: &[[usize; 2]], breaks: &[usize], phrases: &[Vec<String>]) -> Vec<[usize; 2]> {
+    if phrases.is_empty() { return vec![]; }
+    let tokens = tokens(text);
+    let next = |i: usize| tokens.get(i + 1).map_or(text.len(), |n| n.start);
+    let sounds = sounds(text, &tokens);
+    let mut out: Vec<[usize; 2]> = sounds.iter().map(|&(i, j)| [tokens[i].start, next(j)]).collect();
+    let kept = kept(&tokens, &sounds, removed);
+    let ends = |n: usize| {
+        let (k, t) = (kept[n].0, &tokens[kept[n].0]);
+        let trailing = &text[t.core_end..t.end];
+        t.terminal(text) || (trailing.contains("..") || trailing.contains('…')) && tokens.get(k + 1).is_none_or(|n| n.capitalized)
+            || breaks.iter().any(|&b| t.end <= b && b <= next(k)) || kept.get(n + 1).is_none_or(|&(h, _)| h != k + 1)
+    };
+    let mut first = 0;
+    for n in 0..kept.len() {
+        if !ends(n) { continue; }
+        let sentence = &kept[first..=n];
+        let words: Vec<String> = sentence.iter().filter(|&&(_, said)| said).flat_map(|&(k, _)| words(&text[tokens[k].start..tokens[k].end])).collect();
+        if !sentence.iter().any(|&(k, _)| tokens[k].quoted) && phrases.contains(&words) { out.extend(sentence.iter().map(|&(k, _)| [tokens[k].start, next(k)])); }
+        first = n + 1;
+    }
+    merged(out)
 }
 
 /// The clean text: `removed` ranges taken out, spacing and punctuation tidied, a sentence that now
@@ -285,5 +369,43 @@ mod tests {
         assert_eq!(render(text, &removed, &[11]), "Sounds good. I will");
         assert_eq!(render(text, &removed, &breaks), "Sounds good. I will");
         assert_eq!(render("okay then", &[], &[4]), "okay. Then");
+    }
+    #[test]
+    fn hides_whole_sentences_nobody_said_only() {
+        let phrases = phrases(MADE_UP.iter().copied().chain(["Bye bye"]));
+        let hidden = |text: &str| { let (mut removed, breaks) = clean_with_breaks(text); removed.extend(ignored(text, &removed, &breaks, &phrases)); render(text, &merged(removed), &breaks) };
+        assert_eq!(hidden("Let's ship it. Thank you for watching!"), "Let's ship it.");
+        assert_eq!(hidden("THANKS FOR WATCHING. Okay, um, where were we?"), "Okay, where were we?");
+        assert_eq!(hidden("Subtitles by the Amara.org community"), "");
+        assert_eq!(hidden("bye-bye."), "bye-bye.");
+        assert_eq!(hidden("Bye, bye."), "");
+        // Part of a sentence is someone talking.
+        assert_eq!(hidden("Thanks for watching the demo, everyone."), "Thanks for watching the demo, everyone.");
+        assert_eq!(hidden("Thank you. See you Friday."), "Thank you. See you Friday.");
+        assert_eq!(hidden("[Music] Okay, let's start. (Applause.) ♪ ♪"), "Okay, let's start.");
+        assert_eq!(hidden("[ Silence ]"), "");
+        for sound in ["[BLANK_AUDIO]", "[ BLANK_AUDIO ]", "[MUSIC PLAYING]", "( retirement bell rang )", "(Applause.)", "*crickets *", "♪", "(upbeat music playing)", "[VIDEO PLAYBACK]"] {
+            assert_eq!(hidden(&format!("Right. {sound} So.")), "Right. So.", "{sound}");
+        }
+        assert_eq!(hidden("We agreed [Music] Thanks for watching."), "We agreed");
+        assert_eq!(hidden("Music. That was the plan."), "Music. That was the plan.");
+        assert_eq!(hidden("(C) TV GELDERLAND 2020"), "");
+        // An opening bracket that never closes, or one stretching past a few words, is words.
+        assert_eq!(hidden("(and this is important, we ship on Friday."), "(and this is important, we ship on Friday.");
+        assert!(ignored("Thank you for watching. [Music]", &[], &[], &[]).is_empty());
+        // Words in brackets mid-sentence are said: only a bracketed sound on its own between sentences goes.
+        for said in ["We ship (hopefully) on Friday.", "Option (a) is cheaper.", "Budget is (about two million) total.", "It's 5 * 3 * 2 in all."] {
+            assert_eq!(hidden(said), said);
+        }
+        // Read as the clean view shows it: without its fillers and stutters.
+        assert_eq!(hidden("Okay. Um, thank you for watching."), "Okay.");
+        assert_eq!(hidden("Okay. Thanks for for watching."), "Okay.");
+        assert_eq!(hidden("Thanks for watching... Okay, let's begin."), "Okay, let's begin.");
+        assert_eq!(hidden("Thanks for watching... the demo, I mean."), "Thanks for watching... the demo, I mean.");
+        // Quoted, someone is reading it out.
+        assert_eq!(hidden("She said \"Please like and subscribe.\""), "She said \"Please like and subscribe.\"");
+        assert_eq!(hidden("\"Please like and subscribe.\""), "\"Please like and subscribe.\"");
+        // A phrase is read the same way, so "Um, bye bye" and "[Music] Bye bye" are "Bye bye".
+        assert_eq!(super::phrases(["Um, bye bye.", "[Music] Bye bye", "  ", "[Music]"]), vec![vec!["bye", "bye"], vec!["bye", "bye"]]);
     }
 }

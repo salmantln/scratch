@@ -828,6 +828,24 @@ test('K: New meeting records with one press, or creates without recording; recor
   await page.getByRole('switch', { name: 'Remove filler words' }).click();
   await expect(page.getByRole('switch', { name: 'Remove filler words' })).not.toBeChecked();
   await expect.poll(() => qn(page, q => q.state.calls.includes('render_transcripts'))).toBe(true);
+  // Lines nobody said: on by default, with the user's own lines under it.
+  await expect(page.getByRole('switch', { name: 'Hide lines nobody said' })).toBeChecked();
+  const line = page.getByLabel('Line to hide');
+  await line.fill('  Transcribed   by ESO ');
+  await line.press('Enter');
+  await expect(page.getByText('“Transcribed by ESO”')).toBeVisible();
+  await line.fill('transcribed by eso');
+  await line.press('Enter');
+  await expect.poll(() => qn(page, q => q.state.preferences.ignoredPhrases)).toEqual(['Transcribed by ESO']);
+  // Every change rewrites the transcripts already made, so a line shown again comes back in them.
+  const renders = () => qn(page, q => q.state.calls.filter((c: string) => c === 'render_transcripts').length);
+  await expect.poll(renders).toBe(2);
+  await page.getByRole('button', { name: 'Show again' }).click();
+  await expect.poll(() => qn(page, q => q.state.preferences.ignoredPhrases)).toEqual([]);
+  await expect.poll(renders).toBe(3);
+  await page.getByRole('switch', { name: 'Hide lines nobody said' }).click();
+  await expect(line).toHaveCount(0);
+  await expect.poll(renders).toBe(4);
 });
 
 test('L: the first recording explains permissions before macOS asks, and a denied microphone is clear', async ({ page }) => {

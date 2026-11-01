@@ -99,6 +99,17 @@ function NameRow({ value, onChange }: { value: string; onChange: (name: string) 
   return <div className="setting-row"><div><div className="setting-title">Your name</div><p>Puts your action items first. {desktop ? `Stays on this ${device}.` : 'Stays in this browser.'}</p></div>
     <label className="field name-field"><input aria-label="Your name" value={name} maxLength={60} placeholder="Optional" autoComplete="name" onChange={e => setName(e.target.value)} onBlur={save} onKeyDown={e => { if (e.key === 'Enter') save(); }} /></label></div>;
 }
+/** The user's own lines for the clean view to hide, one row each, and a field to add one. */
+function IgnoredPhrases({ phrases, onChange }: { phrases: string[]; onChange: (phrases: string[]) => void }) {
+  const [phrase, setPhrase] = useState('');
+  const text = phrase.trim().replace(/\s+/g, ' ');
+  const add = () => { if (text && !phrases.some(p => p.toLowerCase() === text.toLowerCase())) onChange([...phrases, text]); setPhrase(''); };
+  return <>
+    {phrases.map(p => <div className="setting-row nested" key={`ignored-${p}`}><div><div className="setting-title">“{p}”</div><p>Hidden when it’s a whole line.</p></div><button className="text-button" onClick={() => onChange(phrases.filter(o => o !== p))}>Show again</button></div>)}
+    <div className="setting-row nested"><div><div className="setting-title">Hide another line</div><p>Something the transcript keeps hearing that nobody says. Applies to every transcript.</p></div>
+      <label className="field name-field"><input aria-label="Line to hide" value={phrase} maxLength={120} placeholder="A whole line" onChange={e => setPhrase(e.target.value)} onBlur={() => { if (text) add(); }} onKeyDown={e => { if (e.key === 'Enter') add(); }} /></label></div>
+  </>;
+}
 /** Who drafts summary suggestions. The Anthropic key is checked, then kept in the Keychain; Ollama runs on this computer. */
 function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; summaryKey: boolean; onSummaryKey: (saved: boolean) => void }) {
   const provider = values.summaryProvider === 'anthropic' || values.summaryProvider === 'ollama' ? values.summaryProvider : '';
@@ -344,6 +355,8 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
         </section>}
         {recording && <section><h2>Transcripts</h2>
           {toggle('cleanTranscript', 'Remove filler words', 'Opens in Clean view, without “um” and “uh”. Verbatim keeps every word.', true)}
+          {toggle('hideMadeUp', 'Hide lines nobody said', 'In silence or music the model can write “Thanks for watching” or “[Music]”. Clean view leaves those out; Verbatim keeps them.', true)}
+          {flag('hideMadeUp', true) && <IgnoredPhrases phrases={Array.isArray(values.ignoredPhrases) ? values.ignoredPhrases : []} onChange={phrases => onChange('ignoredPhrases', phrases)} />}
           {mac && toggle('separateSpeakers', 'Tell the others apart', 'Speaker 1, Speaker 2… by how voices sound, never who they are. About two minutes per hour of audio.', true)}
         </section>}
       </>}

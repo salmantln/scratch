@@ -252,7 +252,7 @@ function Shell() {
     const next = { ...latestPreferences.current, [key]: value }; latestPreferences.current = next; setPreferences(next);
     queue.current = queue.current.then(async () => {
       try { await storage.preferences(next); } catch (e) { setProblem(`Couldn’t save your privacy preferences. ${String(e)}`); return; }
-      if (key === 'cleanTranscript') await storage.renderTranscripts(value === true).catch(e => setProblem(`Couldn’t update your transcripts. ${String(e)}`));
+      if (['cleanTranscript', 'hideMadeUp', 'ignoredPhrases'].includes(key)) await storage.renderTranscripts().catch(e => setProblem(`Couldn’t update your transcripts. ${String(e)}`));
     });
   }
   // Suggestions need recording (a transcript to read) and a model that's ready to use.

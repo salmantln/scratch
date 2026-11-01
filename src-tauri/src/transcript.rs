@@ -39,9 +39,16 @@ pub struct Turn {
     /// Byte offsets where a clear pause ended an unpunctuated sentence; the clean view adds a full stop.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub breaks: Vec<usize>,
+    /// Byte ranges of `text` the clean view also leaves out as lines nobody said (`hide`). Kept apart
+    /// from `removed` so they follow the preferences: `hide` sets them again whenever those change.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden: Vec<[usize; 2]>,
 }
 impl Turn {
-    pub fn clean(&self) -> String { cleanup::render(&self.text, &self.removed, &self.breaks) }
+    pub fn clean(&self) -> String {
+        if self.hidden.is_empty() { return cleanup::render(&self.text, &self.removed, &self.breaks); }
+        cleanup::render(&self.text, &cleanup::merged(self.removed.iter().chain(&self.hidden).copied().collect()), &self.breaks)
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,9 +61,7 @@ pub struct Transcript {
     pub echo: Vec<Piece>,
 }
 
-fn words(text: &str) -> Vec<String> {
-    text.split_whitespace().map(|w| w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>()).filter(|w| !w.is_empty()).collect()
-}
+use cleanup::words;
 /// How many of `heard` appear in `played` in the same order (a word that's missing is skipped).
 fn in_order(heard: &[String], played: &[String]) -> usize {
     let mut at = 0;
@@ -134,7 +139,7 @@ pub fn merge(mic: Vec<Piece>, system: Vec<Piece>) -> (Vec<Turn>, Vec<Piece>) {
                 turn.text = format!("{} {}", turn.text, piece.text.trim());
                 turn.end_ms = turn.end_ms.max(piece.end_ms);
             }
-            _ => turns.push(Turn { start_ms: piece.start_ms, end_ms: piece.end_ms, speaker, text: piece.text.trim().into(), removed: vec![], breaks: vec![] }),
+            _ => turns.push(Turn { start_ms: piece.start_ms, end_ms: piece.end_ms, speaker, text: piece.text.trim().into(), removed: vec![], breaks: vec![], hidden: vec![] }),
         }
     }
     for turn in &mut turns {
@@ -145,6 +150,19 @@ pub fn merge(mic: Vec<Piece>, system: Vec<Piece>) -> (Vec<Turn>, Vec<Piece>) {
         turn.breaks.dedup();
     }
     (turns, echo)
+}
+
+/// Sets what the clean view hides as lines nobody said: sentences that are exactly one of `phrases`
+/// (`cleanup::phrases`), and sounds (`cleanup::ignored`); Verbatim keeps them. A turn of nothing else
+/// disappears from the clean view. No phrases shows everything again. Returns whether anything changed.
+pub fn hide(turns: &mut [Turn], phrases: &[Vec<String>]) -> bool {
+    let mut changed = false;
+    for turn in turns {
+        let hidden = cleanup::ignored(&turn.text, &turn.removed, &turn.breaks, phrases);
+        changed |= hidden != turn.hidden;
+        turn.hidden = hidden;
+    }
+    changed
 }
 
 /// A resumed recording's turns after the earlier ones. Anything earlier from `at_ms` on is replaced,
@@ -258,6 +276,24 @@ mod tests {
         // Transcribing the resumed part again replaces it rather than adding it twice.
         let again = append(once, resumed, 90_000);
         assert_eq!(again.turns.len(), 3);
+    }
+    #[test]
+    fn lines_nobody_said_leave_the_clean_view_only() {
+        let (mut turns, _) = merge(vec![piece(0, 1500, "Sounds good.")], vec![piece(4000, 6000, "Thank you for watching.")]);
+        let phrases = cleanup::phrases(["Thank you for watching"]);
+        assert!(hide(&mut turns, &phrases));
+        let mut t = transcript(turns);
+        assert_eq!(markdown(&t, true), "# Transcript\n\n### 00:00 You\nSounds good.\n");
+        assert!(markdown(&t, false).contains("### 00:04 Others\nThank you for watching."));
+        // Turned off, or the phrase shown again: the line is back, and the fillers are still cleaned.
+        assert!(hide(&mut t.turns, &[]));
+        assert!(markdown(&t, true).contains("### 00:04 Others\nThank you for watching."));
+        assert!(!hide(&mut t.turns, &[]));
+        // A made-up line Whisper left unpunctuated, joined to the next piece after a pause.
+        let paused = |start, end, text: &str| Piece { pause_before: true, ..piece(start, end, text) };
+        let (mut turns, _) = merge(vec![], vec![paused(0, 1500, "Thank you for watching"), paused(2000, 3000, "Okay let's begin.")]);
+        hide(&mut turns, &phrases);
+        assert_eq!(turns[0].clean(), "Okay let's begin.");
     }
     #[test]
     fn clock_switches_to_hours() {

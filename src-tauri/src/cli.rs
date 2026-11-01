@@ -240,7 +240,7 @@ pub(crate) mod tests {
             std::fs::write(dir.join("transcript.md"), "# Transcript\n\n### 00:00 Others\nShall we test the annual plan first?\n").unwrap();
         }
         let id = "2026-10-02-ac7515bc-aac7-48a4";
-        let turns = vec![transcript::Turn { start_ms: 0, end_ms: 1000, speaker: "You".into(), text: "Um, ship it.".into(), removed: vec![[0, 4]], breaks: vec![] }];
+        let turns = vec![transcript::Turn { start_ms: 0, end_ms: 1000, speaker: "You".into(), text: "Um, ship it.".into(), removed: vec![[0, 4]], breaks: vec![], hidden: vec![] }];
         let recorded = Transcript { version: 1, model: "test".into(), turns, echo: vec![] };
         std::fs::write(root.join("Acme").join(id).join("transcript.json"), serde_json::to_vec(&recorded).unwrap()).unwrap();
         root.canonicalize().unwrap()

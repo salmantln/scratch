@@ -66,9 +66,7 @@ pub struct Suggestions { summary: String, actions: Vec<Cited>, dropped: usize }
 fn lines(turns: &[Turn]) -> String {
     turns.iter().filter_map(|t| { let text = t.clean(); (!text.trim().is_empty()).then(|| format!("[{}] {}: {}", clock(t.start_ms), t.speaker, text.trim())) }).collect::<Vec<_>>().join("\n")
 }
-fn words(text: &str) -> Vec<String> {
-    text.split_whitespace().map(|w| w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>()).filter(|w| !w.is_empty()).collect()
-}
+use crate::cleanup::words;
 fn contains(haystack: &[String], needle: &[String]) -> bool { !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle) }
 /// The turn a claim cites, if its timestamp is a turn's and its quote is in that turn's words.
 fn cited<'a>(turns: &'a [Turn], claim: &Claim) -> Option<&'a Turn> {
@@ -368,7 +366,7 @@ pub async fn meeting_names(app: AppHandle, meeting_id: String) -> Result<Names, 
 mod tests {
     use super::*;
     fn turn(start_ms: u64, speaker: &str, text: &str) -> Turn {
-        Turn { start_ms, end_ms: start_ms + 5000, speaker: speaker.into(), text: text.into(), removed: vec![], breaks: vec![] }
+        Turn { start_ms, end_ms: start_ms + 5000, speaker: speaker.into(), text: text.into(), removed: vec![], breaks: vec![], hidden: vec![] }
     }
     fn claim(text: &str, owner: &str, at: &str, quote: &str) -> Claim { Claim { text: text.into(), owner: owner.into(), at: at.into(), quote: quote.into() } }
     fn meeting() -> Vec<Turn> {

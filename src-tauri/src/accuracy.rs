@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn only_sentences_within_the_reference_count() {
         let said = [Said { speaker: "You".into(), start_ms: 60_000, end_ms: 62_000, text: "Ship it on Friday.".into() }];
-        let turn = |start_ms, text: &str| Turn { start_ms, end_ms: start_ms + 2_000, speaker: "You".into(), text: text.into(), removed: Vec::new(), breaks: Vec::new() };
+        let turn = |start_ms, text: &str| Turn { start_ms, end_ms: start_ms + 2_000, speaker: "You".into(), text: text.into(), removed: Vec::new(), breaks: Vec::new(), hidden: Vec::new() };
         // The chat before the transcript starts isn't an error; what's within it is.
         let score = score(&said, &[turn(0, "Can you hear me?"), turn(60_000, "Um, ship it Friday.")], &[]);
         assert_eq!(score.you[0], Errors { words: 4, substituted: 0, missing: 1, added: 0 });
@@ -339,7 +339,9 @@ mod tests {
                 label(&mut system, &split(THRESHOLD), 1);
             }
             let took = started.elapsed();
-            let (turns, echo) = crate::transcript::merge(mic, system.clone());
+            let (mut turns, echo) = crate::transcript::merge(mic, system.clone());
+            // The clean view as users see it, with the lines nobody said hidden (`hideMadeUp`'s default).
+            crate::transcript::hide(&mut turns, &crate::cleanup::phrases(crate::cleanup::MADE_UP));
             let score = score(&said, &turns, &system);
             let name = dir.file_name().unwrap().to_string_lossy();
             println!("\n{name} · {:.1} min · transcribed in {:.0} s ({:.0}× real time), voices told apart in {:.0} s · {} mic sentences dropped as echo\n{}",

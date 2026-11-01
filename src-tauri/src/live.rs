@@ -115,6 +115,7 @@ fn follow(app: &AppHandle, id: &str, health: &Health, start_ms: u64) -> Result<(
     let track = || Track { start_ms, ..Default::default() };
     let mut follower = Follower { detector, words: Words::Whisper(engine), tracks: [track(), track()], language: None };
     let (mut flushed, mut tried) = (false, false);
+    let hidden = crate::meetings::root(app).map(|root| capture::hidden(&root)).unwrap_or_default();
     loop {
         std::thread::sleep(follower.tick());
         // Ends with the recording; the full pass takes over from here.
@@ -124,7 +125,9 @@ fn follow(app: &AppHandle, id: &str, health: &Health, start_ms: u64) -> Result<(
         flushed = paused;
         if follower.step(health.take_feed(), paused)? {
             let [mic, system] = follower.said();
-            capture::set_draft(app, id, &transcript::merge(mic, system).0);
+            let (mut turns, _) = transcript::merge(mic, system);
+            transcript::hide(&mut turns, &hidden);
+            capture::set_draft(app, id, &turns);
         }
         // Once only: without the Parakeet model (or if it fails to load), Whisper carries on.
         if follower.wants_parakeet() && !tried {
