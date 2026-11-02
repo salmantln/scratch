@@ -1,7 +1,7 @@
 {
   "name": "quietnote",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri-dev": "tauri dev",
+    "release": "npm version patch --no-git-tag-version && tauri build",
     "models": "node scripts/fetch-models.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/quietnote tests playwright.config.ts eslint.config.js",

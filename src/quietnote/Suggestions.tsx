@@ -1,10 +1,24 @@
 import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { Hush } from './Hush';
-import { device, desktop, enhanceNotes, meetingNames, noteTemplates, openTemplates, suggestSummary, type Cited, type Enhanced, type Names, type NoteTemplate, type Suggestions } from './storage';
+import { device, desktop, enhanceNotes, meetingNames, noteTemplates, onSuggestProgress, openTemplates, suggestSummary, type Cited, type Enhanced, type Names, type NoteTemplate, type Progress, type SummaryProvider, type Suggestions } from './storage';
 import { actionItems, appendAction, clock, madeUp, notesMarkdown, replaceSection, section, templateFor, transcriptTurns, type Meeting } from './model';
-/** Who drafts suggestions: Claude with the user's own key, or a model in Ollama on this computer. */
-export type Summarizer = { local: boolean; label: string };
+/** Who drafts suggestions: Claude with the user's own key, a model in Ollama on this computer, or Apple
+ * Intelligence on this Mac. `label` is how it's named ("Claude", "llama3 in Ollama", "Apple Intelligence"). */
+export type Summarizer = { provider: SummaryProvider; local: boolean; label: string };
+/** "Part 3 of 12" of a long meeting being read for `meetingId` by `kind` of request, while it is. */
+export function useProgress(meetingId: string, kind: Progress['kind'], working: boolean) {
+  const [progress, setProgress] = useState<Progress | null>(null);
+  useEffect(() => {
+    if (!working) { setProgress(null); return; }
+    let cancelled = false; let unlisten: (() => void) | undefined;
+    onSuggestProgress(p => { if (p.meetingId === meetingId && p.kind === kind) setProgress(p); }).then(fn => { if (cancelled) fn(); else unlisten = fn; }).catch(() => { /* No progress line. */ });
+    return () => { cancelled = true; unlisten?.(); };
+  }, [meetingId, kind, working]);
+  // (0, 0): Apple Intelligence answers one request at a time, and another one has it.
+  if (progress?.total === 0) return 'Waiting for Apple Intelligence to finish another request.';
+  return progress && progress.total > 1 ? `Part ${progress.done} of ${progress.total}.` : '';
+}
 // Words, not Markdown marks ("-", "##").
 const count = (text: string) => text.split(/\s+/).filter(w => /[\p{L}\p{N}]/u.test(w)).length;
 /** Suggestions drafted from a recorded transcript, and enhanced notes drafted from the user's notes and the
@@ -17,8 +31,9 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
   onAdded?: (index: number) => void;
 }) {
   const [phase, setPhase] = useState<'idle' | 'confirm' | 'confirm-notes' | 'confirm-names' | 'working' | 'working-notes' | 'working-names'>('idle');
-  // While a request is out, its notice has the meeting's Hush.
-  useEffect(() => onWorking?.(phase.startsWith('working')), [phase, onWorking]);
+  const part = useProgress(meeting.metadata.id, 'suggest', phase.startsWith('working'));
+  // While a request is out, its notice has the meeting's Hush; it's given back if the panel goes meanwhile.
+  useEffect(() => { onWorking?.(phase.startsWith('working')); return () => onWorking?.(false); }, [phase, onWorking]);
   const [names, setNames] = useState<Names | null>(null);
   const [error, setError] = useState('');
   const [found, setFound] = useState<Suggestions | null>(null);
@@ -28,7 +43,11 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
   // Set when a draft came back with nothing that traces to the transcript.
   const [untraced, setUntraced] = useState<number | null>(null);
   const { markdown, metadata } = meeting;
-  const who = summarizer.local ? `${summarizer.label} in Ollama` : 'Claude';
+  const who = summarizer.label;
+  // What a local model's confirm says: nothing leaves, and how long it may take.
+  const stays = summarizer.provider === 'apple'
+    ? `It runs on this ${device} with Apple’s model, so nothing leaves it. A long meeting is read in parts of about five minutes and can take several minutes.`
+    : `It runs on this ${device}, so nothing leaves it. It can take a minute or more, and small models miss or invent details more often.`;
   const words = transcriptTurns(meeting.transcript).reduce((n, t) => n + count(t.text), 0);
   const notes = count(section(markdown, 'Notes'));
   // Worth asking for names when the title is one QuietNote made up, or voices are still unnamed.
@@ -83,7 +102,7 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
   const usesNotes = section(markdown, 'Summary') ? 'Replace enhanced notes' : 'Use these notes';
   if (phase === 'confirm') return <div className="notice" role="dialog" aria-label="Suggest from transcript"><Icon name="info" size={16} /><div>
     <strong>{summarizer.local ? `Draft suggestions with ${who}?` : 'Send this transcript to Anthropic?'}</strong>
-    <p>{summarizer.local ? `It runs on this ${device}, so nothing leaves it. It can take a minute or more, and small models miss or invent details more often.` : `About ${words.toLocaleString('en-GB')} words of transcript text go to Claude with your key. The audio, your notes and the meeting’s title stay on this ${device}.`}</p>
+    <p>{summarizer.local ? stays : `About ${words.toLocaleString('en-GB')} words of transcript text go to Claude with your key. The audio, your notes and the meeting’s title stay on this ${device}.`}</p>
   </div><div className="notice-actions"><button className="text-button" onClick={() => setPhase('idle')}>Cancel</button><button className="primary" onClick={() => void run()}>{summarizer.local ? 'Draft suggestions' : 'Send transcript'}</button></div></div>;
   if (phase === 'confirm-notes') return <div className="notice" role="dialog" aria-label="Enhance notes"><Icon name="info" size={16} /><div>
     <strong>{summarizer.local ? `Enhance your notes with ${who}?` : 'Send your notes and this transcript to Anthropic?'}</strong>
@@ -96,13 +115,14 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
     <strong>{summarizer.local ? `Suggest a title and names with ${who}?` : 'Send this transcript to Anthropic for a title and names?'}</strong>
     <p>A voice is named only from a line that shows who it is (someone introducing themselves, or being addressed by name). {summarizer.local ? `It runs on this ${device}, so nothing leaves it.` : `About ${words.toLocaleString('en-GB')} words of transcript text${invited ? ` and the ${invited === 1 ? 'name of the person' : `names of the ${invited} people`} invited` : ''} go to Claude with your key. The audio, your notes and the meeting’s title stay on this ${device}.`}</p>
   </div><div className="notice-actions"><button className="text-button" onClick={() => setPhase('idle')}>Cancel</button><button className="primary" onClick={() => void name()}>{summarizer.local ? 'Suggest names' : 'Send transcript'}</button></div></div>;
-  if (phase === 'working' || phase === 'working-notes' || phase === 'working-names') return <div className="notice" role="status"><Hush mood="suggesting" size={44} /><div><strong>{phase === 'working' ? `Drafting suggestions with ${who}…` : phase === 'working-names' ? `Looking for a title and names with ${who}…` : `Enhancing your notes with ${who}…`}</strong><p>You can keep working. Nothing is saved until you add it.</p></div></div>;
+  if (phase === 'working' || phase === 'working-notes' || phase === 'working-names') return <div className="notice" role="status"><Hush mood="suggesting" size={44} /><div><strong>{phase === 'working' ? `Drafting suggestions with ${who}…` : phase === 'working-names' ? `Looking for a title and names with ${who}…` : `Enhancing your notes with ${who}…`}</strong><p>{part && `${part} `}You can keep working. Nothing is saved until you add it.</p></div></div>;
   const open = found && (found.summary || found.actions.length);
   const asks = <div className="suggest-row">
     <button className="text-button" onClick={() => setPhase('confirm-notes')}><Icon name="meeting" size={15} />Enhance notes…</button>
     <button className="text-button" onClick={() => setPhase('confirm')}><Icon name="task" size={15} />Suggest from transcript…</button>
     {(madeUp(metadata.title) || unnamed.size > 0) && <button className="text-button" onClick={() => setPhase('confirm-names')}><Icon name="people" size={15} />Name the meeting and speakers…</button>}
   </div>;
+  const unread = (partial: boolean) => partial && <p className="subtle">{who} declined to read part of this meeting, so these come from the rest.</p>;
   const left = (dropped: number) => dropped > 0 && <p className="subtle">{dropped === 1 ? 'One more was' : `${dropped} more were`} left out because {dropped === 1 ? 'it' : 'they'} couldn’t be traced to your notes or the transcript.</p>;
   return <>
     {error && <div className="notice attention" role="alert"><Icon name="info" size={16} /><div><strong>That couldn’t be drafted.</strong><p>{error.replace(/^Error: /, '')}</p></div><div className="notice-actions"><button className="text-button" onClick={() => setError('')}>Dismiss</button></div></div>}
@@ -118,7 +138,7 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
     {enhanced && <section className="suggestions" aria-label="Enhanced notes">
       <header><div><h2>Enhanced notes</h2><p className="subtle">Drafted by {who} with the {template} template. Lines with a time come from the transcript; the rest from your notes. Nothing is saved until you use it.</p></div><button className="text-button" onClick={() => setEnhanced(null)}>Dismiss</button></header>
       {enhanced.sections.map(s => <div key={s.heading}><h3>{s.heading}</h3><ul className="suggestion-list">{s.lines.map((l, i) => <li key={i}><div><span className="suggestion-text">{l.text}</span>{l.atMs === null ? <span className="citation from-notes">From your notes: “{l.quote}”</span> : cite(l.atMs, l.quote)}</div></li>)}</ul></div>)}
-      {left(enhanced.dropped)}
+      {unread(enhanced.partial)}{left(enhanced.dropped)}
       <div className="suggestion-actions"><button className="text-button" onClick={() => void onMarkdown(replaceSection(markdown, 'Summary', notesMarkdown(enhanced.sections))).then(() => setEnhanced(null))}>{usesNotes}</button></div>
     </section>}
     {open ? <section className="suggestions" aria-label="Suggestions">
@@ -127,7 +147,7 @@ export function SuggestPanel({ meeting, summarizer, template: preferred = '', on
         <button className="text-button" onClick={() => void onMarkdown(replaceSection(markdown, 'Summary', found.summary)).then(() => setFound(f => f && { ...f, summary: '' }))}>{replaces}</button>
         <button className="text-button" onClick={() => setFound(f => f && { ...f, summary: '' })}>Dismiss</button></div></div>}
       {found.actions.length > 0 && <><h3>Action items</h3><ul className="suggestion-list">{found.actions.map(row)}</ul></>}
-      {left(found.dropped)}
+      {unread(found.partial)}{left(found.dropped)}
     </section>
     : untraced !== null ? <p className="subtle suggest-row">{untraced ? `Nothing could be traced to your notes or the transcript, so ${untraced === 1 ? 'the one line was' : `all ${untraced} lines were`} left out.` : `${who} found nothing to add.`}</p>
     : null}

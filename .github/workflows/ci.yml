@@ -60,6 +60,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The Apple Intelligence helper needs an SDK with FoundationModels (Xcode 26 or later).
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -97,4 +103,13 @@ jobs:
 
       - name: Cargo test
         working-directory: src-tauri
+        env:
+          QUIETNOTE_REQUIRE_APPLE_AI: "1"
         run: cargo test
+
+      # Built with Apple Intelligence, and still starts on Macs without FoundationModels (weakly linked).
+      - name: Check the Apple Intelligence helper
+        working-directory: src-tauri
+        run: |
+          echo '{"op":"status"}' | target/debug/quietnote-ai | grep -q '"built":true'
+          otool -l target/debug/quietnote-ai | grep -A2 LC_LOAD_WEAK_DYLIB | grep -q FoundationModels

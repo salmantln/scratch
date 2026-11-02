@@ -13,6 +13,7 @@ npm ci
 npm run dev          # browser preview at http://localhost:1420
 npm run tauri dev    # real desktop filesystem + native shell
 npm run tauri build  # platform desktop bundle
+npm run release      # bump the patch version in package.json (0.1.3 → 0.1.4), then the desktop bundle
 ```
 
 `npm run tauri dev` and `npm run tauri build` first run `npm run models`, which downloads the speech models (about 575 MB, plus about 140 MB on macOS for telling voices apart and the faster English live transcript, all checked against pinned SHA-256 hashes) into `src-tauri/resources/models/`, and on macOS the sherpa-onnx library those run on into `src-tauri/resources/sherpa/`. Run it once before building on macOS with `cargo` directly. This happens once, at build time; the app itself downloads nothing. Building the recorder needs CMake (and LLVM/clang on Windows) for whisper.cpp. The macOS app requires macOS 14.6 or later.

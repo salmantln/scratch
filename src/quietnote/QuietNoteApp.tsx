@@ -15,6 +15,7 @@ import { People } from './People';
 import { ActionItems, Home, MeetingList } from './Library';
 import { Onboarding } from './Onboarding';
 import { accelerator, bound, label, type Action } from './shortcuts';
+import type { Summarizer } from './Suggestions';
 import { actionItems, actionLine, clock, editAction, removeAction, restoreAction, linkAction, recorded, makeMeeting, openingTab, previousMeeting, projectFor, reproject, retitle, replaceSection, searchMeeting, searchTerms, section, shortDate, stopsIn, toggleAction, type ActionItem, type CalendarEvent, type Meeting, type MeetingTab } from './model';
 import { demoMeetings, isExample } from './seeds';
 import * as storage from './storage';
@@ -110,6 +111,20 @@ function Shell() {
   useEffect(() => { if (storage.desktop && !loading) getCurrentWindow().setTheme(appearance === 'system' ? null : appearance).catch(() => { /* The page still follows it. */ }); }, [loading, appearance]);
   const [connections, setConnections] = useState<storage.Connections>({});
   const [summaryKey, setSummaryKey] = useState(false);
+  // Apple Intelligence on this Mac, read in Settings and, while it's the chosen provider, again when the window
+  // comes back (it may have been turned on meanwhile). Each read starts its helper, so not otherwise.
+  const [apple, setApple] = useState<storage.AppleStatus | null>(null);
+  const readApple = useCallback(() => { void storage.appleStatus().then(setApple).catch(() => setApple(null)); }, []);
+  const usesApple = preferences.summaryProvider === 'apple';
+  useEffect(() => {
+    if (!usesApple) return;
+    readApple(); window.addEventListener('focus', readApple); return () => window.removeEventListener('focus', readApple);
+  }, [usesApple, readApple]);
+  useEffect(() => { if (view === 'settings') readApple(); }, [view, readApple]);
+  // Bumped when notes are added from outside the editor (Ask's Add to my notes), so the open editor shows them.
+  const [notesVersion, setNotesVersion] = useState(0);
+  // Bumped once transcripts are rendered again from changed preferences, so an open meeting reads its hidden lines again.
+  const [transcriptsVersion, setTranscriptsVersion] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
   const dirty = useRef(new Map<string, string>());
   const queue = useRef(Promise.resolve());
@@ -252,16 +267,30 @@ function Shell() {
     const next = { ...latestPreferences.current, [key]: value }; latestPreferences.current = next; setPreferences(next);
     queue.current = queue.current.then(async () => {
       try { await storage.preferences(next); } catch (e) { setProblem(`Couldn’t save your privacy preferences. ${String(e)}`); return; }
-      if (['cleanTranscript', 'hideMadeUp', 'ignoredPhrases'].includes(key)) await storage.renderTranscripts().catch(e => setProblem(`Couldn’t update your transcripts. ${String(e)}`));
+      if (['cleanTranscript', 'hideMadeUp', 'ignoredPhrases'].includes(key)) {
+        await storage.renderTranscripts().then(() => setTranscriptsVersion(v => v + 1), e => setProblem(`Couldn’t update your transcripts. ${String(e)}`));
+      }
     });
   }
   // Suggestions need recording (a transcript to read) and a model that's ready to use.
-  const summarizer = useMemo(() => {
+  const summarizer = useMemo((): Summarizer | null => {
     if (!live.available) return null;
-    if (preferences.summaryProvider === 'anthropic') return summaryKey ? { local: false, label: 'Claude' } : null;
+    if (preferences.summaryProvider === 'anthropic') return summaryKey ? { provider: 'anthropic', local: false, label: 'Claude' } : null;
+    if (preferences.summaryProvider === 'apple') return apple?.available ? { provider: 'apple', local: true, label: 'Apple Intelligence' } : null;
     const model = preferences.summaryProvider === 'ollama' ? preferences.ollamaModel : '';
-    return typeof model === 'string' && model ? { local: true, label: model } : null;
-  }, [live.available, preferences.summaryProvider, preferences.ollamaModel, summaryKey]);
+    return typeof model === 'string' && model ? { provider: 'ollama', local: true, label: `${model} in Ollama` } : null;
+  }, [live.available, preferences.summaryProvider, preferences.ollamaModel, summaryKey, apple]);
+  /** Adds `text` at the end of a meeting's notes, after whatever was typed and not saved yet. Says whether it
+   * was saved: if not, it's in the notes with the usual unsaved notice and retry. Rejects when the meeting is gone. */
+  const appendNotes = useCallback(async (id: string, text: string): Promise<'saved' | 'unsaved'> => {
+    const latest = dirty.current.get(id) ?? records.current.find(m => m.metadata.id === id)?.markdown;
+    if (latest === undefined) throw new Error('This meeting isn’t there any more.');
+    const notes = section(latest, 'Notes').trimEnd();
+    const next = replaceSection(latest, 'Notes', notes ? `${notes}\n\n${text}` : text);
+    setNotesVersion(v => v + 1);
+    await persist(id, next);
+    return dirty.current.get(id) === next ? 'unsaved' : 'saved';
+  }, [persist]);
   const go = useCallback((next: View, nextProject = '') => { setView(next); setProject(nextProject); }, []);
   // Where Back to meetings returns to: the last place outside Settings.
   const beforeSettings = useRef<{ view: View; project: string }>({ view: 'home', project: '' });
@@ -593,8 +622,8 @@ function Shell() {
       {external && !unsaved && <div className="banner" role="status"><div><strong>Files changed outside QuietNote.</strong><span>Refresh to load the latest version from disk.</span></div><div className="banner-actions"><button className="secondary" onClick={() => void reload()}>Refresh</button></div></div>}
       {problem && <div className="banner warning" role="alert"><div><strong>{problem}</strong></div><div className="banner-actions"><button className="text-button" onClick={() => setProblem('')}>Dismiss</button></div></div>}
       <main className="qn-main" ref={main}><HushYield.Provider value={bannerHush}>
-        {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} disk={disk} summaryKey={summaryKey} onSummaryKey={setSummaryKey} section={shownSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
-        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={index => toggleItem(previous!.metadata.id, index)} onToggle={index => toggleItem(current.metadata.id, index)} onEdit={(index, text) => editItem(current.metadata.id, index, text)} onRemove={index => removeItem(current.metadata.id, index)} me={me} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} deleteAudio={preferences.deleteAudio === true} summarizer={summarizer} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onExportAudio={() => void exportAudio(current)} onMarkEnded={() => void markEnded(current)} onDelete={() => setDialog('delete')} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
+        {view === 'settings' ? <Settings recording={live.available} detectsCalls={live.detectsCalls} liveTranscript={live.liveTranscript} disk={disk} summaryKey={summaryKey} onSummaryKey={setSummaryKey} apple={apple} onCheckApple={readApple} section={shownSection} values={preferences} onChange={changePreference} root={root} hasAllExamples={demoMeetings.every(d => meetings.some(m => m.metadata.id === d.metadata.id))} onOpenArchive={() => void openArchive()} onReload={() => void reload()} onWorkspace={() => { window.location.href = '?workspace=markdown'; }} onExamples={() => void addExamples()} />
+        : view === 'meeting' && current ? <MeetingDetail key={`${current.metadata.id}-${reloadKey}-${find}`} meeting={current} onRename={title => renameMeeting(current.metadata.id, title)} onSpeaker={(from, to) => renameSpeaker(current.metadata.id, from, to)} previous={previous} onPrevious={index => toggleItem(previous!.metadata.id, index)} onToggle={index => toggleItem(current.metadata.id, index)} onEdit={(index, text) => editItem(current.metadata.id, index, text)} onRemove={index => removeItem(current.metadata.id, index)} me={me} onOpenPrevious={() => openMeeting(previous!.metadata.id)} find={find} example={isExample(current.metadata.id)} connections={connections} onSend={() => setDialog('send')} tab={tab} onTab={setTab} live={live} cleanDefault={preferences.cleanTranscript !== false} deleteAudio={preferences.deleteAudio === true} summarizer={summarizer} notesVersion={notesVersion} transcriptsVersion={transcriptsVersion} onAppendNotes={text => appendNotes(current.metadata.id, text)} template={typeof preferences.noteTemplate === 'string' ? preferences.noteTemplate : ''} onDismissRecovered={() => void dismissRecovered(current)} armed={capture?.id === current.metadata.id && (capture.call ? 'call' : true)} onUpdated={upsert} onStartCapture={() => { setCapture({ id: current.metadata.id, call: false }); setTab('Notes'); }} onCloseCapture={() => setCapture(null)} onRetry={() => void captureAction(() => storage.transcribe(current.metadata.id), 'Couldn’t start transcribing.')} onExportAudio={() => void exportAudio(current)} onMarkEnded={() => void markEnded(current)} onDelete={() => setDialog('delete')} onDraft={notes => backupNotes(current.metadata.id, notes)} onMarkdown={markdown => persist(current.metadata.id, markdown)} onNotes={notes => {
           const latest = records.current.find(m => m.metadata.id === current.metadata.id);
           // The editor can save once more as it closes, after its meeting was deleted.
           if (!latest) return Promise.resolve();

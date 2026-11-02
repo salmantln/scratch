@@ -2,7 +2,7 @@
 
 Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generated dependencies, build outputs, and test scratch output are ignored and excluded.
 
-## Modified files (45)
+## Modified files (46)
 
 - `.github/workflows/ci.yml`
 - `.github/workflows/release.yml`
@@ -15,6 +15,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `package.json`
 - `src-tauri/Cargo.lock`
 - `src-tauri/Cargo.toml`
+- `src-tauri/build.rs`
 - `src-tauri/capabilities/default.json`
 - `src-tauri/icons/128x128.png`
 - `src-tauri/icons/128x128@2x.png`
@@ -50,7 +51,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src/main.tsx`
 - `vite.config.ts`
 
-## Added files (92)
+## Added files (101)
 
 - `docs/MODIFIED-FILES.md`
 - `docs/PERFORMANCE.md`
@@ -79,6 +80,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `scripts/fetch-ami.mjs`
 - `scripts/fetch-models.mjs`
 - `src-tauri/.cargo/config.toml`
+- `src-tauri/.taurignore`
 - `src-tauri/capabilities/call.json`
 - `src-tauri/Entitlements.plist`
 - `src-tauri/icons/tray-logo-recording-template.png`
@@ -90,6 +92,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src-tauri/Info.plist`
 - `src-tauri/src/accuracy.rs`
 - `src-tauri/src/agents.rs`
+- `src-tauri/src/apple.rs`
 - `src-tauri/src/app_state.rs`
 - `src-tauri/src/ax.rs`
 - `src-tauri/src/calendar.rs`
@@ -105,6 +108,7 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src-tauri/src/mcp.rs`
 - `src-tauri/src/meetings.rs`
 - `src-tauri/src/oauth.rs`
+- `src-tauri/src/packed.rs`
 - `src-tauri/src/parakeet.rs`
 - `src-tauri/src/protect.rs`
 - `src-tauri/src/recorder.rs`
@@ -114,8 +118,10 @@ Relative to upstream commit `9126a5adf78abbabd111302ca0b659ca9278d43a`. Generate
 - `src-tauri/src/transcribe.rs`
 - `src-tauri/src/transcript.rs`
 - `src-tauri/src/tray.rs`
+- `src-tauri/swift/quietnote-ai.swift`
 - `src-tauri/tauri.macos.conf.json`
 - `src-tauri/tauri.windows.conf.json`
+- `src/quietnote/Ask.tsx`
 - `src/quietnote/brands/asana.svg`
 - `src/quietnote/brands/github.svg`
 - `src/quietnote/brands/gmail.svg`

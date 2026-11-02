@@ -22,7 +22,8 @@ pub const MISSING_KEY: &str = "This recording is encrypted, and its key isn’t 
 const MAGIC: &[u8; 4] = b"QNA1";
 /// Magic, sample rate (u32), channels (u16) and a random file id, bound into every frame.
 const HEADER: usize = 4 + 4 + 2 + 16;
-const TAG: usize = 16;
+pub(crate) const TAG: usize = 16;
+pub(crate) const NONCE: usize = NONCE_LEN;
 /// A frame is sealed once this much audio is waiting (32 s), so padding a long gap stays in bounds…
 const FRAME: usize = 1 << 20;
 /// …and a longer one is damage, not audio.
@@ -32,8 +33,20 @@ const ACCOUNT: &str = "audio";
 pub struct Key(LessSafeKey);
 impl Key {
     pub fn new(bytes: &[u8; 32]) -> Key { Key(LessSafeKey::new(UnboundKey::new(&AES_256_GCM, bytes).expect("a 256-bit key"))) }
+    /// Encrypts `data` in place, bound to `bound`; returns the nonce and tag to store beside it (`packed`).
+    pub(crate) fn seal(&self, bound: &[u8], data: &mut [u8]) -> io::Result<([u8; NONCE_LEN], [u8; TAG])> {
+        let mut nonce = [0u8; NONCE_LEN];
+        random(&mut nonce)?;
+        let tag = self.0.seal_in_place_separate_tag(Nonce::assume_unique_for_key(nonce), Aad::from(bound), data).map_err(|_| io::Error::other("Couldn’t encrypt the audio"))?;
+        Ok((nonce, tag.as_ref().try_into().map_err(|_| io::Error::other("Couldn’t encrypt the audio"))?))
+    }
+    /// Decrypts `data` (ciphertext then tag) in place, if it was sealed with this key and `bound`.
+    pub(crate) fn open<'a>(&self, nonce: &[u8], bound: &[u8], data: &'a mut [u8]) -> Option<&'a [u8]> {
+        let nonce = Nonce::assume_unique_for_key(nonce.try_into().ok()?);
+        self.0.open_in_place(nonce, Aad::from(bound), data).ok().map(|plain| &*plain)
+    }
 }
-fn random(out: &mut [u8]) -> io::Result<()> { SystemRandom::new().fill(out).map_err(|_| io::Error::other("No randomness available")) }
+pub(crate) fn random(out: &mut [u8]) -> io::Result<()> { SystemRandom::new().fill(out).map_err(|_| io::Error::other("No randomness available")) }
 fn aad(header: &[u8], index: u32) -> Aad<Vec<u8>> { Aad::from([header, &index.to_le_bytes()].concat()) }
 fn invalid(what: &str) -> io::Error { io::Error::new(io::ErrorKind::InvalidData, what.to_string()) }
 
@@ -58,9 +71,12 @@ pub fn key(create: bool) -> Result<Option<Arc<Key>>, String> {
     Ok(Some(key))
 }
 
-/// Where track `name` is kept in `audio`, if it's there.
-pub fn path(audio: &Path, name: &str) -> Option<PathBuf> { [EXT, "wav"].map(|e| audio.join(format!("{name}.{e}"))).into_iter().find(|p| p.exists()) }
-pub fn encrypted(path: &Path) -> bool { path.extension().is_some_and(|e| e == EXT) }
+/// Where track `name` is kept in `audio`, if it's there: as recorded (encrypted or WAV), or packed once
+/// transcribed (`packed`). Both are there only after a crash halfway through packing or unpacking, and
+/// then the recorded one is the whole track.
+pub fn path(audio: &Path, name: &str) -> Option<PathBuf> { [EXT, "wav", crate::packed::EXT].map(|e| audio.join(format!("{name}.{e}"))).into_iter().find(|p| p.exists()) }
+/// Whether reading the track at `path` needs the key.
+pub fn encrypted(path: &Path) -> bool { path.extension().is_some_and(|e| e == EXT) || (crate::packed::is(path) && crate::packed::sealed(path)) }
 
 /// Writes a track as hound's `WavWriter` does: samples wait until `flush` seals them into a frame,
 /// appended in one write.

@@ -125,6 +125,33 @@ The full Whisper pass after Stop still makes the kept transcript, so the draft's
   - While recording with the live transcript on (macOS): about 650–700 MB more, until the recording stops.
   - While transcribing: about 750–900 MB more for the duration of the job. The model is loaded per job and freed afterwards.
 
+## Compressed recordings
+Once a meeting is transcribed, its audio is packed with Opus (`packed.rs`, *Compress recordings*). Measured with the ignored `packs_recordings` test on the four AMI meetings above (both tracks, 78 minutes, 299 MB as recorded), then `measures_accuracy` on the packed copies, unpacked, against the recordings as they were (2026-11-02, same machine):
+
+| | Size | Per track-hour | You | The others | Right voice / another voice |
+|---|---|---|---|---|---|
+| As recorded (16 kHz, 16-bit) | 299 MB | 115 MB | 10.0% | 19.7% | 77% / 7% |
+| 32 kbit/s | 15.7 MB | 6.0 MB | not scored | not scored | not scored |
+| **24 kbit/s (used)** | **12.8 MB** | **4.9 MB** | **10.2%** | **20.0%** | **76% / 10%** |
+| 16 kbit/s | 9.8 MB | 3.8 MB | 10.1% | 20.9% | 75% / 10% |
+
+- **Word error rate** (the You and The others columns, verbatim): at 24 kbit/s transcribing again comes out within 0.3 points of the recording; at 16 kbit/s the others' track loses 1.2 points (more missed "yeah"s), so 24 kbit/s is used. Telling the others apart puts a little more speech under another voice (10% instead of 7%).
+- **Size:** 23× smaller here, but the AMI tracks are silence between each person's words, which Opus stores almost for free. A real call has room noise and more speech, so expect nearer 10×: 24 kbit/s is at most 10.8 MB per track-hour.
+- **Speed:** packing runs at 224× real time per track (about 16 s per track for an hour, so about 32 s for an hour-long meeting, its two tracks one after the other to keep memory to one track's samples, on a thread of its own so the next transcription doesn't wait), unpacking at about 4,600×, so recording more of a long meeting starts about a second later.
+- Only meetings transcribed after this change are packed. A meeting is transcribed from its recording first; packed audio is only read when it's transcribed again (Retry transcription), and by Export audio.
+
+## Apple Intelligence (summary suggestions and Ask)
+
+Measured 1 Nov 2026 on this Mac (macOS 26.6.2, Xcode 27.1), with `apple_live` and the helper directly. The on-device model reads 4,096 tokens at once, prompt and answer together, so a meeting is read in parts.
+
+| Request | Time |
+|---|---|
+| A 3-line transcript, suggestions (model load included) | 3.3 s |
+| A made-up 25-minute meeting (150 turns), suggestions: 2 parts plus combining the summaries | 19.9 s |
+| Ask about that meeting ("Who is chasing legal?", 74 relevant lines read) | 2.2 s |
+
+About 10 s per part, so an hour-long meeting (roughly 5–6 parts at this density, more for denser talk) takes about a minute. The made-up meeting repeats eight lines, so it shows timing, not quality.
+
 ## Caveats
 - Apart from the AMI meetings, the audio is synthetic and clean. Real rooms, accents, crosstalk and Bluetooth (HFP) quality will lower accuracy, and echo in a real room is messier than a delayed copy.
 - Windows hasn't been measured. Whisper runs on the CPU there, and large-v3-turbo is expected to be much slower (roughly real time). See [WINDOWS.md](WINDOWS.md).

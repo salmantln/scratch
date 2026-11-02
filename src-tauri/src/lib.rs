@@ -19,6 +19,7 @@ use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 mod accuracy;
 mod agents;
+mod apple;
 mod app_state;
 mod calendar;
 #[cfg(target_os = "macos")]
@@ -44,6 +45,8 @@ mod protect;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod recorder;
 // Where nothing records, only reading and exporting are used.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+mod packed;
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 mod sealed;
 #[cfg(target_os = "macos")]
@@ -3964,6 +3967,8 @@ pub fn run() {
             calendar::calendar_events,
             calendar::calendar_now,
             summarize::notes_enhance,
+            summarize::meeting_ask,
+            apple::summary_apple_status,
             summarize::meeting_names,
             templates::note_templates,
             templates::open_templates,

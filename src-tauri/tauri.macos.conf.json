@@ -9,6 +9,9 @@
       "resources/models/parakeet-tdt-110m-en-int8/decoder.int8.onnx": "models/parakeet-tdt-110m-en-int8/decoder.int8.onnx",
       "resources/models/parakeet-tdt-110m-en-int8/joiner.int8.onnx": "models/parakeet-tdt-110m-en-int8/joiner.int8.onnx",
       "resources/models/parakeet-tdt-110m-en-int8/tokens.txt": "models/parakeet-tdt-110m-en-int8/tokens.txt"
-    }
+    },
+    "externalBin": [
+      "binaries/quietnote-ai"
+    ]
   }
 }

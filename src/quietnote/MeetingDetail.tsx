@@ -1,9 +1,10 @@
-import { Component, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { Capture, LiveTranscript, useListening } from './Capture';
 import { Icon } from './Icon';
 import { Hush, HushYield } from './Hush';
 import { SuggestPanel, type Summarizer } from './Suggestions';
+import { AskBar } from './Ask';
 import { serviceName } from './catalog';
 import { label } from './shortcuts';
 import { desktop, device, openLink, transcriptData, type CaptureState, type Connections, type Service, type TranscriptTurn } from './storage';
@@ -147,8 +148,8 @@ function CopyTranscript({ title, turns, voices }: { title: string; turns: { time
     <span aria-hidden={!copied}><Icon name="check" size={15} />Copied</span>
   </button>;
 }
-export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPrevious, onToggle, onEdit, onRemove, onOpenPrevious, example, connections, live, cleanDefault, deleteAudio, summarizer, template, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onExportAudio, onMarkEnded, onDismissRecovered, onSend, onDelete }: {
-  meeting: Meeting; me: string; onRename: (title: string) => Promise<void>; onSpeaker: (from: string, to: string) => Promise<void>; previous: Meeting | null; onPrevious: (index: number) => Promise<void>; onToggle: (index: number) => Promise<void>; onEdit: (index: number, text: string) => Promise<void>; onRemove: (index: number) => Promise<void>; onOpenPrevious: () => void; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; deleteAudio: boolean; summarizer: Summarizer | null; template?: string; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
+export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPrevious, onToggle, onEdit, onRemove, onOpenPrevious, example, connections, live, cleanDefault, deleteAudio, summarizer, notesVersion = 0, transcriptsVersion = 0, onAppendNotes, template, tab, find = '', armed, onTab, onMarkdown, onNotes, onDraft, onUpdated, onStartCapture, onCloseCapture, onRetry, onExportAudio, onMarkEnded, onDismissRecovered, onSend, onDelete }: {
+  meeting: Meeting; me: string; onRename: (title: string) => Promise<void>; onSpeaker: (from: string, to: string) => Promise<void>; previous: Meeting | null; onPrevious: (index: number) => Promise<void>; onToggle: (index: number) => Promise<void>; onEdit: (index: number, text: string) => Promise<void>; onRemove: (index: number) => Promise<void>; onOpenPrevious: () => void; example: boolean; connections: Connections; live: CaptureState; cleanDefault: boolean; deleteAudio: boolean; summarizer: Summarizer | null; notesVersion?: number; transcriptsVersion?: number; onAppendNotes?: (text: string) => Promise<'saved' | 'unsaved'>; template?: string; tab: MeetingTab; find?: string; onTab: (tab: MeetingTab) => void; onSend: () => void; onMarkdown: (markdown: string) => Promise<void>; onNotes: (notes: string) => Promise<void>; onDraft: (notes: string) => void;
   armed: boolean | 'call'; onUpdated: (meeting: Meeting) => void; onStartCapture: () => void; onCloseCapture: () => void; onRetry: () => void; onExportAudio: () => void; onMarkEnded: () => void; onDismissRecovered: () => void; onDelete: () => void;
 }) {
   const { metadata: meta, markdown, transcript } = meeting;
@@ -156,8 +157,10 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
   // which rests only when nothing is happening.
   const yielded = useContext(HushYield);
   const [drafting, setDrafting] = useState(false);
+  // An answer being drafted in Ask: the empty states' Hush rests meanwhile too.
+  const [asking, setAsking] = useState(false);
   const [fresh, setFresh] = useState<number | null>(null);
-  const calm = meta.status !== 'recording' && !drafting;
+  const calm = meta.status !== 'recording' && !drafting && !asking;
   const [transcriptQuery, setTranscriptQuery] = useState(find);
   // Both views of a recorded transcript. Switching only changes what's shown; the raw words stay.
   const [verbatim, setVerbatim] = useState(!cleanDefault);
@@ -169,7 +172,7 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
     let cancelled = false;
     transcriptData(meta.id).then(data => { if (!cancelled) setRaw(data); }).catch(() => { if (!cancelled) setRaw(null); });
     return () => { cancelled = true; };
-  }, [recorded, meta.id, transcript]);
+  }, [recorded, meta.id, transcript, transcriptsVersion]);
   // A suggestion's citation opens the Transcript tab at the line it quotes.
   const [cited, setCited] = useState<string | null>(null);
   useEffect(() => {
@@ -192,7 +195,10 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
   const unnamed = canName && !skipped ? unnamedVoices(raw ?? [], invitedOthers) : [];
   const nameVoice = (from: string, to: string) => onSpeaker(from, to).then(() => setNaming(null)).catch(e => setNaming({ from, to, error: String(e).replace(/^Error: /, '') }));
   const latestSave = useRef(onNotes); latestSave.current = onNotes;
-  const save = useCallback((notes: string) => latestSave.current(notes), []);
+  // An editor replaced by Add to my notes saves once more as it closes, without the added lines; what it
+  // held is already in them (its drafts go to the Shell as typed), so only the current editor saves.
+  const version = useRef(notesVersion); version.current = notesVersion;
+  const save = useMemo(() => { const mine = notesVersion; return (notes: string) => mine === version.current ? latestSave.current(notes) : Promise.resolve(); }, [notesVersion]);
   const notes = enhancedNotes(markdown);
   // Yours first, for showing only: each item is still written by its place in the file.
   const actions = yoursFirst(actionItems(markdown), a => a.owner, me);
@@ -222,7 +228,9 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
   // Rust owns a meeting while it records, waits to be transcribed or is transcribed, so it can't be deleted then.
   const owned = meta.status === 'recording' || meta.status === 'processing' || live.queued.includes(meta.id);
   const docked = armed || live.recording?.meetingId === meta.id || (!live.available && meta.status === 'recording');
-  return <article className={`meeting-detail ${docked ? 'docked' : ''}`}>
+  // Ask sits where the recorder does, so never both.
+  const askable = recorded && Boolean(summarizer) && Boolean(onAppendNotes) && !docked;
+  return <article className={`meeting-detail ${docked || askable ? 'docked' : ''}`}>
     <header className="meeting-header">
       <div className="meeting-title-row">
         <div className="meeting-title">
@@ -275,7 +283,7 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
         </>;
       })()}
       {tab === 'Notes' && previous && (meta.status === 'idle' || meta.status === 'recording') && <LastTime meeting={previous} me={me} onToggle={onPrevious} onOpen={onOpenPrevious} />}
-      {tab === 'Notes' && <div className="quiet-editor"><NotesBoundary><Suspense fallback={<p className="subtle">Opening notes…</p>}><Editor onDraftChange={onDraft} key={meta.id} previewMode={{ content: section(markdown, 'Notes'), title: 'Notes', filePath: meta.meetingPath, modified: 0, hasExternalChanges: false, reloadVersion: 0, save, reload: async () => {} }} /></Suspense></NotesBoundary></div>}
+      {tab === 'Notes' && <div className="quiet-editor"><NotesBoundary><Suspense fallback={<p className="subtle">Opening notes…</p>}><Editor onDraftChange={onDraft} key={`${meta.id}-${notesVersion}`} previewMode={{ content: section(markdown, 'Notes'), title: 'Notes', filePath: meta.meetingPath, modified: 0, hasExternalChanges: false, reloadVersion: 0, save, reload: async () => {} }} /></Suspense></NotesBoundary></div>}
       {tab === 'Transcript' && <section>
         {naming && <form className="name-speaker" onSubmit={e => { e.preventDefault(); if (naming.to.trim()) void nameVoice(naming.from, naming.to); }}>
           <label>Name “{naming.from}” <input aria-label={`Name for ${naming.from}`} list="invited-names" value={naming.to} maxLength={60} autoFocus onChange={e => setNaming({ ...naming, to: e.target.value, error: '' })} /></label>
@@ -309,5 +317,6 @@ export function MeetingDetail({ meeting, me, onRename, onSpeaker, previous, onPr
       </section>}
     </div></HushYield.Provider>
     {docked && <Capture meeting={meeting} autoStart={armed} live={live} onUpdated={onUpdated} onClose={onCloseCapture} />}
+    {askable && <AskBar meetingId={meta.id} summarizer={summarizer!} onCite={atMs => cite(clock(atMs / 1000))} onAppend={onAppendNotes!} onWorking={setAsking} />}
   </article>;
 }

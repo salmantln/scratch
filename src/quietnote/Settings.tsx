@@ -5,7 +5,7 @@ import { Hush } from './Hush';
 import { getVersion } from '@tauri-apps/api/app';
 import { dateLabel } from './model';
 import { accelerator, actions, bound, globalDefault, globalRecord, label, problem } from './shortcuts';
-import { activateLicense, appearance, calendarAccess, callAccessibility, checkout, cliSetupCommand, desktop, device, diskEncryption, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openLink, openPrivacySettings, removeLicense, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type LicenseStatus, type PrivacyPreferences } from './storage';
+import { activateLicense, appearance, calendarAccess, callAccessibility, checkout, cliSetupCommand, desktop, device, diskEncryption, licenseStatus, mcpAgents, mcpConfig, ollamaModels, openLink, openPrivacySettings, removeLicense, removeSummaryKey, saveSummaryKey, setGlobalShortcut, setMcpAgent, type Agent, type AppleStatus, type LicenseStatus, type PrivacyPreferences } from './storage';
 export type SettingsSection = 'General' | 'Privacy' | 'Recording' | 'Suggestions' | 'Appearance' | 'Shortcuts' | 'Local archive' | 'About';
 const mac = /Mac/.test(navigator.userAgent);
 /** What this copy can do, which decides the pages Settings has: a page with nothing on it isn't listed. */
@@ -111,8 +111,16 @@ function IgnoredPhrases({ phrases, onChange }: { phrases: string[]; onChange: (p
   </>;
 }
 /** Who drafts summary suggestions. The Anthropic key is checked, then kept in the Keychain; Ollama runs on this computer. */
-function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; summaryKey: boolean; onSummaryKey: (saved: boolean) => void }) {
-  const provider = values.summaryProvider === 'anthropic' || values.summaryProvider === 'ollama' ? values.summaryProvider : '';
+/** Why Apple Intelligence can't draft right now, as something the user can do about it. */
+const appleReasons: Record<string, [string, string]> = {
+  appleIntelligenceNotEnabled: ['Apple Intelligence is off', 'Turn it on in System Settings → Apple Intelligence & Siri, then check again.'],
+  modelNotReady: ['Apple Intelligence is still downloading', 'macOS is getting its model ready. Check again in a while.'],
+  deviceNotEligible: ['This Mac can’t run Apple Intelligence', 'It needs a Mac with Apple silicon. Choose Claude or Ollama instead.'],
+  osTooOld: ['Apple Intelligence needs macOS 26', 'Update macOS, or choose Claude or Ollama instead.'],
+};
+function SummarySettings({ values, onChange, summaryKey, onSummaryKey, apple, onCheckApple }: { values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; summaryKey: boolean; onSummaryKey: (saved: boolean) => void; apple: AppleStatus | null; onCheckApple: () => void }) {
+  const provider = values.summaryProvider === 'anthropic' || values.summaryProvider === 'ollama' || values.summaryProvider === 'apple' ? values.summaryProvider : '';
+  const reason = provider === 'apple' && apple && !apple.available ? appleReasons[apple.reason ?? ''] ?? ['This copy can’t use Apple Intelligence', 'Choose Claude or Ollama instead.'] : null;
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -135,8 +143,9 @@ function SummarySettings({ values, onChange, summaryKey, onSummaryKey }: { value
   }
   const model = typeof values.ollamaModel === 'string' ? values.ollamaModel : '';
   return <section>
-    <div className="setting-row"><div><div className="setting-title">Drafted by</div><p>{provider === 'anthropic' ? 'Claude, with your own Anthropic key. When you ask, the meeting’s transcript text is sent to Anthropic, with your notes when you enhance them and the invited people’s names when you ask for names. Audio and titles are never sent.' : provider === 'ollama' ? 'A model in Ollama on this computer. Nothing leaves this computer.' : 'Off. Nothing is drafted and nothing is sent.'}</p></div>
-      <select aria-label="Drafted by" value={provider} onChange={e => { setError(''); onChange('summaryProvider', e.target.value); }}><option value="">Off</option><option value="anthropic">Claude (your Anthropic key)</option><option value="ollama">Ollama on this computer</option></select></div>
+    <div className="setting-row"><div><div className="setting-title">Drafted by</div><p>{provider === 'anthropic' ? 'Claude, with your own Anthropic key. When you ask, the meeting’s transcript text is sent to Anthropic, with your notes when you enhance them, the invited people’s names when you ask for names, and your question when you ask about a meeting. Audio and titles are never sent.' : provider === 'ollama' ? 'A model in Ollama on this computer. Nothing leaves this computer.' : provider === 'apple' ? `Apple Intelligence, Apple’s model on this ${device}. Nothing leaves it. A long meeting is read in parts of about five minutes, so it takes a while.` : 'Off. Nothing is drafted and nothing is sent.'}</p>
+      {reason && <p className="setting-status" role="alert">{reason[0]}. {reason[1]} <button className="text-button" onClick={onCheckApple}>Check again</button></p>}</div>
+      <select aria-label="Drafted by" value={provider} onChange={e => { setError(''); onChange('summaryProvider', e.target.value); }}><option value="">Off</option>{(apple?.built || provider === 'apple') && <option value="apple">Apple Intelligence on this {device}</option>}<option value="anthropic">Claude (your Anthropic key)</option><option value="ollama">Ollama on this computer</option></select></div>
     {provider === 'anthropic' && (summaryKey
       ? <div className="setting-row"><div><div className="setting-title">Anthropic key saved</div><p>It’s kept in your macOS Keychain and used only when you ask for suggestions. Anthropic’s API terms apply to what you send.</p></div><button className="text-button" onClick={() => void remove()}>Remove key</button></div>
       : <form className="setting-row key-row" onSubmit={e => { e.preventDefault(); if (key.trim()) void save(); }}><div className="setting-title">Anthropic API key</div><p>Create one at console.anthropic.com. QuietNote checks it, then keeps it in your macOS Keychain.</p>
@@ -235,8 +244,8 @@ function AiApps() {
     <div className="setting-row"><div><div className="setting-title">{agents?.length ? 'Another app' : 'Any MCP app'}</div><p>Paste the copied configuration into the app’s MCP settings. ChatGPT connects only to servers on the internet, so it can’t use QuietNote on this computer.</p>{mcp === 'failed' && <p className="field-error" role="alert">Couldn’t copy the configuration.</p>}</div><button className="text-button" onClick={() => void copyMcp()}><Icon name="copy" size={15} />{mcp === 'copied' ? 'Copied' : 'Copy configuration'}</button></div>
   </section>;
 }
-export function Settings({ recording, detectsCalls = false, liveTranscript = false, disk = '', summaryKey = false, onSummaryKey = () => {}, section, values, onChange, root, hasAllExamples, onOpenArchive, onReload, onWorkspace, onExamples }: {
-  recording: boolean; detectsCalls?: boolean; liveTranscript?: boolean; disk?: string; summaryKey?: boolean; onSummaryKey?: (saved: boolean) => void; section: SettingsSection; values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; root: string; hasAllExamples: boolean;
+export function Settings({ recording, detectsCalls = false, liveTranscript = false, disk = '', summaryKey = false, onSummaryKey = () => {}, apple = null, onCheckApple = () => {}, section, values, onChange, root, hasAllExamples, onOpenArchive, onReload, onWorkspace, onExamples }: {
+  recording: boolean; detectsCalls?: boolean; liveTranscript?: boolean; disk?: string; summaryKey?: boolean; onSummaryKey?: (saved: boolean) => void; apple?: AppleStatus | null; onCheckApple?: () => void; section: SettingsSection; values: PrivacyPreferences; onChange: (key: string, value: PrivacyPreferences[string]) => void; root: string; hasAllExamples: boolean;
   onOpenArchive: () => void; onReload: () => void; onWorkspace: () => void; onExamples: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -281,7 +290,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
   const allow = (pane: 'calendars' | 'accessibility') => <button className="text-button" onClick={() => void openPrivacySettings(pane).catch(() => { /* The line says what's missing. */ })}>Allow in System Settings</button>;
   // Everything this copy of QuietNote can send, set up or not: Claude needs recording, a license a build that sells one.
   const sends = [
-    ...recording ? ['A transcript’s text to Claude when you ask for suggestions, with your notes when you enhance them'] : [],
+    ...recording ? ['A transcript’s text to Claude when you ask for suggestions or ask about a meeting, with your notes when you enhance them'] : [],
     'Action items you send to Linear or GitHub',
     ...licenses ? ['A license key to Lemon Squeezy, once'] : [],
   ];
@@ -316,6 +325,7 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
           {mac && toggle('encryptAudio', 'Encrypt recordings', 'Only QuietNote can play them, with a key kept in your Keychain. Applies to new recordings.', true)}
           {mac && toggle('backupAudio', 'Back up recordings with Time Machine', on => on ? 'On: backups hold your recordings too.' : 'Off: backups hold your transcripts and notes, never the audio.', false)}
           {toggle('deleteAudio', 'Delete audio after transcribing', on => on ? 'On: audio is deleted once its transcript is saved, and can’t be transcribed again.' : 'Off: audio is kept, so you can export it or transcribe it again.', false)}
+          {values.deleteAudio !== true && toggle('compressAudio', 'Compress recordings', on => on ? 'On: once a meeting is transcribed, its audio is kept at about a tenth of the size, and still exports and transcribes again.' : 'Off: audio is kept as it was recorded, about 230 MB an hour.', true)}
         </section>}
         {(desktop && mac || offering) && <section><h2>What QuietNote reads</h2>
           {desktop && mac && <div className="setting-row"><div><div className="setting-title">Your calendar</div><p>Names meetings after their events and knows who’s invited. Never changed, never sent.</p>
@@ -362,8 +372,8 @@ export function Settings({ recording, detectsCalls = false, liveTranscript = fal
       </>}
       {section === 'Suggestions' && <>
         <h1>Suggestions</h1>
-        <p className="lede">When you ask, a model drafts a summary and action items from a recorded transcript, or writes up your notes under a template. Each line quotes the transcript or your notes, and nothing is saved until you add it. Your own templates are Markdown files in the archive’s .templates folder.</p>
-        <SummarySettings values={values} onChange={onChange} summaryKey={summaryKey} onSummaryKey={onSummaryKey} />
+        <p className="lede">When you ask, a model drafts a summary and action items from a recorded transcript, writes up your notes under a template, or answers a question about the meeting. Each line quotes the transcript or your notes, and nothing is saved until you add it. Your own templates are Markdown files in the archive’s .templates folder.</p>
+        <SummarySettings values={values} onChange={onChange} summaryKey={summaryKey} onSummaryKey={onSummaryKey} apple={apple} onCheckApple={onCheckApple} />
       </>}
       {section === 'Appearance' && <>
         <h1>Appearance</h1>

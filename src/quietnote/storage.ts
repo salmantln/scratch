@@ -1,5 +1,6 @@
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { appDataDir, join } from '@tauri-apps/api/path';
 import { open as pick } from '@tauri-apps/plugin-dialog';
 import { saveFileDirect } from '../services/files';
@@ -241,13 +242,19 @@ export async function licenseStatus(): Promise<LicenseStatus> { return desktop ?
 export async function activateLicense(key: string): Promise<License> { return desktop ? invoke('license_activate', { key }) : desktopOnly(); }
 /** Resolves with a note when Lemon Squeezy couldn't be told; the license is removed from this computer either way. */
 export async function removeLicense(): Promise<string | null> { return desktop ? invoke('license_remove') : desktopOnly(); }
-// Summary suggestions (desktop): drafted from the transcript by Claude with the user's own key, or by a model in
-// Ollama on this computer. The key stays in the Keychain; nothing is written until the user accepts an item.
-export type SummaryProvider = 'anthropic' | 'ollama';
+// Summary suggestions (desktop): drafted from the transcript by Claude with the user's own key, by a model in
+// Ollama on this computer, or by Apple Intelligence on this Mac. The key stays in the Keychain; nothing is
+// written until the user accepts an item.
+export type SummaryProvider = 'anthropic' | 'ollama' | 'apple';
+/** Apple Intelligence on this Mac: `built` when this copy can use it; `reason` when it can't now
+ * (osTooOld, deviceNotEligible, appleIntelligenceNotEnabled, modelNotReady, notBuilt). */
+export type AppleStatus = { built: boolean; available: boolean; reason?: string; contextSize: number };
+export async function appleStatus(): Promise<AppleStatus> { return desktop ? invoke('summary_apple_status') : { built: false, available: false, reason: 'notBuilt', contextSize: 0 }; }
 /** A suggested action item and the transcript line it cites. */
 export type Cited = { text: string; owner: string; atMs: number; quote: string };
-/** `dropped` counts the items left out because they couldn't be traced to the transcript. */
-export type Suggestions = { summary: string; actions: Cited[]; dropped: number };
+/** `dropped` counts the items left out because they couldn't be traced to the transcript; `partial`, that the
+ * model declined part of a long meeting. */
+export type Suggestions = { summary: string; actions: Cited[]; dropped: number; partial: boolean };
 export async function summaryKeySaved(): Promise<boolean> { return desktop ? invoke('summary_key_status') : false; }
 export async function saveSummaryKey(key: string): Promise<void> { return desktop ? invoke('summary_set_key', { key }) : desktopOnly(); }
 export async function removeSummaryKey(): Promise<void> { return desktop ? invoke('summary_remove_key') : desktopOnly(); }
@@ -256,7 +263,17 @@ export async function suggestSummary(meetingId: string): Promise<Suggestions> { 
 /** A template's sections, each with what belongs in it. The user's own live in the archive's `.templates` folder. */
 export type NoteTemplate = { name: string; sections: { heading: string; description: string }[]; builtIn: boolean };
 /** Enhanced notes: lines quoting the transcript (`atMs`) or the user's own notes (`atMs` null). */
-export type Enhanced = { sections: { heading: string; lines: { text: string; atMs: number | null; quote: string }[] }[]; dropped: number };
+export type Enhanced = { sections: { heading: string; lines: { text: string; atMs: number | null; quote: string }[] }[]; dropped: number; partial: boolean };
+/** An answer about a meeting, each line citing the transcript. `partial`: a long meeting was read only where it
+ * mentions `words` (`read` of `total` lines), or in parts. */
+export type Answer = { lines: { text: string; atMs: number; quote: string }[]; dropped: number; partial: { read: number; total: number; words: string[] } | null; unanswered: boolean };
+export async function askMeeting(meetingId: string, question: string): Promise<Answer> { return desktop ? invoke('meeting_ask', { meetingId, question }) : desktopOnly(); }
+/** "Part 3 of 12" while a long meeting is read in parts, for Suggest (suggestions, enhanced notes, names) or Ask. */
+export type Progress = { meetingId: string; kind: 'suggest' | 'ask'; done: number; total: number };
+export async function onSuggestProgress(handler: (p: Progress) => void): Promise<() => void> {
+  if (!desktop) return () => {};
+  return listen<Progress>('quietnote://suggest-progress', e => handler(e.payload));
+}
 export async function noteTemplates(): Promise<NoteTemplate[]> { return desktop ? invoke('note_templates') : []; }
 export async function openTemplates(): Promise<void> { return desktop ? invoke('open_templates') : desktopOnly(); }
 /** A suggested title and names for a recorded meeting's voices, each name with the line that shows it. */

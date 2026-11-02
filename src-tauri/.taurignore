@@ -1,0 +1,2 @@
+# Written by build.rs; rebuilding on its own output would loop.
+binaries/

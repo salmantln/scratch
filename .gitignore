@@ -43,3 +43,6 @@ playwright-report/
 
 # Test meetings for the accuracy test, made by scripts/fetch-ami.mjs
 test-audio/
+
+# The Apple Intelligence helper, built by src-tauri/build.rs
+src-tauri/binaries/

@@ -67,8 +67,9 @@ pub(crate) fn verified(path: Option<PathBuf>, name: &str, size: u64, hash: &str)
     Ok(path)
 }
 pub(crate) fn samples(path: &Path) -> Result<Vec<f32>, String> {
-    if crate::sealed::encrypted(path) {
-        let (rate, samples) = crate::sealed::samples(path)?;
+    let packed = crate::packed::is(path);
+    if packed || crate::sealed::encrypted(path) {
+        let (rate, samples) = if packed { crate::packed::samples(path)? } else { crate::sealed::samples(path)? };
         if rate != RATE { return Err(format!("{} isn’t 16 kHz audio", path.display())); }
         return Ok(samples.into_iter().map(|s| s as f32 / 32768.0).collect());
     }

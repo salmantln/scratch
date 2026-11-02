@@ -573,6 +573,9 @@ async function mockDesktop(page: Page, fixture: Fixture) {
       pendingSignIn: null as null | { service: string; resolve: (account: unknown) => void; reject: (error: string) => void },
       opened: [] as string[],
       names: null as unknown,
+      apple: { built: true, available: true, contextSize: 4096 } as Record<string, unknown>,
+      answer: null as unknown,
+      asked: [] as { meetingId: string; question: string }[],
       renamed: [] as string[][],
       events: [] as unknown[],
       now: null as unknown,
@@ -664,6 +667,8 @@ async function mockDesktop(page: Page, fixture: Fixture) {
           case 'summary_key_status': return state.summaryKey;
           case 'summary_set_key': state.summaryKey = true; return null;
           case 'summary_suggest': return state.suggestions;
+          case 'summary_apple_status': return state.apple;
+          case 'meeting_ask': state.asked.push({ meetingId: args.meetingId, question: args.question }); if (typeof state.answer === 'string') throw state.answer; return state.answer;
           case 'plugin:clipboard-manager|write_text': state.clipboard = args.text; return null;
           case 'call_accessibility': return state.accessibility;
           case 'disk_encryption': return state.disk;
@@ -692,7 +697,7 @@ async function mockDesktop(page: Page, fixture: Fixture) {
     };
   }, fixture);
 }
-type Mock = { state: { calls: string[]; preferences: Record<string, unknown>; capture: Record<string, unknown>; transcriptData: unknown; devices: { devices: string[]; selected: string | null }; draft: unknown; compact: boolean; summaryKey: boolean; suggestions: unknown; saved: string; savedPath: string; menu: null | { items: { text: string; items?: { text: string }[] }[] }; menus: number }; emit: (event: string, payload: unknown) => void; meetings: ReturnType<typeof makeMeeting>[]; choose: (text: string) => boolean };
+type Mock = { state: { calls: string[]; preferences: Record<string, unknown>; capture: Record<string, unknown>; transcriptData: unknown; devices: { devices: string[]; selected: string | null }; draft: unknown; compact: boolean; summaryKey: boolean; suggestions: unknown; apple: Record<string, unknown>; answer: unknown; asked: { meetingId: string; question: string }[]; saved: string; savedPath: string; menu: null | { items: { text: string; items?: { text: string }[] }[] }; menus: number }; emit: (event: string, payload: unknown) => void; meetings: ReturnType<typeof makeMeeting>[]; choose: (text: string) => boolean };
 /** Runs `fn` in the page with the mock. It's serialized, so it can't use variables from the test. */
 const qn = <T,>(page: Page, fn: (qn: Mock) => T) => page.evaluate(`(${fn.toString()})(window.__qn)`) as Promise<T>;
 const writes = ['save_meeting_metadata', 'render_transcripts', 'create_meeting_bundle', 'capture_start', 'capture_stop', 'transcribe_meeting'];
@@ -821,8 +826,16 @@ test('K: New meeting records with one press, or creates without recording; recor
   const deleteAudio = page.getByRole('switch', { name: 'Delete audio after transcribing' });
   await expect(deleteAudio).not.toBeChecked();
   await expect(page.getByText('Off: audio is kept, so you can export it or transcribe it again.')).toBeVisible();
+  // Kept audio is compressed once transcribed, unless turned off; with audio deleted there's nothing to compress.
+  const compress = page.getByRole('switch', { name: 'Compress recordings' });
+  await expect(compress).toBeChecked();
+  await compress.click();
+  await expect(page.getByText('Off: audio is kept as it was recorded, about 230 MB an hour.')).toBeVisible();
+  await expect.poll(() => qn(page, q => q.state.preferences.compressAudio)).toBe(false);
+  await compress.click();
   await deleteAudio.click();
   await expect(page.getByText('On: audio is deleted once its transcript is saved', { exact: false })).toBeVisible();
+  await expect(compress).toHaveCount(0);
   await deleteAudio.click();
   await settingsPage(page, 'Recording');
   await page.getByRole('switch', { name: 'Remove filler words' }).click();
@@ -2276,4 +2289,112 @@ test('AN2: on desktop the native menu moves a meeting even while it’s being tr
   await page.keyboard.type('Moved notes');
   await expect.poll(() => qn(page, q => q.state.saved)).toContain('Moved notes');
   expect(await qn(page, q => q.state.savedPath)).toBe(`/archive/Northstar/${moved.id}/meeting.md`);
+});
+
+test('AO: Apple Intelligence drafts on this Mac when it can, and says why when it can’t', async ({ page }) => {
+  const done = meetingWith('Pricing sync', { status: 'ready', duration: 600, captureStartedAt: new Date().toISOString(), captureEndedAt: new Date().toISOString() });
+  done.metadata.audioPath = `Acme/${done.metadata.id}/audio`;
+  done.transcript = '# Transcript\n\n### 00:00 Others\nMaya will send the pricing draft by Friday.\n';
+  await mockDesktop(page, { meetings: [done] });
+  await page.addInitScript(() => {
+    const { state } = (window as unknown as { __qn: { state: Record<string, unknown> } }).__qn;
+    Object.assign(state, { apple: { built: true, available: false, reason: 'appleIntelligenceNotEnabled', contextSize: 4096 } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await settingsPage(page, 'Suggestions');
+  await page.getByLabel('Drafted by').selectOption('apple');
+  await expect(page.getByText('Nothing leaves it. A long meeting is read in parts', { exact: false })).toBeVisible();
+  // Off in System Settings: the row says so, and suggestions aren't offered yet.
+  await expect(page.getByRole('alert')).toContainText('Apple Intelligence is off. Turn it on in System Settings');
+  await qn(page, q => { q.state.apple = { built: true, available: true, contextSize: 4096 }; });
+  await page.getByRole('button', { name: 'Check again' }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await leaveSettings(page);
+  await page.getByRole('button', { name: 'All meetings' }).click();
+  await page.getByRole('button', { name: /Pricing sync/ }).click();
+  await page.getByRole('button', { name: 'Suggest from transcript…' }).click();
+  const confirm = page.getByRole('dialog', { name: 'Suggest from transcript' });
+  await expect(confirm).toContainText('Draft suggestions with Apple Intelligence?');
+  await expect(confirm).toContainText('with Apple’s model, so nothing leaves it');
+  await confirm.getByRole('button', { name: 'Cancel' }).click();
+  // A copy built without Apple Intelligence doesn't offer it.
+  await qn(page, q => { q.state.apple = { built: false, available: false, reason: 'notBuilt', contextSize: 0 }; });
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await settingsPage(page, 'Suggestions');
+  await page.getByLabel('Drafted by').selectOption('');
+  await expect(page.getByLabel('Drafted by').locator('option')).toHaveText(['Off', 'Claude (your Anthropic key)', 'Ollama on this computer']);
+});
+
+test('AP: asking about a meeting says where the question goes, cites the transcript, and saves only what you add', async ({ page }) => {
+  const done = meetingWith('Pricing sync', { status: 'ready', duration: 600, captureStartedAt: new Date().toISOString(), captureEndedAt: new Date().toISOString() });
+  done.metadata.audioPath = `Acme/${done.metadata.id}/audio`;
+  done.transcript = '# Transcript\n\n### 00:00 Others\nMaya will send the pricing draft by Friday.\n\n### 01:05 You\nThen we go with the annual plan.\n';
+  done.markdown = replaceSection(done.markdown, 'Notes', '- pricing?');
+  const example = meetingWith('Example call', { status: 'ready', duration: 600 });
+  await mockDesktop(page, { meetings: [done, example] });
+  await page.addInitScript(() => {
+    const { state } = (window as unknown as { __qn: { state: Record<string, unknown> } }).__qn;
+    Object.assign(state, {
+      preferences: { summaryProvider: 'anthropic' }, summaryKey: true,
+      transcriptData: [
+        { startMs: 0, speaker: 'Others', text: 'Maya will send the pricing draft by Friday.', clean: 'Maya will send the pricing draft by Friday.' },
+        { startMs: 65_000, speaker: 'You', text: 'Then we go with the annual plan.', clean: 'Then we go with the annual plan.' },
+      ],
+      answer: { lines: [{ text: 'Maya sends the pricing draft by Friday.', atMs: 0, quote: 'Maya will send the pricing draft' }], dropped: 1, partial: null, unanswered: false },
+    });
+  });
+  await page.goto('/');
+  // Only a recorded meeting can be asked about.
+  await page.getByRole('button', { name: /Example call/ }).click();
+  await expect(page.getByRole('region', { name: 'Ask about this meeting' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'All meetings' }).click();
+  await page.getByRole('button', { name: /Pricing sync/ }).click();
+  const bar = page.getByRole('region', { name: 'Ask about this meeting' });
+  await expect(bar).toContainText('Your question and this meeting’s transcript text go to Claude with your key.');
+  await expect(bar.getByRole('button', { name: 'Ask' })).toBeDisabled();
+  expect(await qn(page, q => q.state.asked.length)).toBe(0);
+  // It adds no cobalt button of its own.
+  await expect(page.locator('.primary')).toHaveCount(0);
+  await bar.getByLabel('Ask about this meeting').fill('Who sends the pricing draft?');
+  await bar.getByLabel('Ask about this meeting').press('Enter');
+  await expect(bar).toContainText('Who sends the pricing draft?');
+  await expect(bar).toContainText('Maya sends the pricing draft by Friday.');
+  await expect(bar).toContainText('One more sentence was left out because it couldn’t be traced to the transcript.');
+  expect(await qn(page, q => q.state.asked)).toEqual([{ meetingId: expect.any(String), question: 'Who sends the pricing draft?' }]);
+  // Asking writes nothing.
+  expect(await qn(page, q => q.state.saved)).toBe('');
+  await bar.getByRole('button', { name: 'Copy' }).click();
+  await expect.poll(() => qn(page, q => q.state.clipboard)).toBe('Who sends the pricing draft?\n- Maya sends the pricing draft by Friday. [00:00]');
+  // Add to my notes puts it after what's there, and the open editor shows it.
+  await tab(page, 'My notes').click();
+  await bar.getByRole('button', { name: 'Add to my notes' }).click();
+  await expect(bar.getByRole('button', { name: 'Added to my notes' })).toBeDisabled();
+  await expect.poll(() => qn(page, q => q.state.saved)).toContain('- pricing?\n\n**Who sends the pricing draft?**\n- Maya sends the pricing draft by Friday. [00:00]');
+  await expect(page.locator('.quiet-editor')).toContainText('Who sends the pricing draft?');
+  // Typing just before adding is kept, and the editor the added lines replace can't save over them as it closes.
+  await bar.getByLabel('Ask about this meeting').fill('Who sends it?');
+  await bar.getByRole('button', { name: 'Ask' }).click();
+  await page.locator('.quiet-editor [contenteditable="true"]').click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type(' Typed last');
+  await bar.getByRole('button', { name: 'Add to my notes' }).last().click();
+  await expect(bar.getByRole('button', { name: 'Added to my notes' })).toHaveCount(2);
+  await page.waitForTimeout(800);
+  await expect.poll(() => qn(page, q => q.state.saved)).toMatch(/Typed last[\s\S]*\*\*Who sends it\?\*\*\n- Maya sends the pricing draft by Friday\. \[00:00\]/);
+  // A citation opens the transcript at its line, and the answer stays.
+  await bar.getByRole('button', { name: /00:00.*Maya will send the pricing draft/ }).first().click();
+  await expect(tab(page, 'Transcript')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.transcript-turn[data-time="00:00"]')).toHaveClass(/cited/);
+  await expect(bar).toContainText('Maya sends the pricing draft by Friday.');
+  // Nothing in the transcript, a long meeting read in part, and a failure.
+  await qn(page, q => { q.state.answer = { lines: [], dropped: 0, partial: { read: 6, total: 240, words: ['budget'] }, unanswered: true }; });
+  await bar.getByLabel('Ask about this meeting').fill('What about the budget?');
+  await bar.getByRole('button', { name: 'Ask' }).click();
+  await expect(bar).toContainText('The transcript doesn’t say.');
+  await expect(bar).toContainText('Read only the 6 of 240 lines that mention “budget”.');
+  await qn(page, q => { q.state.answer = 'Anthropic rejected this key. Check it, or create a new one.'; });
+  await bar.getByLabel('Ask about this meeting').fill('And the launch?');
+  await bar.getByRole('button', { name: 'Ask' }).click();
+  await expect(bar.getByRole('alert')).toHaveText('Anthropic rejected this key. Check it, or create a new one.');
 });

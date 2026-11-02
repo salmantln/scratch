@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QuietNote",
-  "version": "0.1.0",
+  "version": "../package.json",
   "identifier": "app.quietnote.desktop",
   "build": {
     "beforeDevCommand": "npm run models && npm run dev",

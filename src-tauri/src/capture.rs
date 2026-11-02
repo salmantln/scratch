@@ -2,6 +2,7 @@
 //! hidden, and the tray can stop it. A meeting moves idle → recording → processing → ready, or to
 //! error with its audio kept for a retry. Nothing starts recording except an explicit start.
 use crate::meetings::{self, Metadata, Resume};
+use crate::packed;
 use crate::sealed::{self, TRACKS};
 use crate::transcript::{self, Transcript};
 use crate::tray;
@@ -70,7 +71,8 @@ impl Session {
     }
 }
 #[derive(Default)]
-struct Jobs { queue: VecDeque<String>, current: Option<Progress>, worker: bool }
+/// `packing`: meetings whose audio is being packed (`pack`), already ready, so only recording more waits.
+struct Jobs { queue: VecDeque<String>, current: Option<Progress>, packing: Vec<String>, worker: bool }
 
 /// Why a recording is about to stop by itself. Either way the user can keep recording, and it stops
 /// only after a countdown, so it never ends unseen.
@@ -112,6 +114,9 @@ impl Capture {
         self.session.lock().is_ok_and(|s| s.as_ref().is_some_and(|s| s.meeting_id == id))
             || self.jobs.lock().is_ok_and(|j| j.queue.iter().any(|q| q == id) || j.current.as_ref().is_some_and(|c| c.meeting_id == id))
     }
+    /// Whether meeting `id`'s audio is being packed. Exporting, moving and deleting it meanwhile are safe
+    /// (`place` swaps the files under `meetings::files()`); recording more into it isn't.
+    fn packs(&self, id: &str) -> bool { self.jobs.lock().is_ok_and(|j| j.packing.iter().any(|p| p == id)) }
     /// Whether meeting `id` is recording (or paused), rather than being transcribed.
     #[cfg(target_os = "windows")]
     pub fn records(&self, id: &str) -> bool { self.session.lock().is_ok_and(|s| s.as_ref().is_some_and(|s| s.meeting_id == id)) }
@@ -273,6 +278,7 @@ pub fn start(app: &AppHandle, id: &str) -> Result<Metadata, Failure> {
 fn begin(app: &AppHandle, id: &str) -> Result<Metadata, Failure> {
     let capture = app.state::<Capture>();
     if capture.owns(id) { return Err("This meeting is being transcribed.".to_string().into()); }
+    if capture.packs(id) { return Err("This meeting’s audio is being compressed. Try again in a few seconds.".to_string().into()); }
     let root = meetings::root(app)?;
     // Until the files are open and the metadata says where: a move then carries the recording with it.
     let files = meetings::files();
@@ -293,6 +299,9 @@ fn begin(app: &AppHandle, id: &str) -> Result<Metadata, Failure> {
     let audio = dir.join(AUDIO);
     // Audio kept from the earlier recording is continued; it's never deleted here.
     let kept = resuming && TRACKS.iter().any(|t| sealed::path(&audio, t).is_some());
+    // The recorder appends samples, so packed audio is unpacked first, and packed again if it can't start.
+    let repack = || if kept { spawn_pack(app, id.to_string()); };
+    if kept { unpack(&audio).inspect_err(|_| repack())?; }
     if !kept {
         // Left over from a start that failed before the meeting was marked as recording.
         if audio.exists() { std::fs::remove_dir_all(&audio).map_err(|e| e.to_string())?; }
@@ -306,6 +315,7 @@ fn begin(app: &AppHandle, id: &str) -> Result<Metadata, Failure> {
         Ok(recording) => recording,
         Err(e) => {
             discard(&audio);
+            repack();
             return Err(recorder_failure(e));
         }
     };
@@ -319,6 +329,7 @@ fn begin(app: &AppHandle, id: &str) -> Result<Metadata, Failure> {
     if let Err(e) = meetings::write_metadata(&dir, &metadata) {
         drop(recording);
         discard(&audio);
+        repack();
         return Err(e.into());
     }
     drop(files);
@@ -335,6 +346,17 @@ fn begin(app: &AppHandle, id: &str) -> Result<Metadata, Failure> {
 }
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn begin(_: &AppHandle, _: &str) -> Result<Metadata, Failure> { Err(UNSUPPORTED.to_string().into()) }
+/// Turns a meeting's packed tracks back into recorded ones (`packed::unpack`), with the key when they're
+/// encrypted.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn unpack(audio: &Path) -> Result<(), String> {
+    packed::tidy(audio);
+    for name in TRACKS.iter().filter(|t| sealed::path(audio, t).is_some_and(|p| packed::is(&p))) {
+        let key = if packed::sealed(&audio.join(format!("{name}.{}", packed::EXT))) { Some(sealed::key(false)?.ok_or(sealed::MISSING_KEY)?) } else { None };
+        packed::unpack(audio, name, key.as_ref())?;
+    }
+    Ok(())
+}
 /// Where recording more of a finished meeting begins: in the audio files (after what's kept there), and
 /// in the meeting, after both the earlier recording and its last words.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -596,6 +618,7 @@ fn work(app: AppHandle) {
         };
         publish(&app);
         let outcome = process(&app, &id);
+        let packing = matches!(outcome, Ok(Some(_)));
         if let Ok(mut jobs) = capture.jobs.lock() { jobs.current = None; }
         // The full transcript (or the failure notice) replaces the live draft.
         if let Ok(mut draft) = capture.draft.lock() { if draft.as_ref().is_some_and(|d| d.meeting_id == id) { *draft = None; } }
@@ -610,8 +633,58 @@ fn work(app: AppHandle) {
             },
         }
         publish(&app);
+        if packing { spawn_pack(&app, id); }
     }
 }
+/// Packs meeting `id` on a thread of its own, so the next meeting's transcription doesn't wait for it; one
+/// meeting at a time, which keeps memory to one track's samples.
+fn spawn_pack(app: &AppHandle, id: String) {
+    static ONE: Mutex<()> = Mutex::new(());
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let capture = app.state::<Capture>();
+        if let Ok(mut jobs) = capture.jobs.lock() { jobs.packing.push(id.clone()); }
+        {
+            let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+            if let Ok(root) = meetings::root(&app) { pack(&root, &id); }
+        }
+        if let Ok(mut jobs) = capture.jobs.lock() { jobs.packing.retain(|p| *p != id); };
+    });
+}
+/// Packs a transcribed meeting's recorded tracks with Opus (`compressAudio`, default on; `packed`), one
+/// after the other. A track that can't be packed stays as it was recorded.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn pack(root: &Path, id: &str) {
+    if !meetings::preference(root, "compressAudio", true) { return; }
+    for name in TRACKS {
+        if let Err(e) = pack_track(root, id, name) { eprintln!("QuietNote: the {name} track of {id} stays as recorded: {e}"); }
+    }
+}
+/// Packs one track. It's read and encoded without `meetings::files()` (an hour takes about 16 s), so a move then
+/// is noticed and the track looked up again; the packed copy goes wherever the meeting is by the end.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn pack_track(root: &Path, id: &str, name: &str) -> Result<(), String> {
+    let track = || { let _files = meetings::files(); meetings::find(root, id).ok().and_then(|(_, dir)| sealed::path(&dir.join(AUDIO), name)) };
+    let read = |recorded: &Path| -> Result<(Vec<u8>, u64), String> {
+        repair(recorded).map_err(|e| e.to_string())?;
+        let key = if sealed::encrypted(recorded) { Some(sealed::key(false)?.ok_or(sealed::MISSING_KEY)?) } else { None };
+        packed::pack(recorded, key.as_deref())
+    };
+    let mut tries = 0;
+    let (recorded, (bytes, samples)) = loop {
+        let Some(recorded) = track().filter(|p| !packed::is(p)) else { return Ok(()) };
+        match read(&recorded) {
+            Ok(done) => break (recorded, done),
+            Err(_) if tries < 2 && !recorded.exists() => tries += 1,
+            Err(e) => return Err(e),
+        }
+    };
+    let _files = meetings::files();
+    let (_, dir) = meetings::find(root, id)?;
+    packed::place(&dir.join(AUDIO), name, &recorded, &bytes, samples)
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn pack(_: &Path, _: &str) {}
 fn set_progress(app: &AppHandle, id: &str, title: Option<&str>, percent: u8) {
     let capture = app.state::<Capture>();
     let Ok(mut jobs) = capture.jobs.lock() else { return };
@@ -740,7 +813,9 @@ fn model_name() -> &'static str {
 
 /// How long a track is, after repairing one cut short by a crash: a WAV's header is fixed, and an
 /// encrypted track simply ends at its last whole frame.
-fn repair(path: &Path) -> std::io::Result<Duration> { if sealed::encrypted(path) { sealed::duration(path) } else { repair_wav(path) } }
+fn repair(path: &Path) -> std::io::Result<Duration> {
+    if packed::is(path) { packed::duration(path) } else if sealed::encrypted(path) { sealed::duration(path) } else { repair_wav(path) }
+}
 /// Fixes the size fields of a WAV file that wasn't finalized (QuietNote was force-quit or crashed),
 /// so everything written up to the last flush plays and transcribes. Returns the audio duration.
 pub(crate) fn repair_wav(path: &Path) -> std::io::Result<Duration> {
@@ -783,8 +858,10 @@ pub fn recover(app: &AppHandle) {
 fn recover_archive(root: &Path, mut queue: impl FnMut(&str)) -> Result<(), String> {
     let _files = meetings::files();
     for (mut metadata, dir) in meetings::read_metadata(root)? {
-        if metadata.status != "recording" && metadata.status != "processing" { continue; }
         let audio = dir.join(AUDIO);
+        // Packing or unpacking cut short.
+        packed::tidy(&audio);
+        if metadata.status != "recording" && metadata.status != "processing" { continue; }
         let recovered = TRACKS.iter().filter_map(|t| repair(&sealed::path(&audio, t)?).ok()).max().filter(|d| !d.is_zero());
         let Some(duration) = recovered.filter(|_| SUPPORTED && metadata.audio_path.is_some()) else {
             if metadata.status == "processing" { metadata.error = Some("The audio for this meeting is missing, so it can’t be transcribed.".into()); }
@@ -902,7 +979,7 @@ pub async fn transcribe_meeting(app: AppHandle, meeting_id: String) -> Result<Me
         Ok(metadata)
     }).await.map_err(|e| e.to_string())?
 }
-/// Writes a playable copy of a meeting's audio, a WAV file per track, into the folder the user chose.
+/// Writes a playable copy of a meeting's audio, a WAV file per track (packed tracks unpacked), into the folder the user chose.
 /// Nothing in the archive changes, and no file there is replaced. Returns the files written.
 #[tauri::command]
 pub async fn audio_export(app: AppHandle, meeting_id: String, folder: String) -> Result<Vec<String>, String> {
@@ -923,15 +1000,13 @@ fn export_audio(audio: &Path, name: &str, folder: &Path, key: Option<&sealed::Ke
         let Some(path) = sealed::path(audio, track) else { continue };
         let out = (1..).map(|n| folder.join(if n == 1 { format!("{name} {track}.wav") } else { format!("{name} {track} {n}.wav") })).find(|p| !p.exists()).ok_or("No free file name.")?;
         let fail = |e: &dyn std::fmt::Display| format!("Couldn’t write {}: {e}", out.display());
-        match key.filter(|_| sealed::encrypted(&path)) {
-            Some(key) => {
-                let (rate, samples) = sealed::read(&path, key)?;
-                let mut wav = hound::WavWriter::create(&out, hound::WavSpec { channels: 1, sample_rate: rate, bits_per_sample: 16, sample_format: hound::SampleFormat::Int }).map_err(|e| fail(&e))?;
-                for s in samples { wav.write_sample(s).map_err(|e| fail(&e))?; }
-                wav.finalize().map_err(|e| fail(&e))?;
-            }
-            None if sealed::encrypted(&path) => return Err(sealed::MISSING_KEY.into()),
-            None => { std::fs::copy(&path, &out).map_err(|e| fail(&e))?; }
+        if !sealed::encrypted(&path) && !packed::is(&path) {
+            std::fs::copy(&path, &out).map_err(|e| fail(&e))?;
+        } else {
+            let (rate, samples) = if packed::is(&path) { packed::read(&path, key)? } else { sealed::read(&path, key.ok_or(sealed::MISSING_KEY)?)? };
+            let mut wav = hound::WavWriter::create(&out, hound::WavSpec { channels: 1, sample_rate: rate, bits_per_sample: 16, sample_format: hound::SampleFormat::Int }).map_err(|e| fail(&e))?;
+            for s in samples { wav.write_sample(s).map_err(|e| fail(&e))?; }
+            wav.finalize().map_err(|e| fail(&e))?;
         }
         written.push(out.display().to_string());
     }
@@ -998,12 +1073,14 @@ pub async fn render_transcripts(app: AppHandle) -> Result<(), String> {
             let path = dir.join("transcript.json");
             let Ok(bytes) = std::fs::read(&path) else { continue };
             let mut transcript: Transcript = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-            if transcript::hide(&mut transcript.turns, &phrases) {
-                meetings::atomic_write(&path, &serde_json::to_vec_pretty(&transcript).map_err(|e| e.to_string())?)?;
-            }
+            let hid = transcript::hide(&mut transcript.turns, &phrases);
+            if hid { meetings::atomic_write(&path, &serde_json::to_vec_pretty(&transcript).map_err(|e| e.to_string())?)?; }
             let markdown = transcript::markdown(&transcript, clean);
-            meetings::atomic_write(&dir.join("transcript.md"), markdown.as_bytes())?;
-            changed(&app, &metadata, Some(markdown), None);
+            let same = std::fs::read_to_string(dir.join("transcript.md")).is_ok_and(|md| md == markdown);
+            if !same { meetings::atomic_write(&dir.join("transcript.md"), markdown.as_bytes())?; }
+            // Only meetings that changed are sent to the window: their Markdown, or the hidden lines an open
+            // meeting's Clean view reads from `transcript.json` (unchanged Markdown while it shows Verbatim).
+            if hid || !same { changed(&app, &metadata, Some(markdown), None); }
         }
         Ok(())
     }).await.map_err(|e| e.to_string())?
@@ -1193,6 +1270,32 @@ mod tests {
         assert_eq!(queued, vec!["crashed"]);
         let crashed = meetings::find(&root, "crashed").unwrap().0;
         assert_eq!((crashed.status.as_str(), crashed.duration, crashed.interrupted), ("processing", 2, true));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn transcribed_audio_is_packed_and_read_back_and_unpacked_to_record_more() {
+        let root = archive("pack");
+        let audio = meeting(&root, "packed", "ready", true).join(AUDIO);
+        pack(&root, "packed");
+        assert_eq!(sealed::path(&audio, "mic"), Some(audio.join("mic.qno")));
+        assert!(!audio.join("mic.wav").exists());
+        assert_eq!(crate::transcribe::track(&audio, "mic").unwrap().unwrap().len(), 32_000);
+        assert_eq!(repair(&audio.join("mic.qno")).unwrap(), Duration::from_secs(2));
+        let folder = root.join("Exported");
+        std::fs::create_dir_all(&folder).unwrap();
+        export_audio(&audio, "packed", &folder, None).unwrap();
+        assert_eq!(hound::WavReader::open(folder.join("packed mic.wav")).unwrap().duration(), 32_000);
+        // Left over from packing cut short, cleared at launch.
+        std::fs::write(audio.join("system.qno.part"), b"QNO1").unwrap();
+        recover_archive(&root, |_| {}).unwrap();
+        assert!(!audio.join("system.qno.part").exists() && audio.join("mic.qno").exists());
+        unpack(&audio).unwrap();
+        assert!(audio.join("mic.wav").exists() && !audio.join("mic.qno").exists());
+        assert_eq!(hound::WavReader::open(audio.join("mic.wav")).unwrap().duration(), 32_000);
+        // Turned off, recordings stay as they are.
+        std::fs::write(root.join(".privacy.json"), r#"{"compressAudio":false}"#).unwrap();
+        pack(&root, "packed");
+        assert!(audio.join("mic.wav").exists() && !audio.join("mic.qno").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

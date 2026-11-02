@@ -25,7 +25,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 anyhow = "1"
 notify = "6"
 tantivy = "0.22"
-tokio = { version = "1", features = ["fs", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "sync", "time", "process", "io-util"] }
 base64 = "0.22"
 url = "2"
 urlencoding = "2"
@@ -65,6 +65,8 @@ rubato = "5"
 fs4 = "0.8"
 sonora = "0.2"
 sonora-aec3 = "0.2"
+# Recordings packed once transcribed (packed.rs): libopus, built from its bundled source.
+opus = "0.4"
 # Start recording from any app (hotkey.rs).
 tauri-plugin-global-shortcut = "2"
 
